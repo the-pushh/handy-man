@@ -3,7 +3,7 @@
 #   make          setup (idempotent) + run backend and frontend together
 #   make setup    install backend + frontend dependencies only
 #   make up       run backend + frontend together (assumes setup done)
-#   make phone    tunnel both servers via cloudflared; print the phone URL
+#   make phone    start servers + tunnel both via cloudflared; print URLs
 #   make backend  run the FastAPI backend alone (port 8000)
 #   make frontend run the Next.js frontend alone (port 3000)
 #   make deploy   deploy Glimmer + mms-tts to Modal
@@ -57,13 +57,18 @@ auth:
 clean:
 	rm -rf frontend/.next
 
-# Tunnel the running servers (start them first with `make` in another
-# terminal) and print the URLs. Open the FRONTEND url on the phone;
-# paste the BACKEND url into the app once when it asks for it.
-phone:
+# One command for phone testing: servers + tunnels. Open the FRONTEND
+# url on the phone; paste the BACKEND url into the app once when asked.
+phone: setup
 	@command -v cloudflared >/dev/null || (echo "install cloudflared first: brew install cloudflared"; exit 1)
-	@rm -f /tmp/handyman-front.tunnel /tmp/handyman-back.tunnel
-	@cloudflared tunnel --url http://127.0.0.1:$(FRONTEND_PORT) > /tmp/handyman-front.tunnel 2>&1 & \
+	@trap 'kill 0' INT TERM EXIT; \
+	HANDYMAN_MODAL=$(HANDYMAN_MODAL) $(PYTHON) -m uvicorn backend.server:app \
+		--host 127.0.0.1 --port $(BACKEND_PORT) & \
+	cd frontend && npm run dev -- --port $(FRONTEND_PORT) & \
+	cd ..; \
+	rm -f /tmp/handyman-front.tunnel /tmp/handyman-back.tunnel; \
+	sleep 6; \
+	cloudflared tunnel --url http://127.0.0.1:$(FRONTEND_PORT) > /tmp/handyman-front.tunnel 2>&1 & \
 	cloudflared tunnel --url http://127.0.0.1:$(BACKEND_PORT) > /tmp/handyman-back.tunnel 2>&1 & \
 	echo "waiting for tunnel urls…"; \
 	for i in $$(seq 1 30); do \
