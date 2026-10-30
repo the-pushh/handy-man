@@ -4,7 +4,7 @@
    Muse Image highlights them step by step with an IKEA-style legend,
    spoken thinking throughout. Embedded in the main app's repair view. */
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface Instance {
   label: string;
@@ -17,12 +17,19 @@ interface Instance {
 
 const COLORS = ["#ffc53d", "#4cc38a", "#5aa9e6", "#ef6461", "#b388eb"];
 
-export default function RepairWalkthrough() {
+export default function RepairWalkthrough({
+  file,
+  issue,
+  onClose,
+}: {
+  file: File;
+  issue: string;
+  onClose: () => void;
+}) {
   const [imgURL, setImgURL] = useState<string>("");
   const [notes, setNotes] = useState<string>("");
   const [instances, setInstances] = useState<Instance[]>([]);
   const [status, setStatus] = useState<string>("");
-  const [text, setText] = useState<string>("");
   const [overlayURL, setOverlayURL] = useState<string>("");
   const [causes, setCauses] = useState<string[]>([]);
   const [steps, setSteps] = useState<
@@ -179,11 +186,15 @@ export default function RepairWalkthrough() {
     });
   }
 
-  async function run() {
-    if (!fileRef.current) {
-      setStatus("Pick an image first.");
-      return;
-    }
+  // System-captured still: analysis starts on its own, no buttons.
+  useEffect(() => {
+    fileRef.current = file;
+    setImgURL(URL.createObjectURL(file));
+    void run(file, issue);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function run(f: File, t: string) {
     setStatus("Analyzing…");
     setInstances([]);
     setNotes("");
@@ -203,8 +214,8 @@ export default function RepairWalkthrough() {
     await say("Looking at your photo now. Figuring out the appliance and its parts.");
     try {
       const fd = new FormData();
-      fd.append("file", fileRef.current);
-      fd.append("text", text);
+      fd.append("file", f);
+      fd.append("text", t);
       const r = await fetch(`${API}/api/repair/analyze`, { method: "POST", body: fd });
       const data = await r.json();
       if (data.status !== "ok") {
@@ -220,6 +231,7 @@ export default function RepairWalkthrough() {
         return;
       }
       setNotes(data.notes || "");
+      setStatus("");
       const foundCauses: string[] = data.causes || [];
       const foundSteps = (data.steps || []).map((s: unknown) =>
         typeof s === "string"
@@ -243,6 +255,20 @@ export default function RepairWalkthrough() {
       setLegend(data.legend || overlay?.legend || []);
       setAids(data.aids || []);
       setInventory(data.components || []);
+      if (overlay?.image_b64) {
+        setOverlayURL(
+          `data:${overlay.mime || "image/webp"};base64,${overlay.image_b64}`
+        );
+      } else {
+        setOverlayURL("");
+      }
+      setStatus(
+        list.length
+          ? `${list.length} masks`
+          : overlay?.image_b64
+            ? "Highlighted image"
+            : "No masks came back."
+      );
       const foundSafety: string[] = data.safety || [];
       setSafety(foundSafety);
       if (foundSafety.length) {
@@ -269,20 +295,6 @@ export default function RepairWalkthrough() {
       if (data.issue) {
         await say(`I understand the issue as: ${data.issue}`);
       }
-      if (overlay?.image_b64) {
-        setOverlayURL(
-          `data:${overlay.mime || "image/webp"};base64,${overlay.image_b64}`
-        );
-      } else {
-        setOverlayURL("");
-      }
-      setStatus(
-        list.length
-          ? `${list.length} masks`
-          : overlay?.image_b64
-            ? "Highlighted image"
-            : "No masks came back."
-      );
       const firstTag = (data.legend || overlay?.legend || [])[0]?.tag;
       const hasParts =
         list.length > 0 || (data.components || []).length > 0;
@@ -389,40 +401,23 @@ export default function RepairWalkthrough() {
 
   return (
     <section style={{ padding: 16, maxWidth: 720, margin: "0 auto" }}>
-      <h1>Repair a photo</h1>
+      <h1>Repairing what I captured</h1>
       <p style={{ color: "#b9c0c6" }}>
-        Upload an appliance photo and describe the issue. The system names
-        the parts, highlights them step by step, and talks you through
-        the fix.
+        Still captured from your camera. Naming the parts, highlighting
+        them step by step, talking you through the fix.
       </p>
-      <input
-        type="file"
-        accept="image/*"
-        onChange={(e) => {
-          const f = e.target.files?.[0];
-          if (f) {
-            fileRef.current = f;
-            setImgURL(URL.createObjectURL(f));
-          }
-        }}
-      />
-      <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
-        <input
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="Issue description (sent to Spark)"
-          style={{ padding: 8 }}
-        />
-        <button type="button" onClick={run} style={{ padding: 10 }}>
-          Analyze
+      <p>
+        You said: <em>&ldquo;{issue}&rdquo;</em>{" "}
+        <button type="button" onClick={onClose}>
+          Close and point the camera again
         </button>
-      </div>
+      </p>
       {status && <p role="status">{status}</p>}
       {notes && <p><em>{notes}</em></p>}
       {device && <p><strong>Detected device:</strong> {device}</p>}
       {ask && (
         <p style={{ fontWeight: "bold" }}>
-          {ask} (Tell me the problem in the issue box above and hit Analyze again.)
+          {ask} (Close this and describe the problem, then I will dig in.)
         </p>
       )}
       {inventory.length > 0 && (
@@ -538,7 +533,7 @@ export default function RepairWalkthrough() {
                       >
                         {tag}
                       </span>
-                    )}
+                    )}{" "}
                     {s.part}
                   </div>
                 )}

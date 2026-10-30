@@ -42,6 +42,15 @@ html, body {
   height: 100%;
 }
 
+/* Screen #2: repair overlay over the live camera. */
+.overlay {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  background: rgba(10, 12, 14, 0.97);
+  z-index: 10;
+}
+
 .still { object-fit: cover; }
 
 .box {

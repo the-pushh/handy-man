@@ -177,13 +177,14 @@ make auth       # authenticate this machine with Modal (opens browser)
 make clean      # remove frontend build output
 ```
 
-## Photo repair (real intelligence + highlights)
+## Repair flow (real intelligence + highlights)
 
-The "Repair a photo" view in the app, `POST /api/repair/analyze` (+
-`/api/repair/highlight` per step) on the backend: upload a photo and
-describe the issue. Muse Spark (`muse-spark-1.3-contributor`) identifies
-the appliance, brand/model, and parts; a second call diagnoses causes,
-safety warnings, and ordered check/how steps; Muse Image (`muse-image-1.0`)
+One flow: point the camera, Talk (or type) the issue, the system
+captures a still itself and opens the repair overlay over the live
+feed. `POST /api/repair/analyze` (+ `/api/repair/highlight` per step):
+Muse Spark (`muse-spark-1.3-contributor`) identifies the appliance,
+brand/model, and parts; a second call diagnoses causes, safety
+warnings, and ordered check/how steps; Muse Image (`muse-image-1.0`)
 highlights each step's part with an IKEA-style A/B/C legend while the
 MMS voice talks you through it — one step at a time with Next/Back,
 plus embedded tutorial videos, reference-picture links, and a closing
