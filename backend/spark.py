@@ -1,0 +1,266 @@
+"""Muse Spark intelligence adapter (repair flow).
+
+Config (environment):
+  MUSE_SPARK_API_URL   base URL of the completions endpoint
+  MUSE_SPARK_API_KEY   bearer key (paste yours; never commit it)
+  MUSE_SPARK_MODEL     default: muse-spark-contributor (cheap test model)
+
+WIRE-FORMAT ASSUMPTION (unverified until the key lands): an
+OpenAI-compatible POST {url}/chat/completions with
+{"model", "messages": [{role, content: [{type: text/image_url}]}]} and a
+{"choices": [{"message": {"content"}}]} reply. If the real endpoint differs,
+only _post() and analyze_image()'s payload/response parsing change.
+"""
+
+import base64
+import json
+import os
+import re
+import urllib.request
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+MODEL_DEFAULT = "muse-spark-1.3-contributor"
+
+
+def _config() -> tuple:
+    url = os.environ.get("MUSE_SPARK_API_URL", "").rstrip("/")
+    key = os.environ.get("MUSE_SPARK_API_KEY", "")
+    model = os.environ.get("MUSE_SPARK_MODEL") or MODEL_DEFAULT
+    if not url or not key:
+        raise RuntimeError(
+            "Muse Spark is not configured: set MUSE_SPARK_API_URL and "
+            "MUSE_SPARK_API_KEY in the environment."
+        )
+    return url, key, model
+
+
+def _post(url: str, key: str, payload: dict, timeout: int = 120) -> dict:
+    import urllib.error
+    req = urllib.request.Request(
+        url + "/chat/completions",
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json",
+                 "Authorization": f"Bearer {key}"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode(errors="replace")[:300]
+        raise RuntimeError(
+            f"Muse Spark API error {exc.code}: {body}") from exc
+    except Exception as exc:
+        raise RuntimeError(f"Muse Spark request failed: {exc}") from exc
+
+
+def _extract_json(reply: dict) -> dict:
+    """Pull the JSON object out of a chat-completion reply."""
+    try:
+        message = reply["choices"][0]["message"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise RuntimeError(
+            f"Unexpected Muse Spark reply shape ({exc}): "
+            f"{json.dumps(reply)[:300]}")
+    content = message.get("content")
+    if not isinstance(content, str) or not content.strip():
+        refusal = message.get("refusal") or message.get("tool_calls") or reply
+        raise RuntimeError(
+            "Muse Spark returned no text "
+            f"(finish: {reply.get('choices', [{}])[0].get('finish_reason')}, "
+            f"detail: {json.dumps(refusal)[:300]})"
+        )
+    try:
+        parsed = json.loads(content)
+        return parsed if isinstance(parsed, dict) else {}
+    except json.JSONDecodeError:
+        pass
+    match = re.search(r"\{.*\}", content, re.DOTALL)
+    try:
+        parsed = json.loads(match.group(0)) if match else {}
+        return parsed if isinstance(parsed, dict) else {}
+    except (json.JSONDecodeError, AttributeError):
+        return {}
+
+
+def _complete(url: str, key: str, payload: dict,
+              required: list) -> dict:
+    """POST once; retry once when the reply is cut off or drops keys.
+
+    The contributor model sometimes truncates (finish: length) or
+    returns partial JSON. The retry nudges it to complete/repair.
+    """
+    try:
+        parsed = _extract_json(_post(url, key, payload))
+        if all(parsed.get(k) for k in required):
+            return parsed
+    except RuntimeError:
+        parsed = {}
+    fix = dict(payload)
+    msgs = fix["messages"]
+    if isinstance(msgs, list):
+        reminder = ("Your last reply was cut off or missed keys. Reply "
+                    "again with the COMPLETE single JSON object, all keys, "
+                    "compact, starting with {.")
+        if isinstance(msgs[0], dict):
+            msgs = [{"role": "user", "content": reminder}] + msgs
+        else:
+            msgs = [reminder] + msgs
+        fix["messages"] = msgs
+    parsed = _extract_json(_post(url, key, fix))
+    return parsed
+
+
+def analyze_image(image_bytes: bytes, user_text: str = "",
+                  model: str | None = None) -> dict:
+    """Ask Muse Spark what components are in the image.
+
+    Returns {"notes": str, "components": [{"label": str, "hint": str}]}.
+    `hint` is free text Spark may add about where the part is (SAM 3.1
+    does the actual locating from `label`).
+    """
+    url, key, default_model = _config()
+    b64 = base64.b64encode(image_bytes).decode()
+    prompt = (
+        "You are inspecting a household appliance. Respond with "
+        "a single JSON object and nothing else, with exactly these keys: "
+        '{"components": [{"label": "inlet hose", "hint": "bottom left", '
+        '"color": "black", "condition": "worn", '
+        '"position": "bottom-left rear"}], '
+        '"appliance": "water heater geyser", '
+        '"brand": "LG or null", "model": "XQB70 or null", '
+        '"details": {"serial": "abc123 or null", '
+        '"color": "white", "markings": ["energy sticker top right"], '
+        '"condition": "rust near bottom edge", '
+        '"other": ["anything else noteworthy"]}, '
+        '"ask": "question asking what the problem is"}. '
+        "Read the device like a detective: brand, model, serial number, "
+        "every sticker, label, badge, button icon, and printed text you "
+        "can see, plus color, material, visible wear, rust, dents, or "
+        "damage. Report each marking with where it sits. Null when "
+        "something is not visible — never invent one. "
+        "For EVERY component also report its color, its visible "
+        "condition, and its position in the image. "
+        "List every visible physical component with short, concrete, "
+        "segmentable part names. Empty components "
+        "array only if truly nothing is visible. "
+        "Never diagnose or suggest fixes in this call. "
+        "Emit compact JSON with no extra whitespace. "
+        "Start your reply with { and keep it under 600 tokens."
+    )
+    if user_text.strip():
+        prompt += f" The user reports: {user_text.strip()}"
+    payload = {
+        "model": model or default_model,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url",
+                 "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+            ],
+        }],
+        "max_tokens": 4000,
+        "reasoning_effort": "low",
+        "response_format": {"type": "json_object"},
+    }
+    parsed = _complete(url, key, payload, ["components", "appliance"])
+    raw_components = parsed.get("components", [])
+    components = [{"label": str(c.get("label", "")).strip(),
+                   "hint": str(c.get("hint", "")).strip(),
+                   "color": str(c.get("color") or "").strip() or None,
+                   "condition": str(c.get("condition") or "").strip() or None,
+                   "position": str(c.get("position") or "").strip() or None}
+                  for c in raw_components
+                  if isinstance(c, dict) and c.get("label")]
+    appliance = str(parsed.get("appliance", "") or "").strip()
+    notes = (f"The appliance is {appliance}." if appliance
+             else "I can see the appliance.")
+    ask = str(parsed.get("ask", "")).strip()
+    brand = str(parsed.get("brand") or "").strip() or None
+    device_model = str(parsed.get("model") or "").strip() or None
+    device = " ".join([s for s in [brand, device_model] if s]) or None
+    det = parsed.get("details", {})
+    details = {
+        "serial": str(det.get("serial") or "").strip() or None,
+        "color": str(det.get("color") or "").strip() or None,
+        "condition": str(det.get("condition") or "").strip() or None,
+        "markings": [str(m).strip() for m in det.get("markings", [])
+                     if str(m).strip()][:8],
+        "other": [str(m).strip() for m in det.get("other", [])
+                  if str(m).strip()][:8],
+    } if isinstance(det, dict) else {
+        "serial": None, "color": None, "condition": None,
+        "markings": [], "other": []}
+    return {"notes": notes, "components": components,
+            "brand": brand, "device_model": device_model, "device": device,
+            "details": details, "ask": ask,
+            "model": model or default_model}
+
+
+def diagnose(appliance: str, device: str | None, labels: list,
+             user_text: str, model: str | None = None) -> dict:
+    """Call 2 (text-only): causes, relevant parts, steps, safety, fix check.
+
+    Split from perception so neither reply hits the token ceiling.
+    """
+    url, key, default_model = _config()
+    prompt = (
+        "You are a repair guide. Respond with a single JSON object and "
+        "nothing else, with exactly these keys: "
+        '{"issue": "restate the problem in one line", '
+        '"causes": ["likely cause one"], '
+        '"relevant": ["part label tied to the issue"], '
+        '"steps": [{"check": "what to inspect", '
+        '"how": "exactly how to inspect or fix it", '
+        '"part": "part label from the list or null", '
+        '"caution": "what not to touch on this step or null"}], '
+        '"safety": ["unplug and remove the battery before opening"], '
+        '"resolution": "how to verify the fix worked and what to do '
+        'if it did not"}. '
+        f"Appliance: {appliance or 'unknown'}. "
+        f"Exact device: {device or 'unknown'}. "
+        f"Visible parts: {', '.join(labels) or 'none listed'}. "
+        f"The user reports: {user_text.strip()} "
+        "Each step must name WHAT to check and exactly HOW, referencing "
+        "the visible parts by name — never generic advice. Mention "
+        "calling a technician exactly once, as the final step. Always "
+        "include safety: power/battery to disconnect, non-conductive "
+        "tools (wood/plastic), parts to never touch, water/heat "
+        "warnings where relevant; each step gets its own caution. "
+        "Emit compact JSON, start with {, keep it under 700 tokens."
+    )
+    payload = {
+        "model": model or default_model,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 8000,
+        "reasoning_effort": "low",
+        "response_format": {"type": "json_object"},
+    }
+    parsed = _complete(url, key, payload, ["causes", "steps"])
+    causes = [str(c).strip() for c in parsed.get("causes", [])
+              if str(c).strip()][:5]
+    relevant = [str(r).strip() for r in parsed.get("relevant", [])
+                if str(r).strip()][:4]
+    steps = []
+    for s in parsed.get("steps", []):
+        if isinstance(s, dict):
+            check = str(s.get("check", "")).strip()
+            if check:
+                steps.append({
+                    "check": check,
+                    "how": str(s.get("how", "")).strip(),
+                    "part": str(s.get("part", "") or "").strip() or None,
+                    "caution": str(s.get("caution", "") or "").strip() or None,
+                })
+        elif str(s).strip():
+            steps.append({"check": str(s).strip(), "how": "",
+                          "part": None, "caution": None})
+    safety = [str(x).strip() for x in parsed.get("safety", [])
+              if str(x).strip()][:6]
+    return {"issue": str(parsed.get("issue", "")).strip(),
+            "causes": causes, "relevant": relevant, "steps": steps[:8],
+            "safety": safety,
+            "resolution": str(parsed.get("resolution", "")).strip()}

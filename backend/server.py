@@ -6,179 +6,118 @@ Run from the project root:
 
 The Next.js frontend (frontend/) proxies /api/* here during dev.
 
-Model routing:
-  - diagnose / repair steps -> Modal Glimmer when deployed
-    (HANDYMAN_MODAL=1 and `modal deploy backend/modal_app.py` done),
-    otherwise the same heuristic fallback Modal itself serves.
-  - tts -> Modal mms-tts WAV when deployed, else {"fallback": true}
-    and the web app speaks with the browser voice.
+Model routing (all local-first; Modal is parked, not functional):
+  - analyze -> staged SSE pipeline (backend/pipeline.py): language detect,
+    device/logo/component proposals (SAM 3.1 hook points), evidence crops,
+    localized causes + repair steps (Glimmer heuristic until weights exist).
+  - tts -> local MMS-TTS WAV (backend/tts_local.py) in the transcript's
+    own language; {"fallback": true} only when synthesis itself fails, in
+    which case the frontend speaks with the browser voice.
   - transcribe -> muse-voice-transcribe endpoint when configured
-    (MUSE_TRANSCRIBE_URL); the web app otherwise uses the browser's
-    built-in speech recognition, so this stays optional.
-  - detect -> SAM 3.1 hook; shell returns a whole-unit proposal box
-    until weights land, and the user can tap-to-tag parts in the UI.
+    (MUSE_TRANSCRIBE_URL); the app otherwise uses the browser's built-in
+    speech recognition, so this stays optional.
 """
 
 import base64
+import json
 import os
 
-from fastapi import FastAPI, File, UploadFile
-from pydantic import BaseModel, Field
+from dotenv import load_dotenv
+from fastapi import FastAPI, File, Form, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
-USE_MODAL = os.environ.get("HANDYMAN_MODAL", "0") == "1"
+load_dotenv()
+
+from .lang import detect_language, language_name, mms_codes
+from .pipeline import analyze_events
+from . import tts_local
 
 app = FastAPI(title="HandyMan backend")
-
-
-# ---------------------------------------------------------------- models
-
-class Component(BaseModel):
-    label: str = "unit"
-    # Normalized box, origin top-left, 0..1 (matches web canvas coords).
-    x: float = 0.05
-    y: float = 0.05
-    w: float = 0.9
-    h: float = 0.9
-    confidence: float = 0.5
-
-
-class DiagnoseRequest(BaseModel):
-    transcript: str
-    components: list[Component] = Field(default_factory=list)
-
-
-class Cause(BaseModel):
-    title: str
-    explanation: str
-    relatedComponentLabel: str | None = None
-    confidence: float
-
-
-class StepsRequest(BaseModel):
-    cause: Cause
-    components: list[Component] = Field(default_factory=list)
-
-
-class RepairStep(BaseModel):
-    index: int
-    instruction: str
-    highlightLabel: str | None = None
+# Sandbox talkback calls the backend directly (browser -> :8000) so long
+# image-generation requests don't die in the Next dev proxy.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://127.0.0.1:3000", "http://localhost:3000"],
+    allow_methods=["POST", "GET", "OPTIONS"],
+    allow_headers=["Content-Type"],
+)
 
 
 class TTSRequest(BaseModel):
     text: str
+    lang: str | None = None
 
-
-def _modal_classes():
-    """Look up deployed Modal classes; raises when not deployed/authed."""
-    import modal
-
-    glimmer = modal.Cls.from_name("handyman-models", "Glimmer")
-    tts = modal.Cls.from_name("handyman-models", "MMSTTS")
-    return glimmer, tts
-
-
-# ---------------------------------------------------------------- routes
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "modal": USE_MODAL}
+    return {"ok": True, "tts": "local mms-tts", "tts_ready": tts_local.available()}
 
 
-@app.post("/api/detect")
-async def detect(file: UploadFile = File(...)):
-    """Object detection shell (SAM 3.1 hook).
+@app.get("/api/languages")
+def languages():
+    """Every MMS-TTS voice with its narration coverage for the picker."""
+    from .i18n import can_narrate
+    return {"languages": [{"code": c, "name": language_name(c),
+                           "narratable": can_narrate(c)}
+                           for c in sorted(mms_codes())]}
 
-    Accepts a still JPEG; returns component proposals. Today this is a
-    whole-unit proposal so capture -> highlight works; the SAM 3.1 weights
-    slot in here without changing the web client.
+
+@app.post("/api/analyze")
+async def analyze(file: UploadFile = File(...), transcript: str = Form(""),
+                  lang_override: str = Form("")):
+    """One voice turn, streamed as it is gathered (SSE, one JSON per event).
+
+    The frontend POSTs the transcript with a system-captured still and reads
+    events incrementally: it speaks every "thinking" line while rendering
+    that stage's boxes + evidence crops, so narration and SAM overlays run
+    simultaneously. See backend/pipeline.py for the stage order.
     """
-    await file.read()
-    # TODO: run SAM 3.1 (local weights or Modal) on the still and return
-    # per-component boxes + masks.
-    return {"components": [Component().model_dump()],
-            "model": "sam-3.1 (shell proposal)"}
+    still = await file.read()
 
+    def gen():
+        for event in analyze_events(still, transcript, override=lang_override):
+            yield "data: " + json.dumps(event, ensure_ascii=False) + "\n\n"
 
-@app.post("/api/diagnose")
-def diagnose(req: DiagnoseRequest):
-    if USE_MODAL:
-        try:
-            glimmer, _ = _modal_classes()
-            payload = {"transcript": req.transcript,
-                       "components": [c.model_dump() for c in req.components]}
-            return glimmer().diagnose.remote(payload)
-        except Exception as exc:  # deployed lookup failed; fall through
-            return {"causes": [], "model": "unavailable", "error": str(exc)}
-    text = req.transcript.lower()
-    first = req.components[0].label if req.components else None
-
-    def cause(title, explanation, confidence):
-        return {"title": title, "explanation": explanation,
-                "relatedComponentLabel": first, "confidence": confidence}
-
-    if "leak" in text or "water" in text:
-        causes = [cause("Water inlet / hose fault",
-                        "Leaks near the base usually come from the inlet hose or pump seal.", 0.6)]
-    elif any(w in text for w in ("noise", "loud", "vibrat", "shak")):
-        causes = [cause("Unbalanced load or worn bearing",
-                        "Loud spin cycles often mean an unbalanced drum or a worn bearing.", 0.55)]
-    elif "power" in text or "not turning on" in text or "dead" in text:
-        causes = [cause("Power supply / breaker fault",
-                        "No power usually traces to the supply, fuse, or breaker row.", 0.55)]
-    else:
-        causes = [cause("Needs visual inspection",
-                        "Describe the symptom and I will narrow it down once components are segmented.", 0.4)]
-    return {"causes": causes, "model": "local heuristic (Glimmer fallback)"}
-
-
-@app.post("/api/steps")
-def steps(req: StepsRequest):
-    if USE_MODAL:
-        try:
-            glimmer, _ = _modal_classes()
-            payload = {"cause": req.cause.model_dump(),
-                       "components": [c.model_dump() for c in req.components]}
-            return glimmer().repair_steps.remote(payload)
-        except Exception as exc:
-            return {"steps": [], "model": "unavailable", "error": str(exc)}
-    label = req.cause.relatedComponentLabel or "the highlighted part"
-    return {"steps": [
-        {"index": 0, "instruction": "Power off the unit and confirm it is safe to touch.",
-         "highlightLabel": req.cause.relatedComponentLabel},
-        {"index": 1, "instruction": f"Inspect {label} for visible damage or loose connections.",
-         "highlightLabel": req.cause.relatedComponentLabel},
-        {"index": 2, "instruction": 'Say "next" when ready and I will walk you through the fix.',
-         "highlightLabel": req.cause.relatedComponentLabel},
-    ], "model": "local heuristic (Glimmer fallback)"}
-
-
-@app.post("/api/overlay")
-def overlay(req: StepsRequest):
-    label = req.cause.relatedComponentLabel or "the highlighted part"
-    return {"caption": f"Possible cause: {req.cause.title}. Inspect {label}.",
-            "model": "muse-image (caption shell)"}
+    return StreamingResponse(gen(), media_type="text/event-stream")
 
 
 @app.post("/api/tts")
 def tts(req: TTSRequest):
-    if USE_MODAL:
-        try:
-            _, tts_cls = _modal_classes()
-            wav: bytes = tts_cls().synthesize.remote({"text": req.text})
-            return {"audio_b64": base64.b64encode(wav).decode(),
-                    "mime": "audio/wav", "model": "mms-tts (modal)"}
-        except Exception as exc:
-            return {"fallback": True, "text": req.text, "error": str(exc)}
-    return {"fallback": True, "text": req.text,
-            "model": "browser speechSynthesis (mms-tts not deployed)"}
+    """Speak `text` in the given MMS language (detected when omitted).
+
+    `lang` is an MMS checkpoint suffix ("eng", "hin", "urd-script_arabic")
+    or an authored alias ("en"/"hi"/"hinglish"). Unknown codes fall back
+    to the browser voice rather than a wrong-language model.
+    """
+    alias = {"en": "eng", "hi": "hin", "hinglish": "hin"}
+    if req.lang and req.lang in mms_codes():
+        code = req.lang
+    elif req.lang in alias:
+        code = alias[req.lang]
+    elif req.lang:
+        return {"fallback": True, "text": req.text, "lang": req.lang,
+                "error": "no MMS voice for this language"}
+    else:
+        detected = detect_language(req.text)
+        code = detected["code"] or "eng"
+    checkpoint = f"facebook/mms-tts-{code}"
+    try:
+        wav = tts_local.synthesize(req.text, checkpoint)
+        return {"audio_b64": base64.b64encode(wav).decode(),
+                "mime": "audio/wav", "model": checkpoint + " (local)",
+                "lang": code}
+    except Exception as exc:
+        return {"fallback": True, "text": req.text, "lang": code,
+                "error": str(exc)}
 
 
 @app.post("/api/transcribe")
 async def transcribe(file: UploadFile = File(...)):
-    """Muse Voice Transcribe hook. 501 until MUSE_TRANSCRIBE_URL is set.
+    """Muse Voice Transcribe hook. Unconfigured until MUSE_TRANSCRIBE_URL set.
 
-    The web app prefers the browser's built-in speech recognition, so this
+    The app prefers the browser's built-in speech recognition, so this
     endpoint is only a server-side option, not a requirement.
     """
     url = os.environ.get("MUSE_TRANSCRIBE_URL")
@@ -195,3 +134,176 @@ def index():
     return {"service": "handyman-backend",
             "frontend": "Next.js app in frontend/ (port 3000)",
             "docs": "/docs"}
+
+
+@app.post("/api/repair/analyze")
+async def repair_analyze(file: UploadFile = File(...),
+                          text: str = Form(""),
+                          components: str = Form(""),
+                          model: str | None = Form(None)):
+    """Repair flow: image in -> Muse Spark analysis + overlay highlights.
+
+    One hosted gateway (MUSE_SPARK_API_URL/KEY): Spark
+    (muse-spark-contributor) names the components, sam-3.1 cuts a mask
+    per name. SAM-only mode: pass `components` comma-separated to skip
+    the Spark call (still needs the API key).
+    """
+    from . import sam31, spark, muse_image
+
+    image = await file.read()
+    wanted = [c.strip() for c in (components or "").split(",") if c.strip()]
+    notes = ""
+    causes: list = []
+    steps: list = []
+    relevant: list = []
+    understood = ""
+    resolution = ""
+    device = ""
+    details = {}
+    ask = ""
+    inventory = []
+    safety: list = []
+    if not wanted:
+        try:
+            analysis = spark.analyze_image(image, user_text=text,
+                                           model=model)
+        except RuntimeError as exc:
+            status = ("needs-api-key" if "not configured" in str(exc)
+                      else "spark-error")
+            return {"status": status, "detail": str(exc)}
+        except Exception as exc:
+            return {"status": "unexpected-error",
+                    "detail": f"{type(exc).__name__}: {exc}"}
+        wanted = [c["label"] for c in analysis["components"]]
+        inventory = [{k: c.get(k) for k in
+                      ("label", "color", "condition", "position")}
+                     for c in analysis["components"]]
+        notes = analysis["notes"]
+        device = analysis.get("device") or ""
+        details = analysis.get("details", {})
+        ask = analysis.get("ask", "")
+        if text.strip():
+            try:
+                diag = spark.diagnose(
+                    notes.replace("The appliance is ", "").rstrip("."),
+                    device or None, wanted, text, model=model)
+            except Exception as exc:
+                return {"status": "diagnose-error", "detail": str(exc),
+                        "notes": notes,
+                        "components": inventory,
+                        "device": device, "details": details,
+                        "ask": ask}
+            causes = diag["causes"]
+            steps = diag["steps"]
+            understood = diag["issue"]
+            resolution = diag["resolution"]
+            safety = diag["safety"]
+            diag_rel = [r.lower() for r in diag["relevant"]]
+            relevant = [w for w in wanted if w.lower() in diag_rel]
+        else:
+            relevant = []
+        relevant = [c["label"] for c in analysis["components"]
+                    if c.get("relevant")][:4]
+    highlight = None
+    try:
+        instances = sam31.segment(image, wanted)
+    except Exception:
+        instances = []
+    from .muse_image import assign_legend
+    canonical = assign_legend(relevant or wanted[:4])
+    first_part = (steps[0].get("part") if steps
+                  and isinstance(steps[0], dict) else None)
+    to_mark = ([first_part] if first_part else relevant) or wanted[:4]
+    has_intent = bool(text.strip() or components.strip() or steps)
+    if not instances and to_mark and has_intent:
+        try:
+            highlight = muse_image.highlight(image, to_mark,
+                                             fixed=canonical)
+        except Exception as exc:
+            return {"status": "highlight-error", "detail": str(exc),
+                    "notes": notes,
+                    "components": [{"label": w} for w in wanted],
+                    "causes": causes, "steps": steps,
+                    "legend": canonical,
+                    "instances": []}
+    from . import aids as repair_aids
+    has_text = bool(text.strip() or components.strip())
+    if not has_text:
+        return {"status": "ok", "notes": notes,
+                "components": inventory,
+                "causes": [], "steps": [],
+                "issue": "", "resolution": resolution,
+                "device": device, "details": details, "ask": ask,
+                "aids": [], "instances": [], "legend": [],
+                "overlay": None}
+    appliance = notes.replace("The appliance is ", "").rstrip(".").strip()
+    issue = text.strip()
+    if appliance and appliance.lower() in issue.lower():
+        query = issue
+    else:
+        query = " ".join([s for s in [appliance, issue] if s]).strip()
+    query = query or "appliance repair"
+    if device and device.lower() not in query.lower():
+        query = f"{device} {query}"
+    videos = repair_aids.fetch_video_ids(query + " repair tutorial")
+    aids = [{
+        "kind": "videos",
+        "title": f"Video tutorials: {query}",
+        "url": repair_aids.youtube_search_url(query + " repair tutorial"),
+        "videos": videos,
+    }, {
+        "kind": "images",
+        "title": f"Reference pictures: {query}",
+        "url": repair_aids.images_search_url(query),
+    }]
+    if wanted:
+        part_query = f"{query} {wanted[0]} fix"
+        aids.append({
+            "kind": "videos",
+            "title": f"Videos: fixing the {wanted[0]}",
+            "url": repair_aids.youtube_search_url(part_query),
+            "videos": [],
+        })
+    for i, st in enumerate(steps):
+        check = st.get("check", "") if isinstance(st, dict) else str(st)
+        if check:
+            aids.append({
+                "kind": "videos",
+                "title": f"Step {i + 1} video: {check[:70]}",
+                "url": repair_aids.youtube_search_url(f"{query} {check}"),
+                "videos": [],
+            })
+    return {"status": "ok", "notes": notes,
+            "components": inventory,
+            "causes": causes, "steps": steps,
+            "issue": understood, "resolution": resolution,
+            "device": device, "details": details, "ask": ask,
+            "safety": safety,
+            "aids": aids,
+            "instances": instances,
+            "legend": canonical,
+            "overlay": highlight}
+
+
+@app.post("/api/repair/highlight")
+async def repair_highlight(file: UploadFile = File(...),
+                            part: str = Form(...),
+                            legend: str = Form("")):
+    """One step's highlight on demand: image + part name -> overlay.
+
+    `legend` (JSON) carries the walkthrough's canonical tag assignment
+    so this step reuses the same letters, not A-from-scratch.
+    """
+    from . import muse_image
+
+    image = await file.read()
+    try:
+        fixed = json.loads(legend) if legend.strip() else []
+    except json.JSONDecodeError:
+        fixed = []
+    try:
+        return {"status": "ok",
+                "overlay": muse_image.highlight(image, [part.strip()],
+                                                fixed=fixed)}
+    except Exception as exc:
+        return {"status": "highlight-error", "detail": str(exc)}
