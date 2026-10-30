@@ -5,6 +5,7 @@
    spoken thinking throughout. Embedded in the main app's repair view. */
 
 import { useEffect, useRef, useState } from "react";
+import { resolveApiBase } from "../lib/apiBase";
 
 interface Instance {
   label: string;
@@ -115,14 +116,27 @@ export default function RepairWalkthrough({
   }
 
   // Backend base URL. Default: same host as the page on port 8000
-  // (works from a phone on the LAN). If the backend is reached through
-  // its own tunnel instead, set NEXT_PUBLIC_API_BASE to the tunnel URL
-  // (e.g. in frontend/.env.local) and restart the frontend.
-  const API =
-    process.env.NEXT_PUBLIC_API_BASE ||
-    (typeof window === "undefined"
-      ? "http://127.0.0.1:8000"
-      : `http://${window.location.hostname}:8000`);
+  // (works from a phone on the LAN). Build-time override via
+  // NEXT_PUBLIC_API_BASE; per-browser override below (localStorage)
+  // wins — set it once from the phone when tunnel URLs rotate.
+  function defaultAPI(): string {
+    if (typeof window === "undefined") return "http://127.0.0.1:8000";
+    let saved: string | null = null;
+    try {
+      saved = window.localStorage.getItem("handyman-api-base");
+    } catch (_) {
+      // Storage unavailable; fall through to the default.
+    }
+    return resolveApiBase(
+      process.env.NEXT_PUBLIC_API_BASE,
+      saved,
+      window.location.hostname
+    );
+  }
+  const [apiBase, setApiBase] = useState<string>("");
+  const [needBase, setNeedBase] = useState<boolean>(false);
+  const [baseInput, setBaseInput] = useState<string>("");
+  const API = apiBase || defaultAPI();
 
   const [said, setSaid] = useState<string[]>([]);
   // Serial speech: every line waits for the previous audio to finish,
@@ -198,11 +212,11 @@ export default function RepairWalkthrough({
   useEffect(() => {
     fileRef.current = file;
     setImgURL(URL.createObjectURL(file));
-    void run(file, issue);
+    void run(file, issue, API);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function run(f: File, t: string) {
+  async function run(f: File, t: string, base: string) {
     setStatus("Analyzing…");
     setInstances([]);
     setNotes("");
@@ -224,7 +238,7 @@ export default function RepairWalkthrough({
       const fd = new FormData();
       fd.append("file", f);
       fd.append("text", t);
-      const r = await fetch(`${API}/api/repair/analyze`, { method: "POST", body: fd });
+      const r = await fetch(`${base}/api/repair/analyze`, { method: "POST", body: fd });
       const data = await r.json();
       if (data.status !== "ok") {
         const notes: string = data.notes || "";
@@ -344,6 +358,7 @@ export default function RepairWalkthrough({
     } catch (e) {
       const msg = "Failed: " + (e as Error).message;
       setStatus(msg);
+      setNeedBase(true);
       await say(
         "I could not reach the server. If you are on a phone, make sure " +
           "it is on the same Wi-Fi as the computer running the app, then try again."
@@ -435,6 +450,41 @@ export default function RepairWalkthrough({
         </button>
       </p>
       {status && <p role="status">{status}</p>}
+      {needBase && (
+        <div style={{ marginTop: 8 }}>
+          <p>
+            The backend is not reachable at <code>{API}</code>. If it is
+            behind a tunnel, paste its URL (it changes every run — this is
+            remembered in this browser only):
+          </p>
+          <input
+            value={baseInput}
+            onChange={(e) => setBaseInput(e.target.value)}
+            placeholder="https://your-backend-tunnel-url"
+            style={{ padding: 8, width: "100%" }}
+            autoComplete="off"
+          />
+          <button
+            type="button"
+            style={{ marginTop: 8, padding: 10 }}
+            onClick={() => {
+              const url = baseInput.trim().replace(/\/$/, "");
+              if (!url) return;
+              try {
+                window.localStorage.setItem("handyman-api-base", url);
+              } catch (_) {
+                // Private mode; keep it for this run only.
+              }
+              setApiBase(url);
+              setNeedBase(false);
+              setBaseInput("");
+              void run(file, issue, url);
+            }}
+          >
+            Save and retry
+          </button>
+        </div>
+      )}
       {notes && <p><em>{notes}</em></p>}
       {device && <p><strong>Detected device:</strong> {device}</p>}
       {ask && (
