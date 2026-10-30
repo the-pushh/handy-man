@@ -114,12 +114,15 @@ export default function RepairWalkthrough({
     }
   }
 
-  // Same host as the page (works from a phone on the LAN, not just
-  // localhost) — the backend port is fixed at 8000 by `make`.
+  // Backend base URL. Default: same host as the page on port 8000
+  // (works from a phone on the LAN). If the backend is reached through
+  // its own tunnel instead, set NEXT_PUBLIC_API_BASE to the tunnel URL
+  // (e.g. in frontend/.env.local) and restart the frontend.
   const API =
-    typeof window === "undefined"
+    process.env.NEXT_PUBLIC_API_BASE ||
+    (typeof window === "undefined"
       ? "http://127.0.0.1:8000"
-      : `http://${window.location.hostname}:8000`;
+      : `http://${window.location.hostname}:8000`);
 
   const [said, setSaid] = useState<string[]>([]);
   // Serial speech: every line waits for the previous audio to finish,
