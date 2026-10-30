@@ -1,5 +1,12 @@
 modal
 fastapi
+python-dotenv
 uvicorn[standard]
 python-multipart
 pillow
+torch
+transformers
+soundfile
+langdetect
+iso639-lang
+sentencepiece

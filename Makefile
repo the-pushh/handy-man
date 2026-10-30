@@ -16,8 +16,9 @@ MODAL := $(PYTHON) -m modal
 # Interpreter used to create .venv when it is missing (override if needed).
 VENV_PYTHON ?= /opt/homebrew/bin/python3
 
-# 0 = local heuristic fallbacks, 1 = route Glimmer/TTS through Modal.
-HANDYMAN_MODAL ?= 1
+# 0 = everything runs locally (default; Modal is parked),
+# 1 = route Glimmer/TTS through Modal when it becomes functional again.
+HANDYMAN_MODAL ?= 0
 
 BACKEND_PORT := 8000
 FRONTEND_PORT := 3000
