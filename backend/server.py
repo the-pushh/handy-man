@@ -39,7 +39,9 @@ app = FastAPI(title="HandyMan backend")
 # image-generation requests don't die in the Next dev proxy.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1:3000", "http://localhost:3000"],
+    # Dev only: the page may be opened from a phone on the LAN, so any
+    # local origin is allowed. No credentials are used.
+    allow_origins=["*"],
     allow_methods=["POST", "GET", "OPTIONS"],
     allow_headers=["Content-Type"],
 )

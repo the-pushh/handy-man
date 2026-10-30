@@ -114,7 +114,12 @@ export default function RepairWalkthrough({
     }
   }
 
-  const API = "http://127.0.0.1:8000";
+  // Same host as the page (works from a phone on the LAN, not just
+  // localhost) — the backend port is fixed at 8000 by `make`.
+  const API =
+    typeof window === "undefined"
+      ? "http://127.0.0.1:8000"
+      : `http://${window.location.hostname}:8000`;
 
   const [said, setSaid] = useState<string[]>([]);
   // Serial speech: every line waits for the previous audio to finish,
@@ -278,6 +283,17 @@ export default function RepairWalkthrough({
         setAsk(data.ask);
         await say(data.ask);
       }
+      if (
+        !(data.steps || []).length &&
+        !data.ask &&
+        (list.length > 0 || (data.components || []).length > 0)
+      ) {
+        await say(
+          "I can see the parts but I could not tell what is wrong. " +
+            "Move closer to the faulty area or tell me which part you mean, " +
+            "then run it again."
+        );
+      }
       setResolution(data.resolution || "");
       if (data.device) {
         setDevice(data.device);
@@ -325,7 +341,10 @@ export default function RepairWalkthrough({
     } catch (e) {
       const msg = "Failed: " + (e as Error).message;
       setStatus(msg);
-      await say("Something went wrong reaching the server. Please try again.");
+      await say(
+        "I could not reach the server. If you are on a phone, make sure " +
+          "it is on the same Wi-Fi as the computer running the app, then try again."
+      );
     }
   }
 
