@@ -3,8 +3,36 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import gsap from "gsap";
 import { popIn, reducedMotion, riseIn, stillIn } from "./lib/anim";
+import { getSpeechRecognition } from "./lib/speech";
+import type { SpeechRecognitionLike } from "./lib/speech";
 
-async function postJSON(path, body) {
+interface ComponentBox {
+  label: string;
+  // Normalized box, origin top-left, 0..1 (matches backend schema).
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  confidence: number;
+}
+
+interface Cause {
+  title: string;
+  explanation: string;
+  relatedComponentLabel: string | null;
+  confidence: number;
+}
+
+interface RepairStep {
+  index: number;
+  instruction: string;
+  highlightLabel: string | null;
+}
+
+type Mode = "live" | "still" | "diagnosing";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function postJSON(path: string, body: unknown): Promise<any> {
   const r = await fetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -14,13 +42,15 @@ async function postJSON(path, body) {
   return r.json();
 }
 
-function stopSpeech() {
+function stopSpeech(): void {
   try {
     window.speechSynthesis.cancel();
-  } catch (_) {}
+  } catch (_) {
+    // Speech synthesis unavailable; nothing to stop.
+  }
 }
 
-async function speak(text) {
+async function speak(text: string): Promise<void> {
   try {
     const data = await postJSON("/api/tts", { text });
     if (data.audio_b64) {
@@ -39,38 +69,48 @@ async function speak(text) {
 }
 
 export default function Home() {
-  const videoRef = useRef(null);
-  const grabRef = useRef(null);
-  const stillRef = useRef(null);
-  const wrapRef = useRef(null);
-  const recogRef = useRef(null);
-  const tagCountRef = useRef(0);
-  const boxesRef = useRef(null);
-  const causesBlockRef = useRef(null);
-  const stepsBlockRef = useRef(null);
-  const captionRef = useRef(null);
-  const transcriptRef = useRef(null);
-  const statusRef = useRef(null);
-  const micRef = useRef(null);
-  const pulseRef = useRef(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const grabRef = useRef<HTMLCanvasElement>(null);
+  const stillRef = useRef<HTMLCanvasElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const recogRef = useRef<SpeechRecognitionLike | null>(null);
+  const tagCountRef = useRef<number>(0);
+  const boxesRef = useRef<HTMLDivElement>(null);
+  const causesBlockRef = useRef<HTMLDivElement>(null);
+  const stepsBlockRef = useRef<HTMLDivElement>(null);
+  const captionRef = useRef<HTMLParagraphElement>(null);
+  const transcriptRef = useRef<HTMLParagraphElement>(null);
+  const statusRef = useRef<HTMLDivElement>(null);
+  const micRef = useRef<HTMLButtonElement>(null);
+  const pulseRef = useRef<gsap.core.Tween | null>(null);
 
-  const [mode, setMode] = useState("live");
-  const [components, setComponents] = useState([]);
-  const [causes, setCauses] = useState([]);
-  const [cause, setCause] = useState(null);
-  const [steps, setSteps] = useState([]);
-  const [stepIndex, setStepIndex] = useState(0);
-  const [transcript, setTranscript] = useState("");
-  const [caption, setCaption] = useState("");
-  const [listening, setListening] = useState(false);
-  const [statusMsg, setStatusMsg] = useState("");
+  const [mode, setMode] = useState<Mode>("live");
+  const [components, setComponents] = useState<ComponentBox[]>([]);
+  const [causes, setCauses] = useState<Cause[]>([]);
+  const [cause, setCause] = useState<Cause | null>(null);
+  const [steps, setSteps] = useState<RepairStep[]>([]);
+  const [stepIndex, setStepIndex] = useState<number>(0);
+  const [transcript, setTranscript] = useState<string>("");
+  const [caption, setCaption] = useState<string>("");
+  const [listening, setListening] = useState<boolean>(false);
+  const [statusMsg, setStatusMsg] = useState<string>("");
 
   // Latest values for use inside recognition callbacks.
-  const live = useRef({ mode, steps, transcript });
-  live.current = { mode, steps, transcript };
+  const live = useRef<{
+    mode: Mode;
+    steps: RepairStep[];
+    transcript: string;
+    components: ComponentBox[];
+  }>({ mode: "live", steps: [], transcript: "", components: [] });
+  live.current = {
+    mode,
+    steps,
+    transcript,
+    components: live.current.components,
+  };
 
   useEffect(() => {
-    let stream;
+    let stream: MediaStream | undefined;
     (async () => {
       try {
         stream = await navigator.mediaDevices.getUserMedia({
@@ -85,113 +125,133 @@ export default function Home() {
     return () => stream?.getTracks().forEach((t) => t.stop());
   }, []);
 
-  const highlightLabel = steps.length
+  const highlightLabel: string | null | undefined = steps.length
     ? steps[stepIndex]?.highlightLabel
     : cause?.relatedComponentLabel;
 
-  const refreshCaptionAndSpeech = useCallback(async (theCause, theSteps, idx) => {
-    if (!theCause) return;
-    const step = theSteps.length ? theSteps[idx] : null;
-    const ov = await postJSON("/api/overlay", {
-      cause: theCause,
-      components: live.current.components ?? [],
-    }).catch(() => null);
-    const text = step
-      ? `Step ${idx + 1}: ${step.instruction}`
-      : ov?.caption || `Possible cause: ${theCause.title}.`;
-    setCaption(text);
-    await speak(text);
-  }, []);
+  const refreshCaptionAndSpeech = useCallback(
+    async (theCause: Cause | null, theSteps: RepairStep[], idx: number) => {
+      if (!theCause) return;
+      const step = theSteps.length ? theSteps[idx] : undefined;
+      const ov = await postJSON("/api/overlay", {
+        cause: theCause,
+        components: live.current.components,
+      }).catch(() => null);
+      const text = step
+        ? `Step ${idx + 1}: ${step.instruction}`
+        : ov?.caption || `Possible cause: ${theCause.title}.`;
+      setCaption(text);
+      await speak(text);
+    },
+    []
+  );
 
-  const diagnose = useCallback(async (text, comps) => {
-    setStatusMsg("Asking Glimmer…");
-    try {
-      const data = await postJSON("/api/diagnose", {
-        transcript: text,
-        components: comps,
-      });
-      setMode("diagnosing");
-      const found = data.causes || [];
-      setCauses(found);
-      const first = found[0] || null;
-      setCause(first);
-      setSteps([]);
-      setStepIndex(0);
-      await refreshCaptionAndSpeech(first, [], 0);
-      setStatusMsg("");
-    } catch (e) {
-      setStatusMsg("Diagnosis failed: " + e.message);
-    }
-  }, [refreshCaptionAndSpeech]);
-
-  const capture = useCallback(async (text) => {
-    const video = videoRef.current;
-    if (!video?.videoWidth) {
-      setStatusMsg("Camera not ready yet.");
-      return;
-    }
-    setStatusMsg("Capturing…");
-    try {
-      const grab = grabRef.current;
-      grab.width = video.videoWidth;
-      grab.height = video.videoHeight;
-      grab.getContext("2d").drawImage(video, 0, 0);
-      const blob = await new Promise((res) => grab.toBlob(res, "image/jpeg", 0.85));
-      const bmp = await createImageBitmap(blob);
-      const still = stillRef.current;
-      still.width = bmp.width;
-      still.height = bmp.height;
-      still.getContext("2d").drawImage(bmp, 0, 0);
-
-      const fd = new FormData();
-      fd.append("file", blob, "still.jpg");
-      const r = await fetch("/api/detect", { method: "POST", body: fd });
-      const data = await r.json();
-      const comps = data.components || [];
-      tagCountRef.current = 0;
-      setComponents(comps);
-      setMode("still");
-      const spoken = text ?? live.current.transcript;
-      if (!spoken) {
-        setStatusMsg("Still captured. Describe the issue — tap Talk.");
-        startListening();
-      } else {
-        await diagnose(spoken, comps);
+  const diagnose = useCallback(
+    async (text: string, comps: ComponentBox[]) => {
+      setStatusMsg("Asking Glimmer…");
+      try {
+        const data = await postJSON("/api/diagnose", {
+          transcript: text,
+          components: comps,
+        });
+        setMode("diagnosing");
+        const found: Cause[] = data.causes || [];
+        setCauses(found);
+        const first = found[0] || null;
+        setCause(first);
+        setSteps([]);
+        setStepIndex(0);
+        await refreshCaptionAndSpeech(first, [], 0);
+        setStatusMsg("");
+      } catch (e) {
+        setStatusMsg("Diagnosis failed: " + (e as Error).message);
       }
-    } catch (e) {
-      setStatusMsg("Capture failed: " + e.message);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [diagnose]);
+    },
+    [refreshCaptionAndSpeech]
+  );
 
-  const handleTranscript = useCallback(async (text) => {
-    stopListeningInner();
-    setTranscript(text);
-    const { mode: m, steps: s } = live.current;
-    if (/^\s*next\s*\.?$/i.test(text) && s.length) {
-      advanceStepInner();
-      return;
-    }
-    if (m === "live") await capture(text);
-    else await diagnose(text, live.current.components ?? []);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [capture, diagnose]);
+  const capture = useCallback(
+    async (text?: string) => {
+      const video = videoRef.current;
+      if (!video?.videoWidth) {
+        setStatusMsg("Camera not ready yet.");
+        return;
+      }
+      setStatusMsg("Capturing…");
+      try {
+        const grab = grabRef.current;
+        if (!grab) throw new Error("capture canvas missing");
+        grab.width = video.videoWidth;
+        grab.height = video.videoHeight;
+        grab.getContext("2d")?.drawImage(video, 0, 0);
+        const blob = await new Promise<Blob>((resolve, reject) =>
+          grab.toBlob(
+            (b) => (b ? resolve(b) : reject(new Error("still encode failed"))),
+            "image/jpeg",
+            0.85
+          )
+        );
+        const bmp = await createImageBitmap(blob);
+        const still = stillRef.current;
+        if (!still) throw new Error("still canvas missing");
+        still.width = bmp.width;
+        still.height = bmp.height;
+        still.getContext("2d")?.drawImage(bmp, 0, 0);
+
+        const fd = new FormData();
+        fd.append("file", blob, "still.jpg");
+        const r = await fetch("/api/detect", { method: "POST", body: fd });
+        const data = await r.json();
+        const comps: ComponentBox[] = data.components || [];
+        tagCountRef.current = 0;
+        setComponents(comps);
+        setMode("still");
+        const spoken = text ?? live.current.transcript;
+        if (!spoken) {
+          setStatusMsg("Still captured. Describe the issue — tap Talk.");
+          startListening();
+        } else {
+          await diagnose(spoken, comps);
+        }
+      } catch (e) {
+        setStatusMsg("Capture failed: " + (e as Error).message);
+      }
+    },
+    [diagnose]
+  );
+
+  const handleTranscript = useCallback(
+    async (text: string) => {
+      stopListeningInner();
+      setTranscript(text);
+      const { mode: m, steps: s } = live.current;
+      if (/^\s*next\s*\.?$/i.test(text) && s.length) {
+        advanceStepInner();
+        return;
+      }
+      if (m === "live") await capture(text);
+      else await diagnose(text, live.current.components);
+    },
+    [capture, diagnose]
+  );
 
   const recogCb = useRef(handleTranscript);
   recogCb.current = handleTranscript;
 
-  function stopListeningInner() {
+  function stopListeningInner(): void {
     if (recogRef.current) {
       try {
         recogRef.current.abort();
-      } catch (_) {}
+      } catch (_) {
+        // Already stopped.
+      }
       recogRef.current = null;
     }
     setListening(false);
   }
 
-  function startListening() {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  function startListening(): void {
+    const SR = getSpeechRecognition();
     if (!SR) {
       setStatusMsg("No built-in voice recognition — type the issue below.");
       return;
@@ -211,18 +271,18 @@ export default function Home() {
       recog.start();
       recogRef.current = recog;
     } catch (e) {
-      setStatusMsg("Voice error: " + e.message);
+      setStatusMsg("Voice error: " + (e as Error).message);
     }
   }
 
   // Drives step advance from both the button and the "next" voice command.
-  const advRef = useRef(null);
+  const advRef = useRef<(() => void) | null>(null);
 
-  function advanceStepInner() {
+  function advanceStepInner(): void {
     advRef.current?.();
   }
 
-  async function advanceStep() {
+  async function advanceStep(): Promise<void> {
     if (!steps.length) return;
     const idx = Math.min(stepIndex + 1, steps.length - 1);
     setStepIndex(idx);
@@ -230,20 +290,20 @@ export default function Home() {
   }
   advRef.current = advanceStep;
 
-  async function selectCause(c) {
+  async function selectCause(c: Cause): Promise<void> {
     setCause(c);
     try {
       const data = await postJSON("/api/steps", { cause: c, components });
-      const s = data.steps || [];
+      const s: RepairStep[] = data.steps || [];
       setSteps(s);
       setStepIndex(0);
       await refreshCaptionAndSpeech(c, s, 0);
     } catch (e) {
-      setStatusMsg("Steps failed: " + e.message);
+      setStatusMsg("Steps failed: " + (e as Error).message);
     }
   }
 
-  function backToLive() {
+  function backToLive(): void {
     stopListeningInner();
     stopSpeech();
     setMode("live");
@@ -257,9 +317,11 @@ export default function Home() {
     setStatusMsg("");
   }
 
-  function tagPart(e) {
-    if (mode === "live" || e.target.closest(".box")) return;
-    const r = wrapRef.current.getBoundingClientRect();
+  function tagPart(e: React.MouseEvent<HTMLDivElement>): void {
+    if (mode === "live" || (e.target as HTMLElement).closest(".box")) return;
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const r = wrap.getBoundingClientRect();
     const x = (e.clientX - r.left) / r.width;
     const y = (e.clientY - r.top) / r.height;
     tagCountRef.current += 1;
@@ -375,7 +437,7 @@ export default function Home() {
             <p>Possible causes — tap one:</p>
             {causes.map((c, i) => (
               <button
-                key={i}
+                key={`${c.title}-${i}`}
                 type="button"
                 className={"cause" + (cause?.title === c.title ? " sel" : "")}
                 onClick={() => selectCause(c)}
@@ -413,7 +475,7 @@ export default function Home() {
 
         <form
           className="typeForm"
-          onSubmit={(e) => {
+          onSubmit={(e: React.FormEvent<HTMLFormElement>) => {
             e.preventDefault();
             const v = new FormData(e.currentTarget).get("issue")?.toString().trim();
             if (v) {

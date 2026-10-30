@@ -1,6 +1,6 @@
 import gsap from "gsap";
 
-export function reducedMotion() {
+export function reducedMotion(): boolean {
   return (
     typeof window !== "undefined" &&
     window.matchMedia("(prefers-reduced-motion: reduce)").matches
@@ -8,8 +8,8 @@ export function reducedMotion() {
 }
 
 /** Pop-in for detection boxes (staggered, subtle). */
-export function popIn(targets) {
-  if (reducedMotion() || !targets?.length) return;
+export function popIn(targets: gsap.TweenTarget): void {
+  if (reducedMotion()) return;
   gsap.fromTo(
     targets,
     { opacity: 0, scale: 0.7, y: 8 },
@@ -26,7 +26,7 @@ export function popIn(targets) {
 }
 
 /** Rise-and-fade for panel blocks (causes, steps, caption, status). */
-export function riseIn(el) {
+export function riseIn(el: Element | null): void {
   if (reducedMotion() || !el) return;
   gsap.fromTo(
     el,
@@ -36,7 +36,7 @@ export function riseIn(el) {
 }
 
 /** Settle for the captured still landing over the live feed. */
-export function stillIn(el) {
+export function stillIn(el: Element | null): void {
   if (reducedMotion() || !el) return;
   gsap.fromTo(
     el,

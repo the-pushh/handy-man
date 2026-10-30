@@ -6,7 +6,7 @@ step-by-step guidance.
 
 ## Stack
 
-- Frontend: Next.js in `frontend/` (port 3000, proxies `/api/*` to FastAPI).
+- Frontend: Next.js + TypeScript in `frontend/` (port 3000, proxies `/api/*` to FastAPI).
 - Backend: FastAPI in `backend/server.py` (port 8000, pure JSON API).
 - Models on Modal: `backend/modal_app.py` (`handyman-models`: Glimmer
   diagnosis/steps, mms-tts speech). CPU-only until the real weights land —
