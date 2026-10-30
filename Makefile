@@ -3,6 +3,7 @@
 #   make          setup (idempotent) + run backend and frontend together
 #   make setup    install backend + frontend dependencies only
 #   make up       run backend + frontend together (assumes setup done)
+#   make phone    tunnel both servers via cloudflared; print the phone URL
 #   make backend  run the FastAPI backend alone (port 8000)
 #   make frontend run the Next.js frontend alone (port 3000)
 #   make deploy   deploy Glimmer + mms-tts to Modal
@@ -24,7 +25,7 @@ BACKEND_PORT := 8000
 FRONTEND_PORT := 3000
 
 .DEFAULT_GOAL := all
-.PHONY: all setup up backend frontend deploy auth clean
+.PHONY: all setup up backend frontend deploy auth clean phone
 
 all: up
 
@@ -55,3 +56,24 @@ auth:
 
 clean:
 	rm -rf frontend/.next
+
+# Tunnel the running servers (start them first with `make` in another
+# terminal) and print the URLs. Open the FRONTEND url on the phone;
+# paste the BACKEND url into the app once when it asks for it.
+phone:
+	@command -v cloudflared >/dev/null || (echo "install cloudflared first: brew install cloudflared"; exit 1)
+	@rm -f /tmp/handyman-front.tunnel /tmp/handyman-back.tunnel
+	@cloudflared tunnel --url http://127.0.0.1:$(FRONTEND_PORT) > /tmp/handyman-front.tunnel 2>&1 & \
+	cloudflared tunnel --url http://127.0.0.1:$(BACKEND_PORT) > /tmp/handyman-back.tunnel 2>&1 & \
+	echo "waiting for tunnel urls…"; \
+	for i in $$(seq 1 30); do \
+		F=$$(grep -o 'https://[^ ]*\.trycloudflare\.com' /tmp/handyman-front.tunnel 2>/dev/null | head -1); \
+		B=$$(grep -o 'https://[^ ]*\.trycloudflare\.com' /tmp/handyman-back.tunnel 2>/dev/null | head -1); \
+		if [ -n "$$F" ] && [ -n "$$B" ]; then break; fi; \
+		sleep 1; \
+	done; \
+	F=$$(grep -o 'https://[^ ]*\.trycloudflare\.com' /tmp/handyman-front.tunnel 2>/dev/null | head -1); \
+	B=$$(grep -o 'https://[^ ]*\.trycloudflare\.com' /tmp/handyman-back.tunnel 2>/dev/null | head -1); \
+	echo ""; echo "PHONE (frontend): $$F"; echo "BACKEND (paste in app): $$B"; echo ""; \
+	echo "Leave this running; Ctrl-C stops the tunnels."; \
+	wait
