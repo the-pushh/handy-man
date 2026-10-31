@@ -20,10 +20,10 @@ import urllib.error
 
 MODEL_ID = "muse-image-1.0"
 
-# Fixed border colors, assigned to parts in order so the frontend can
-# render a legend with matching swatches.
-PALETTE = ["#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4",
-           "#46f0f0", "#f032e6", "#bcf60c"]
+# Evidence treatment is monochrome + orange: every part gets the same
+# orange border/tint, letters (A, B, C...) tell them apart in the legend.
+ORANGE = "#e86a17"
+PALETTE = [ORANGE] * 8
 
 # IKEA-style tags: A, B, C... drawn next to each part on the photo.
 TAGS = ["A", "B", "C", "D", "E", "F", "G", "H"]
@@ -87,12 +87,13 @@ def highlight(image_bytes: bytes, labels: list,
             "content": [
                 {"type": "input_text",
                  "text": (
-                     f"For each of these appliance parts: {orders}. Fill "
-                     f"each part with a subtle translucent orange tint and "
-                     f"trace it with a thin solid border in its color. "
-                     f"Understated and precise. No text labels, no glow, "
-                     f"no restyling — every other pixel stays identical. "
-                     f"Return the edited image."
+                     f"For each of these appliance parts: {orders}. Render "
+                     f"the whole image in black and white EXCEPT these "
+                     f"parts: fill each one with a translucent orange tint "
+                     f"and trace it with a thin solid orange border plus "
+                     f"its letter tag. Everything else stays pixel-identical "
+                     f"but desaturated. No text labels besides the letter "
+                     f"tags, no glow, no restyling. Return the edited image."
                  )},
                 {"type": "input_image",
                  "image_url": f"data:image/jpeg;base64,{b64}"},

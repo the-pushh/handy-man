@@ -595,6 +595,17 @@ export default function RepairWalkthrough({
       )}
       {notes && <p><em>{notes}</em></p>}
       {device && <p><strong>Detected device:</strong> {device}</p>}
+      {(device || (details.markings || []).length > 0) && (
+        <div style={{ marginTop: 8 }}>
+          <p><strong>Evidence for the call</strong></p>
+          <ul>
+            {device && <li>Badge/logo reads {device} — see the captured views below.</li>}
+            {(details.markings || []).map((m, i) => (
+              <li key={i}>{m}</li>
+            ))}
+          </ul>
+        </div>
+      )}
       {ask && (
         <p style={{ fontWeight: "bold" }}>
           {ask} (Close this and describe the problem, then I will dig in.)
