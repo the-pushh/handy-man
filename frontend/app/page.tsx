@@ -183,11 +183,11 @@ export default function Home() {
             }
           }}
         >
-          <input name="issue" type="text" placeholder="Or type the issue…" autoComplete="off" />
+          <input name="issue" type="text" placeholder="Or type what you need…" autoComplete="off" />
           <button type="submit">Send</button>
         </form>
 
-        <p className="hint">Point at the device, tap Talk, describe the issue — I capture stills and take it from there.</p>
+        <p className="hint">Point at the device, tap Talk, say what you need — a fix or a setup — I capture stills and take it from there.</p>
       </section>
 
       {overlay && (

@@ -486,7 +486,7 @@ export default function RepairWalkthrough({
     const ref = `HM-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}-${Math.floor(1000 + Math.random() * 9000)}`;
     const t = {
       ref,
-      summary: `Repair visit for: ${issue}`,
+      summary: `Visit for: ${issue}`,
       device: device || "unknown device",
       issue,
       name: contactName.trim() || "not given",

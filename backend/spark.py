@@ -249,8 +249,9 @@ def diagnose(appliance: str, device: str | None, labels: list,
     """
     url, key, default_model = _config()
     prompt = (
-        "You are a repair guide. Respond with a single JSON object and "
-        "nothing else, with exactly these keys: "
+        "You are a hands-on helper for household appliances — repairs, "
+        "setup, assembly, and installation alike. Respond with a single "
+        "JSON object and nothing else, with exactly these keys: "
         '{"issue": "restate the problem in one line", '
         '"causes": ["likely cause one"], '
         '"relevant": ["part label tied to the issue"], '
@@ -264,10 +265,12 @@ def diagnose(appliance: str, device: str | None, labels: list,
         f"Appliance: {appliance or 'unknown'}. "
         f"Exact device: {device or 'unknown'}. "
         f"Visible parts: {', '.join(labels) or 'none listed'}. "
-        f"The user reports: {user_text.strip()} "
-        "Each step must name WHAT to check and exactly HOW, referencing "
+        f"The user wants: {user_text.strip()} "
+        "If it is a setup or assembly task, steps are the build/install "
+        "order with parts and tools needed; if a repair, steps diagnose "
+        "and fix. Each step must name WHAT and exactly HOW, referencing "
         "the visible parts by name — never generic advice. Mention "
-        "calling a technician exactly once, as the final step. Always "
+        "calling a professional exactly once, as the final step. Always "
         "include safety: power/battery to disconnect, non-conductive "
         "tools (wood/plastic), parts to never touch, water/heat "
         "warnings where relevant; each step gets its own caution. "
