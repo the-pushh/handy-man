@@ -140,6 +140,7 @@ def index():
 
 @app.post("/api/repair/analyze")
 async def repair_analyze(file: UploadFile = File(...),
+                          stills: list[UploadFile] = File(default=[]),
                           text: str = Form(""),
                           components: str = Form(""),
                           model: str | None = Form(None)):
@@ -150,9 +151,14 @@ async def repair_analyze(file: UploadFile = File(...),
     per name. SAM-only mode: pass `components` comma-separated to skip
     the Spark call (still needs the API key).
     """
+    from concurrent.futures import ThreadPoolExecutor
+
     from . import sam31, spark, muse_image
 
-    image = await file.read()
+    images = [await file.read()]
+    for extra in stills or []:
+        images.append(await extra.read())
+    image = images[-1]  # highlight/SAM work on the latest framing
     wanted = [c.strip() for c in (components or "").split(",") if c.strip()]
     notes = ""
     causes: list = []
@@ -167,8 +173,21 @@ async def repair_analyze(file: UploadFile = File(...),
     safety: list = []
     if not wanted:
         try:
-            analysis = spark.analyze_image(image, user_text=text,
-                                           model=model)
+            from concurrent.futures import as_completed
+            analyses = []
+            first_error: Exception | None = None
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                futures = [pool.submit(spark.analyze_image, b,
+                                       user_text=text, model=model)
+                           for b in images]
+                for fut in as_completed(futures):
+                    try:
+                        analyses.append(fut.result())
+                    except Exception as exc:
+                        if first_error is None:
+                            first_error = exc
+            if not analyses:
+                raise first_error or RuntimeError("no stills analyzed")
         except RuntimeError as exc:
             status = ("needs-api-key" if "not configured" in str(exc)
                       else "spark-error")
@@ -176,6 +195,7 @@ async def repair_analyze(file: UploadFile = File(...),
         except Exception as exc:
             return {"status": "unexpected-error",
                     "detail": f"{type(exc).__name__}: {exc}"}
+        analysis = spark.merge_analyses(analyses)
         wanted = [c["label"] for c in analysis["components"]]
         inventory = [{k: c.get(k) for k in
                       ("label", "color", "condition", "position")}
@@ -204,8 +224,6 @@ async def repair_analyze(file: UploadFile = File(...),
             relevant = [w for w in wanted if w.lower() in diag_rel]
         else:
             relevant = []
-        relevant = [c["label"] for c in analysis["components"]
-                    if c.get("relevant")][:4]
     highlight = None
     try:
         instances = sam31.segment(image, wanted)

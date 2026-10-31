@@ -10,9 +10,23 @@ import type { SpeechRecognitionLike } from "./lib/speech";
 import RepairWalkthrough from "./components/RepairWalkthrough";
 
 interface Overlay {
-  file: File;
+  files: File[];
   text: string;
   key: number;
+}
+
+const INTAKE_STILLS = 3;
+const INTAKE_GAP_MS = 1500;
+
+function speakPrompt(line: string): void {
+  try {
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(line);
+    u.lang = "en-US";
+    window.speechSynthesis.speak(u);
+  } catch (_) {
+    // Voice unavailable; the on-screen prompt still guides.
+  }
 }
 
 export default function Home() {
@@ -67,22 +81,31 @@ export default function Home() {
     const said = text.trim();
     if (!said) return;
     stopListeningInner();
-    try {
-      window.speechSynthesis.cancel();
-    } catch (_) {
-      // No speech to cancel.
-    }
     setTranscript(said);
-    setStatusMsg("Capturing what I'm looking at…");
-    const still = await captureStillAsync();
-    if (!still) {
+    // Intake: the system asks for repositioning and captures the stills
+    // itself — as many as it needs for the analysis.
+    const stills: File[] = [];
+    const prompts = [
+      "Hold steady, capturing the first view.",
+      "Now move a little closer to the faulty area.",
+      "One more — a slightly different angle.",
+    ];
+    for (let i = 0; i < INTAKE_STILLS; i++) {
+      if (i > 0) await new Promise((r) => setTimeout(r, INTAKE_GAP_MS));
+      const msg = `Capturing view ${i + 1} of ${INTAKE_STILLS}…`;
+      setStatusMsg(msg);
+      speakPrompt(prompts[i] || msg);
+      const still = await captureStillAsync();
+      if (still) stills.push(still);
+    }
+    if (!stills.length) {
       setStatusMsg("Camera not ready yet — try again.");
       return;
     }
     setStatusMsg("");
     turnRef.current += 1;
     // Screen #2: the repair overlay over the live camera.
-    setOverlay({ file: still, text: said, key: turnRef.current });
+    setOverlay({ files: stills, text: said, key: turnRef.current });
   }
 
   const recogCb = useRef(startTurn);
@@ -171,7 +194,7 @@ export default function Home() {
         <div className="overlay">
           <RepairWalkthrough
             key={overlay.key}
-            file={overlay.file}
+            files={overlay.files}
             issue={overlay.text}
             onClose={() => setOverlay(null)}
           />

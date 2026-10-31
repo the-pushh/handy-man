@@ -200,6 +200,47 @@ def analyze_image(image_bytes: bytes, user_text: str = "",
             "model": model or default_model}
 
 
+def merge_analyses(analyses: list) -> dict:
+    """Fuse per-still perceptions: union of parts, richest details win.
+
+    First non-empty notes/appliance/device/details/ask are kept;
+    components merge by label with missing color/condition/position
+    filled in from later stills.
+    """
+    merged: dict = {"notes": "", "components": [], "brand": None,
+                    "device_model": None, "device": None, "details": {},
+                    "ask": ""}
+    seen: dict = {}
+    for a in analyses:
+        if not merged["notes"] and a.get("notes"):
+            merged["notes"] = a["notes"]
+        for key in ("brand", "device_model", "device", "ask"):
+            if not merged[key] and a.get(key):
+                merged[key] = a[key]
+        det, mdet = a.get("details", {}), merged["details"]
+        for key in ("serial", "color", "condition"):
+            if not mdet.get(key) and det.get(key):
+                mdet[key] = det[key]
+        for key in ("markings", "other"):
+            for item in det.get(key, []):
+                if item not in mdet.setdefault(key, []):
+                    mdet[key].append(item)
+        for c in a.get("components", []):
+            label = str(c.get("label", "")).strip()
+            if not label:
+                continue
+            slot = seen.get(label.lower())
+            if slot is None:
+                slot = {"label": label}
+                seen[label.lower()] = slot
+                merged["components"].append(slot)
+            for key in ("hint", "color", "condition", "position"):
+                if not slot.get(key) and c.get(key):
+                    slot[key] = c[key]
+    merged["model"] = analyses[0].get("model") if analyses else None
+    return merged
+
+
 def diagnose(appliance: str, device: str | None, labels: list,
              user_text: str, model: str | None = None) -> dict:
     """Call 2 (text-only): causes, relevant parts, steps, safety, fix check.

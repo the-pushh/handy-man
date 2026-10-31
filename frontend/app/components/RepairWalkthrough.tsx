@@ -19,15 +19,16 @@ interface Instance {
 const COLORS = ["#ffc53d", "#4cc38a", "#5aa9e6", "#ef6461", "#b388eb"];
 
 export default function RepairWalkthrough({
-  file,
+  files,
   issue,
   onClose,
 }: {
-  file: File;
+  files: File[];
   issue: string;
   onClose: () => void;
 }) {
   const [imgURL, setImgURL] = useState<string>("");
+  const [stillURLs, setStillURLs] = useState<string[]>([]);
   const [notes, setNotes] = useState<string>("");
   const [instances, setInstances] = useState<Instance[]>([]);
   const [status, setStatus] = useState<string>("");
@@ -223,15 +224,17 @@ export default function RepairWalkthrough({
     });
   }
 
-  // System-captured still: analysis starts on its own, no buttons.
+  // System-captured stills: analysis starts on its own, no buttons.
   useEffect(() => {
-    fileRef.current = file;
-    setImgURL(URL.createObjectURL(file));
-    void run(file, issue, API);
+    const last = files[files.length - 1];
+    fileRef.current = last;
+    setImgURL(URL.createObjectURL(last));
+    setStillURLs(files.map((f) => URL.createObjectURL(f)));
+    void run(files, issue, API);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function run(f: File, t: string, base: string) {
+  async function run(fs: File[], t: string, base: string) {
     setStatus("Analyzing…");
     setInstances([]);
     setNotes("");
@@ -255,10 +258,14 @@ export default function RepairWalkthrough({
     setContactName("");
     setContactPhone("");
     setContactAddr("");
-    await say("Looking at your photo now. Figuring out the appliance and its parts.");
+    await say(
+      `Looking at your ${fs.length > 1 ? `${fs.length} views` : "photo"} now. ` +
+        "Figuring out the appliance and its parts."
+    );
     try {
       const fd = new FormData();
-      fd.append("file", f);
+      fd.append("file", fs[0], "still-0.jpg");
+      fs.slice(1).forEach((s, i) => fd.append("stills", s, `still-${i + 1}.jpg`));
       fd.append("text", t);
       const r = await fetch(`${base}/api/repair/analyze`, { method: "POST", body: fd });
       const data = await r.json();
@@ -529,9 +536,21 @@ export default function RepairWalkthrough({
     <section style={{ padding: 16, maxWidth: 720, margin: "0 auto" }}>
       <h1>Repairing what I captured</h1>
       <p style={{ color: "#b9c0c6" }}>
-        Still captured from your camera. Naming the parts, highlighting
-        them step by step, talking you through the fix.
+        {files.length} view{files.length === 1 ? "" : "s"} captured from
+        your camera. Naming the parts, highlighting them step by step,
+        talking you through the fix.
       </p>
+      {stillURLs.length > 1 && (
+        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+          {stillURLs.map((u, i) => (
+            <span key={i} style={{ fontSize: 12 }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={u} alt={`view ${i + 1}`} style={{ width: 96, display: "block" }} />
+              view {i + 1}
+            </span>
+          ))}
+        </div>
+      )}
       <p>
         You said: <em>&ldquo;{issue}&rdquo;</em>{" "}
         <button type="button" onClick={onClose}>
@@ -567,7 +586,7 @@ export default function RepairWalkthrough({
               setApiBase(url);
               setNeedBase(false);
               setBaseInput("");
-              void run(file, issue, url);
+              void run(files, issue, url);
             }}
           >
             Save and retry
