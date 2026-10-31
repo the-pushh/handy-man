@@ -37,13 +37,13 @@ setup:
 up: setup
 	@trap 'kill 0' INT TERM EXIT; \
 	HANDYMAN_MODAL=$(HANDYMAN_MODAL) $(PYTHON) -m uvicorn backend.server:app \
-		--host 127.0.0.1 --port $(BACKEND_PORT) & \
+		--host 0.0.0.0 --port $(BACKEND_PORT) & \
 	cd frontend && npm run dev -- --port $(FRONTEND_PORT) & \
 	wait
 
 backend: setup
 	HANDYMAN_MODAL=$(HANDYMAN_MODAL) $(PYTHON) -m uvicorn backend.server:app \
-		--host 127.0.0.1 --port $(BACKEND_PORT) --reload
+		--host 0.0.0.0 --port $(BACKEND_PORT) --reload
 
 frontend: setup
 	cd frontend && npm run dev -- --port $(FRONTEND_PORT)
@@ -63,13 +63,13 @@ phone: setup
 	@command -v cloudflared >/dev/null || (echo "install cloudflared first: brew install cloudflared"; exit 1)
 	@trap 'kill 0' INT TERM EXIT; \
 	HANDYMAN_MODAL=$(HANDYMAN_MODAL) $(PYTHON) -m uvicorn backend.server:app \
-		--host 127.0.0.1 --port $(BACKEND_PORT) & \
+		--host 0.0.0.0 --port $(BACKEND_PORT) & \
 	cd frontend && npm run dev -- --port $(FRONTEND_PORT) & \
 	cd ..; \
 	rm -f /tmp/handyman-front.tunnel /tmp/handyman-back.tunnel; \
 	sleep 6; \
-	cloudflared tunnel --url http://127.0.0.1:$(FRONTEND_PORT) > /tmp/handyman-front.tunnel 2>&1 & \
-	cloudflared tunnel --url http://127.0.0.1:$(BACKEND_PORT) > /tmp/handyman-back.tunnel 2>&1 & \
+	cloudflared tunnel --protocol http2 --edge-ip-version 4 --url http://127.0.0.1:$(FRONTEND_PORT) > /tmp/handyman-front.tunnel 2>&1 & \
+	cloudflared tunnel --protocol http2 --edge-ip-version 4 --url http://127.0.0.1:$(BACKEND_PORT) > /tmp/handyman-back.tunnel 2>&1 & \
 	echo "waiting for tunnel urls…"; \
 	for i in $$(seq 1 30); do \
 		F=$$(grep -o 'https://[^ ]*\.trycloudflare\.com' /tmp/handyman-front.tunnel 2>/dev/null | head -1); \
