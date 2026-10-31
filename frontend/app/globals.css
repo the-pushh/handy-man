@@ -1,13 +1,31 @@
+/* HandyMan Drawing Sheet — cream line work on warm charcoal paper.
+   One paper, one ink, one safety-orange mark. Everything square. */
+
 :root {
   color-scheme: dark;
-  --bg: #101214;
-  --panel: rgba(16, 18, 20, 0.88);
-  --line: #2c3136;
-  --text: #f2f4f5;
-  --muted: #b9c0c6;
-  --accent: #ffc53d;
-  --good: #4cc38a;
-  --btn: #1d2125;
+  --paper-deep: #24292d;
+  --paper: #2c3236;
+  --paper-raised: #343b3f;
+  --grid: #363d41;
+  --grid-major: #434b50;
+  --line: #eae2c6;
+  --line-muted: #a8a491;
+  --line-faint: #6e6e64;
+  --on-line: #24292d;
+  --primary: #ff6a1a;
+  --primary-deep: #c2440a;
+  --primary-container: #45301f;
+  --on-primary: #1a0a02;
+  --success: #8fd49a;
+  --success-container: #2c4234;
+  --warning: #f2c94c;
+  --warning-container: #433d2a;
+  --error: #ff5a4a;
+  --error-container: #43292a;
+  --info: #a9c6d0;
+  --info-container: #2e3d44;
+  --mono: "Courier Prime", "Courier New", monospace;
+  --sans: "Space Grotesk", system-ui, sans-serif;
 }
 
 * { box-sizing: border-box; }
@@ -15,9 +33,21 @@
 html, body {
   margin: 0;
   height: 100%;
-  background: var(--bg);
-  color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  background: var(--paper-deep);
+  color: var(--line);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+/* Visible drafting grid on full-paper surfaces. */
+body {
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px),
+    linear-gradient(var(--grid-major) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-major) 1px, transparent 1px);
+  background-size: 16px 16px, 16px 16px, 80px 80px, 80px 80px;
 }
 
 .stage {
@@ -34,6 +64,8 @@ html, body {
 }
 
 .live { object-fit: cover; }
+/* Photographic feed, desaturated while a part is active. */
+.live.working { filter: grayscale(1); }
 
 .still, .boxes {
   position: absolute;
@@ -42,43 +74,45 @@ html, body {
   height: 100%;
 }
 
+.still { object-fit: cover; }
+
 /* Screen #2: repair overlay over the live camera. */
 .overlay {
   position: absolute;
   inset: 0;
   overflow-y: auto;
-  background: rgba(10, 12, 14, 0.97);
+  background: var(--paper);
   z-index: 10;
+  padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
 }
 
-.still { object-fit: cover; }
-
-.box {
-  position: absolute;
-  border: 2px solid var(--good);
-  border-radius: 6px;
-  background: transparent;
-  padding: 0;
-  cursor: pointer;
+.overlay h1 {
+  font-family: var(--mono);
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.15;
+  margin: 0 0 8px;
 }
-.box.hl { border-color: var(--accent); border-width: 3px; }
-.box span {
-  position: absolute;
-  top: -1.4em;
-  left: 0;
+
+.overlay h1 + p { color: var(--line-muted); }
+
+/* Sheet section labels: PARTS LIST, DON'T TOUCH, WHAT TO CHECK. */
+.sheet-label {
+  font-family: var(--mono);
   font-size: 12px;
-  white-space: nowrap;
-  background: rgba(0, 0, 0, 0.72);
-  padding: 1px 6px;
-  border-radius: 4px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin: 16px 0 8px;
 }
 
+/* Bottom panels: opaque paper, 1px cream hairline. */
 .panel {
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
-  background: var(--panel);
+  background: var(--paper);
   border-top: 1px solid var(--line);
   padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
   display: grid;
@@ -87,125 +121,246 @@ html, body {
   overflow-y: auto;
 }
 
-.panel p { margin: 0; font-size: 14px; }
-.transcript { color: var(--muted); font-style: italic; }
-.langBadge {
-  font-style: normal;
-  font-size: 11px;
-  border: 1px solid var(--line);
-  border-radius: 20px;
-  padding: 1px 8px;
-  margin-left: 6px;
-  color: var(--text);
-}
+.panel p { margin: 0; }
+.transcript { font-size: 17px; }
 
-.thinking {
-  margin: 0;
-  padding-left: 20px;
-  display: grid;
-  gap: 2px;
-  font-size: 13px;
-  color: var(--muted);
-}
-
-.evidence {
-  display: flex;
-  gap: 8px;
-  overflow-x: auto;
-  padding-bottom: 2px;
-}
-.ev {
-  margin: 0;
-  flex: 0 0 auto;
-  width: 96px;
-}
-.ev img {
-  width: 96px;
-  height: 72px;
-  object-fit: cover;
-  border-radius: 6px;
-  border: 1px solid var(--line);
-  display: block;
-}
-.ev figcaption {
-  font-size: 11px;
-  color: var(--muted);
-  margin-top: 2px;
-}
-
-.causes { display: grid; gap: 6px; }
-.cause {
-  text-align: left;
-  background: var(--btn);
-  color: var(--text);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 8px 10px;
-  font-size: 14px;
-}
-.cause small { display: block; color: var(--muted); margin-top: 2px; }
-.cause.sel { border-color: var(--accent); }
-
-.steps { display: flex; gap: 8px; align-items: center; }
-.steps p { flex: 1; }
-
+/* Stamped square buttons. */
 .controls { display: flex; gap: 8px; }
-.controls button, .steps button, .typeForm button {
+.controls button, .steps button, .typeForm button,
+.btn-outline, .btn-primary, .btn-success {
   flex: 1;
-  padding: 12px;
+  min-height: 52px;
+  padding: 12px 24px;
+  font-family: var(--mono);
   font-size: 16px;
-  border-radius: 10px;
+  font-weight: 700;
+  border-radius: 0;
+  cursor: pointer;
+}
+.btn-outline, .controls button, .steps button, .typeForm button {
   border: 1px solid var(--line);
-  background: var(--btn);
-  color: var(--text);
+  background: var(--paper);
+  color: var(--line);
+}
+.btn-outline:active, .controls button:active, .steps button:active {
+  background: var(--line);
+  color: var(--on-line);
+}
+.btn-primary {
+  border: 1px solid var(--primary);
+  background: var(--primary);
+  color: var(--on-primary);
+}
+.btn-primary:active { background: var(--primary-deep); }
+.btn-primary:disabled, .controls button:disabled, .steps button:disabled {
+  background: var(--paper-raised);
+  color: var(--line-faint);
+  border-color: var(--paper-raised);
+  cursor: default;
+}
+.btn-success {
+  border: 1px solid var(--success);
+  background: var(--success);
+  color: var(--on-line);
 }
 .micBtn { flex: 1.2; }
-.micBtn.live { background: #5a1f1f; border-color: #a03a3a; }
-.capBtn { background: var(--accent); color: #191300; border-color: var(--accent); font-weight: 600; }
+.micBtn.live { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
 
 .typeForm { display: flex; gap: 8px; }
 .typeForm input {
   flex: 1;
-  padding: 10px;
+  min-height: 52px;
+  padding: 12px 16px;
+  font-family: var(--sans);
   font-size: 15px;
-  border-radius: 8px;
+  border-radius: 0;
   border: 1px solid var(--line);
-  background: #0b0d0f;
-  color: var(--text);
+  background: var(--paper-deep);
+  color: var(--line);
+}
+.typeForm input:focus {
+  outline: none;
+  border-color: var(--line);
+  box-shadow: inset 0 0 0 1px var(--line);
 }
 .typeForm button { flex: 0 0 auto; }
 
-.hint { color: var(--muted); font-size: 12px; }
-
-.langPick {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--muted);
-}
-.langPick select {
-  flex: 1;
-  padding: 8px;
-  font-size: 14px;
-  border-radius: 8px;
-  border: 1px solid var(--line);
-  background: #0b0d0f;
-  color: var(--text);
-}
+.hint { color: var(--line-muted); font-size: 13px; }
 
 .status {
   position: absolute;
   top: 10px;
   left: 50%;
   transform: translateX(-50%);
-  background: var(--panel);
+  background: var(--paper-deep);
   border: 1px solid var(--line);
-  padding: 6px 12px;
-  border-radius: 8px;
+  padding: 8px 16px;
+  border-radius: 0;
+  font-family: var(--mono);
   font-size: 13px;
+  z-index: 20;
 }
 
+/* Boxed letter tags: A / B / C. */
+.tag-letter {
+  display: inline-block;
+  min-width: 28px;
+  height: 28px;
+  line-height: 28px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--line);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 0;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.tag-letter.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--on-primary);
+  min-width: 32px;
+  height: 32px;
+  line-height: 32px;
+}
+
+/* Callouts: coloured 3px left rule + label, body stays cream. */
+.callout {
+  border-left: 3px solid var(--line-muted);
+  background: var(--paper);
+  padding: 16px;
+  margin-top: 8px;
+}
+.callout p { margin: 0 0 8px; }
+.callout p:last-child { margin-bottom: 0; }
+.callout .sheet-label { margin-top: 0; }
+.callout-dont-touch { background: var(--error-container); border-left-color: var(--error); }
+.callout-dont-touch .sheet-label { color: var(--error); }
+.callout-caution { background: var(--warning-container); border-left-color: var(--warning); }
+.callout-caution .sheet-label { color: var(--warning); }
+.callout-tip { background: var(--info-container); border-left-color: var(--info); }
+.callout-tip .sheet-label { color: var(--info); }
+
+/* Ruled parts table rows. */
+.parts-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  min-height: 48px;
+  padding: 12px;
+  border-bottom: 1px solid var(--grid-major);
+}
+.parts-row.active { background: var(--primary-container); }
+
+/* Step counter + progress ticks. */
+.step-count {
+  font-family: var(--mono);
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1;
+}
+.ticks { display: flex; gap: 4px; margin: 8px 0; }
+.tick { width: 16px; height: 4px; background: var(--line-faint); }
+.tick.active { background: var(--primary); }
+
+/* Evidence notes: boxed tags. */
+.evidence-note {
+  display: inline-block;
+  border: 1px solid var(--line);
+  padding: 4px;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--line-muted);
+  margin: 0 8px 8px 0;
+}
+
+/* Reference thumbnails: framed plates. */
+.ref-thumb {
+  width: 128px;
+  border: 1px solid var(--line);
+  background: var(--paper-deep);
+  padding: 0;
+}
+.ref-thumb img { width: 100%; height: 84px; object-fit: cover; display: block; }
+.ref-thumb figcaption {
+  font-family: var(--mono);
+  font-size: 13px;
+  padding: 4px;
+}
+
+/* Inverse cream sheet: safety detail, verification, booking consent. */
+.consent-sheet {
+  background: var(--line);
+  color: var(--on-line);
+  padding: 24px 16px;
+  margin: 16px -16px calc(-16px - env(safe-area-inset-bottom));
+}
+.consent-sheet .sheet-label { color: var(--on-line); }
+.consent-sheet table { width: 100%; border-collapse: collapse; font-size: 15px; }
+.consent-sheet td {
+  border-top: 1px solid var(--on-line);
+  padding: 8px 0;
+  vertical-align: top;
+}
+.consent-sheet td:first-child { font-family: var(--mono); font-size: 12px; font-weight: 700; width: 40%; }
+.btn-ink {
+  border: 1px solid var(--on-line);
+  background: var(--on-line);
+  color: var(--line);
+  font-family: var(--mono);
+  font-size: 16px;
+  font-weight: 700;
+  min-height: 52px;
+  padding: 12px 24px;
+  border-radius: 0;
+  flex: 1;
+  cursor: pointer;
+}
+
+/* Toast slip. */
+.toast {
+  background: var(--paper-deep);
+  border: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 13px;
+  padding: 16px;
+  min-height: 40px;
+}
+
+.instruction { font-size: 18px; font-weight: 500; line-height: 1.3; }
+
+.text-input {
+  width: 100%;
+  min-height: 52px;
+  padding: 12px 16px;
+  font-family: var(--sans);
+  font-size: 15px;
+  border-radius: 0;
+  border: 1px solid var(--line);
+  background: var(--paper-deep);
+  color: var(--line);
+}
+.text-input:focus {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+/* Check items: square box, cream tick when done. */
+.check-item { display: flex; gap: 12px; align-items: center; min-height: 48px; }
+.check-item .box {
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--line);
+  flex: 0 0 auto;
+  text-align: center;
+  line-height: 20px;
+  font-family: var(--mono);
+}
+.check-item.done { color: var(--line-muted); }
+
 @media (prefers-reduced-motion: reduce) {
-  * { transition: none !important; animation: none !important; }
+  * { animation: none !important; transition: none !important; }
 }

@@ -543,17 +543,17 @@ export default function RepairWalkthrough({
       {stillURLs.length > 1 && (
         <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
           {stillURLs.map((u, i) => (
-            <span key={i} style={{ fontSize: 12 }}>
+            <figure key={i} className="ref-thumb" style={{ margin: 0 }}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={u} alt={`view ${i + 1}`} style={{ width: 96, display: "block" }} />
-              view {i + 1}
-            </span>
+              <img src={u} alt={`view ${i + 1}`} />
+              <figcaption>view {i + 1}</figcaption>
+            </figure>
           ))}
         </div>
       )}
       <p>
         You said: <em>&ldquo;{issue}&rdquo;</em>{" "}
-        <button type="button" onClick={onClose}>
+        <button type="button" className="btn-outline" onClick={onClose}>
           Close and point the camera again
         </button>
       </p>
@@ -569,12 +569,13 @@ export default function RepairWalkthrough({
             value={baseInput}
             onChange={(e) => setBaseInput(e.target.value)}
             placeholder="https://your-backend-tunnel-url"
-            style={{ padding: 8, width: "100%" }}
+            className="text-input"
             autoComplete="off"
           />
           <button
             type="button"
-            style={{ marginTop: 8, padding: 10 }}
+            className="btn-primary"
+            style={{ marginTop: 8 }}
             onClick={() => {
               const url = baseInput.trim().replace(/\/$/, "");
               if (!url) return;
@@ -593,17 +594,17 @@ export default function RepairWalkthrough({
           </button>
         </div>
       )}
-      {notes && <p><em>{notes}</em></p>}
-      {device && <p><strong>Detected device:</strong> {device}</p>}
+      {notes && <p className="instruction">{notes}</p>}
+      {device && <p className="step-count">{device}</p>}
       {(device || (details.markings || []).length > 0) && (
         <div style={{ marginTop: 8 }}>
-          <p><strong>Evidence for the call</strong></p>
-          <ul>
-            {device && <li>Badge/logo reads {device} — see the captured views below.</li>}
+          <p className="sheet-label">Evidence for the call</p>
+          <div>
+            {device && <span className="evidence-note">badge → {device}</span>}
             {(details.markings || []).map((m, i) => (
-              <li key={i}>{m}</li>
+              <span key={i} className="evidence-note">{m}</span>
             ))}
-          </ul>
+          </div>
         </div>
       )}
       {ask && (
@@ -613,21 +614,21 @@ export default function RepairWalkthrough({
       )}
       {inventory.length > 0 && (
         <div style={{ marginTop: 8 }}>
-          <p><strong>What I see — every part</strong></p>
-          <ul>
-            {inventory.map((c, i) => (
-              <li key={i}>
+          <p className="sheet-label">Parts list</p>
+          {inventory.map((c, i) => (
+            <div key={i} className="parts-row">
+              <span>
                 <strong>{c.label}</strong>
                 {[c.color, c.condition, c.position].filter(Boolean).join(" · ")}
-              </li>
-            ))}
-          </ul>
+              </span>
+            </div>
+          ))}
         </div>
       )}
       {(details.serial || details.color || details.condition ||
         (details.markings || []).length > 0 || (details.other || []).length > 0) && (
         <div style={{ marginTop: 8 }}>
-          <p><strong>Every little detail</strong></p>
+          <p className="sheet-label">Every little detail</p>
           {details.serial && <div><strong>Serial:</strong> {details.serial}</div>}
           {details.color && <div><strong>Color:</strong> {details.color}</div>}
           {details.condition && <div><strong>Condition:</strong> {details.condition}</div>}
@@ -650,8 +651,8 @@ export default function RepairWalkthrough({
         </div>
       )}
       {said.length > 0 && (
-        <div style={{ marginTop: 8 }}>
-          <p><strong>Thinking aloud</strong></p>
+        <div style={{ marginTop: 8 }} className="transcript">
+          <p className="sheet-label">Thinking aloud</p>
           <ol>
             {said.map((line, i) => <li key={i}>{line}</li>)}
           </ol>
@@ -672,8 +673,8 @@ export default function RepairWalkthrough({
         </div>
       )}
       {safety.length > 0 && (
-        <div style={{ marginTop: 8 }}>
-          <p><strong>Handle with care</strong></p>
+        <div className="callout callout-caution">
+          <p className="sheet-label">Handle with care</p>
           <ul>
             {safety.map((w, i) => <li key={i}>{w}</li>)}
           </ul>
@@ -681,7 +682,7 @@ export default function RepairWalkthrough({
       )}
       {causes.length > 0 && (
         <div style={{ marginTop: 8 }}>
-          <p><strong>Likely causes</strong></p>
+          <p className="sheet-label">Likely causes</p>
           <ul>
             {causes.map((c, i) => <li key={i}>{c}</li>)}
           </ul>
@@ -689,7 +690,12 @@ export default function RepairWalkthrough({
       )}
       {steps.length > 0 && (
         <div style={{ marginTop: 8 }}>
-          <p><strong>What to do next — step {stepIdx + 1} of {steps.length}</strong></p>
+          <p className="step-count">{String(stepIdx + 1).padStart(2, "0")}/{String(steps.length).padStart(2, "0")}</p>
+          <div className="ticks">
+            {steps.map((_, i) => (
+              <span key={i} className={i === stepIdx ? "tick active" : "tick"} />
+            ))}
+          </div>
           {(() => {
             const s = steps[stepIdx];
             if (!s) return null;
@@ -698,34 +704,19 @@ export default function RepairWalkthrough({
             )?.tag;
             return (
               <div>
-                <div><strong>Check:</strong> {s.check}</div>
-                {s.how && <div><strong>How:</strong> {s.how}</div>}
-                {s.caution && <div><strong>Do not touch:</strong> {s.caution}</div>}
+                <p className="sheet-label">What to check</p>
+                <p className="instruction">{s.check}</p>
+                {s.how && <p>{s.how}</p>}
+                {s.caution && (
+                  <div className="callout callout-dont-touch">
+                    <p className="sheet-label">Don&apos;t touch</p>
+                    <p>{s.caution}</p>
+                  </div>
+                )}
                 {s.part && (
                   <div>
-                    <strong>Part:</strong>{" "}
-                    {tag && (
-                      <span
-                        style={{
-                          display: "inline-block",
-                          minWidth: 22,
-                          textAlign: "center",
-                          fontWeight: "bold",
-                          color: "#fff",
-                          background:
-                            legend.find(
-                              (e) =>
-                                s.part &&
-                                e.label.toLowerCase() === s.part.toLowerCase()
-                            )?.color || "#666",
-                          borderRadius: 4,
-                          marginRight: 6,
-                        }}
-                      >
-                        {tag}
-                      </span>
-                    )}{" "}
-                    {s.part}
+                    {tag && <span className="tag-letter active">{tag}</span>}
+                    <span className="evidence-note">{s.part}</span>
                   </div>
                 )}
                 {aids
@@ -741,6 +732,7 @@ export default function RepairWalkthrough({
           <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
             <button
               type="button"
+              className="btn-outline"
               onClick={() => void goStep(stepIdx - 1)}
               disabled={stepIdx === 0 || stepLoading}
             >
@@ -748,6 +740,7 @@ export default function RepairWalkthrough({
             </button>
             <button
               type="button"
+              className="btn-primary"
               onClick={() => void goStep(stepIdx + 1)}
               disabled={stepIdx >= steps.length - 1 || stepLoading}
             >
@@ -758,44 +751,32 @@ export default function RepairWalkthrough({
       )}
       {legend.length > 0 && (
         <div style={{ marginTop: 8 }}>
-          <p><strong>Legend</strong></p>
+          <p className="sheet-label">Legend</p>
           {legend.map((e, i) => (
-            <div key={i}>
-              <span
-                style={{
-                  display: "inline-block",
-                  minWidth: 22,
-                  textAlign: "center",
-                  fontWeight: "bold",
-                  color: "#fff",
-                  background: e.color,
-                  borderRadius: 4,
-                  marginRight: 6,
-                }}
-              >
-                {e.tag || String.fromCharCode(65 + i)}
-              </span>
-              {e.label}
+            <div key={i} className="parts-row">
+              <span className="tag-letter active">{e.tag || String.fromCharCode(65 + i)}</span>
+              <span>{e.label}</span>
             </div>
           ))}
         </div>
       )}
       {resolution && (
         <div style={{ marginTop: 8 }}>
-          <p><strong>Did it work?</strong></p>
+          <p className="sheet-label">Did it work?</p>
           <p>{resolution}</p>
           <button
             type="button"
+            className="btn-outline"
             onClick={() => void say(`Resolution check: ${resolution}`)}
           >
             Read the resolution check aloud
           </button>
           {!fixed && !booking && (
             <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-              <button type="button" onClick={() => void confirmFixed(true)}>
+              <button type="button" className="btn-success" onClick={() => void confirmFixed(true)}>
                 Yes, it is fixed
               </button>
-              <button type="button" onClick={() => void confirmFixed(false)}>
+              <button type="button" className="btn-outline" onClick={() => void confirmFixed(false)}>
                 No, still broken
               </button>
             </div>
@@ -804,82 +785,88 @@ export default function RepairWalkthrough({
         </div>
       )}
       {booking && !ticket && (
-        <div style={{ marginTop: 8 }}>
-          <p><strong>Book a handyman?</strong></p>
-          <p>
-            I can raise a booking request for a handyman visit with
-            everything found so far{device ? ` for your ${device}` : ""}.
-            May I go ahead?
-          </p>
+        <div className="consent-sheet">
+          <p className="sheet-label">Book a handyman?</p>
+          <table>
+            <tbody>
+              <tr><td>Device</td><td>{device || "as identified above"}</td></tr>
+              <tr><td>Issue</td><td>{issue}</td></tr>
+              <tr><td>Shares</td><td>photos, findings and contact you enter below</td></tr>
+            </tbody>
+          </table>
+          <p>May I go ahead?</p>
           <div style={{ display: "flex", gap: 8 }}>
-            <button type="button" onClick={() => void startBooking(true)}>
+            <button type="button" className="btn-primary" onClick={() => void startBooking(true)}>
               Yes, book one
             </button>
-            <button type="button" onClick={() => setBooking(false)}>
+            <button type="button" className="btn-ink" onClick={() => setBooking(false)}>
               No thanks
             </button>
           </div>
         </div>
       )}
       {booking && !ticket && permit && (
-        <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
+        <div className="consent-sheet" style={{ marginTop: 8, display: "grid", gap: 8 }}>
           <input
             value={contactName}
             onChange={(e) => setContactName(e.target.value)}
             placeholder="Your name"
-            style={{ padding: 8 }}
+            className="text-input"
             autoComplete="off"
           />
           <input
             value={contactPhone}
             onChange={(e) => setContactPhone(e.target.value)}
             placeholder="Phone number"
-            style={{ padding: 8 }}
+            className="text-input"
             autoComplete="off"
           />
           <input
             value={contactAddr}
             onChange={(e) => setContactAddr(e.target.value)}
             placeholder="Visit address / note"
-            style={{ padding: 8 }}
+            className="text-input"
             autoComplete="off"
           />
-          <button type="button" onClick={() => void raiseTicket()}>
+          <button type="button" className="btn-primary" onClick={() => void raiseTicket()}>
             Raise booking request
           </button>
         </div>
       )}
       {ticket && (
-        <div style={{ marginTop: 8 }}>
-          <p><strong>Booking request {ticket.ref}</strong></p>
+        <div className="consent-sheet">
+          <p className="sheet-label">Booking request {ticket.ref}</p>
           <p>{ticket.summary}</p>
-          <ul>
-            <li>Device: {ticket.device}</li>
-            <li>Issue: {ticket.issue}</li>
-            <li>Contact: {ticket.name} ({ticket.phone})</li>
-            <li>Address: {ticket.address}</li>
-          </ul>
+          <table>
+            <tbody>
+              <tr><td>Device</td><td>{ticket.device}</td></tr>
+              <tr><td>Issue</td><td>{ticket.issue}</td></tr>
+              <tr><td>Contact</td><td>{ticket.name} ({ticket.phone})</td></tr>
+              <tr><td>Address</td><td>{ticket.address}</td></tr>
+            </tbody>
+          </table>
           <p>
             No provider is connected yet, so this request is ready to send —
             share it with your handyman or service center.
           </p>
-          <button type="button" onClick={() => void shareTicket()}>
+          <button type="button" className="btn-ink" onClick={() => void shareTicket()}>
             Share booking request
           </button>
         </div>
       )}
       {aids.filter((a) => !a.title.startsWith("Step ")).length > 0 && (
         <div style={{ marginTop: 8 }}>
-          <p><strong>Watch and learn</strong></p>
+          <p className="sheet-label">Watch and learn</p>
           {aids
             .filter((a) => !a.title.startsWith("Step "))
             .map((a, i) => (
               <div key={i} style={{ marginBottom: 12 }}>
                 {(a.videos || []).map((v) => (
-                  <div key={v.id} style={{ marginBottom: 8 }}>
+                  <div key={v.id} style={{ marginBottom: 8, border: "1px solid var(--line)" }}>
                     <iframe
                       width="100%"
                       height="240"
+                      style={{ display: "block", border: 0 }}
                       src={`https://www.youtube-nocookie.com/embed/${v.id}`}
                       title={a.title}
                       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
