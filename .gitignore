@@ -9,3 +9,7 @@ eval/out/
 
 # Real photos from a private home (one shows a phone number); never public
 eval/cases/
+
+# Env variants (local overrides, Vercel pulls); examples stay tracked
+.env.*
+!.env.example

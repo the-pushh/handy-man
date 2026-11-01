@@ -1,13 +1,17 @@
-modal
-fastapi
-python-dotenv
-uvicorn[standard]
-python-multipart
-pillow
-torch
-transformers
-soundfile
-langdetect
-iso639-lang
-sentencepiece
+# Backend runtime. Pinned to the versions the app was built and tested on.
+# The container installs torch from PyTorch's CPU-only index first (see
+# backend/Dockerfile) and skips modal (local Modal experiments only).
+fastapi==0.162.0
+python-dotenv==1.2.4
+uvicorn[standard]==0.54.0
+python-multipart==0.0.32
+pillow==13.0.0
+numpy==2.5.4
+torch==2.15.0
+transformers==5.22.0
+soundfile==0.14.0
+langdetect==1.0.9
+iso639-lang==2.6.3
+sentencepiece==0.2.2
 meta-sam-parser==0.1.0
+modal==1.6.3

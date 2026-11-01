@@ -9,6 +9,7 @@
 #   make deploy   deploy Glimmer + mms-tts to Modal
 #   make auth     authenticate this machine with Modal (opens browser)
 #   make clean    remove local build output
+#   make container build the Cloud Run image and run it on :8080 with .env
 
 VENV := .venv
 PYTHON := $(VENV)/bin/python
@@ -25,7 +26,7 @@ BACKEND_PORT := 8000
 FRONTEND_PORT := 3000
 
 .DEFAULT_GOAL := all
-.PHONY: all setup up backend frontend deploy auth clean phone
+.PHONY: all setup up backend frontend deploy auth clean phone container
 
 all: up
 
@@ -82,3 +83,10 @@ phone: setup
 	echo ""; echo "PHONE (frontend): $$F"; echo "BACKEND (paste in app): $$B"; echo ""; \
 	echo "Leave this running; Ctrl-C stops the tunnels."; \
 	wait
+
+# The production backend image, run locally on :8080 with your .env
+# (development mode: no proxy secret). Same image Cloud Run runs.
+container:
+	docker build -f backend/Dockerfile -t handyman-backend:local .
+	docker run --rm -p 8080:8080 --cpus 2 -m 4g --env-file .env \
+		-e HANDYMAN_ENV= -e SPARK_MODEL=prod handyman-backend:local

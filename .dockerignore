@@ -1,0 +1,8 @@
+# Only backend/ goes into the image. Never secrets, never photos.
+*
+!backend/
+backend/.env
+backend/**/__pycache__
+backend/**/*.pyc
+backend/test_*.py
+backend/requirements-dev.txt
