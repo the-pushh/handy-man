@@ -410,22 +410,32 @@ export default function Home() {
         (data.notes || "").replace("The appliance is ", "").replace(/\.$/, "") ||
         "this appliance";
       const label = (data.components || [])[0]?.label || device;
+      const curl: Confirm = {
+        device,
+        overlayURL: URL.createObjectURL(frame),
+        frameURL: URL.createObjectURL(frame),
+      };
+      // muse-image highlight (10-20s) swaps in when it lands; the card
+      // and the question don't wait for it.
       const hfd = new FormData();
       hfd.append("file", frame, "frame.jpg");
       hfd.append("part", label);
-      const hr = await fetch(`${apiBase()}/api/repair/highlight`, {
-        method: "POST",
-        body: hfd,
-      });
-      const hdata = await hr.json();
-      mark("highlight returned", hdata.status);
-      const curl: Confirm = {
-        device,
-        overlayURL: hdata.overlay?.image_b64
-          ? `data:${hdata.overlay.mime || "image/webp"};base64,${hdata.overlay.image_b64}`
-          : URL.createObjectURL(frame),
-        frameURL: URL.createObjectURL(frame),
-      };
+      mark("highlight requested", label);
+      void fetch(`${apiBase()}/api/repair/highlight`, { method: "POST", body: hfd })
+        .then((hr) => hr.json())
+        .then((hdata) => {
+          mark("highlight returned", hdata.status);
+          const cur = confirmRef.current;
+          if (cur === curl && hdata.overlay?.image_b64) {
+            const next = {
+              ...cur,
+              overlayURL: `data:${hdata.overlay.mime || "image/webp"};base64,${hdata.overlay.image_b64}`,
+            };
+            confirmRef.current = next;
+            setConfirm(next);
+          }
+        })
+        .catch(() => undefined);
       confirmRef.current = curl;
       setConfirm(curl);
       setStatusMsg("");

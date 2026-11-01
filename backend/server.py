@@ -197,7 +197,7 @@ def _repair_analyze(images, text, components, model):
     """
     from concurrent.futures import ThreadPoolExecutor
 
-    from . import sam31, spark, muse_image
+    from . import sam31, spark
 
     image = images[-1]  # highlight/SAM work on the latest framing
     wanted = [c.strip() for c in (components or "").split(",") if c.strip()]
@@ -276,18 +276,10 @@ def _repair_analyze(images, text, components, model):
                   and isinstance(steps[0], dict) else None)
     to_mark = ([first_part] if first_part else relevant) or wanted[:4]
     has_intent = bool(text.strip() or components.strip() or steps)
-    if not instances and to_mark and has_intent:
-        try:
-            highlight = muse_image.highlight(image, to_mark,
-                                             fixed=canonical)
-        except Exception as exc:
-            return {"status": "highlight-error", "detail": str(exc),
-                    "notes": notes,
-                    "components": [{"label": w} for w in wanted],
-                    "causes": causes, "steps": steps,
-                    "legend": canonical,
-                    "instances": []}
-    from . import aids as repair_aids
+    # muse-image takes 10-20s, so it is not run here: the client asks
+    # /api/repair/highlight for these parts after showing the result.
+    highlight_parts = (to_mark if (not instances and to_mark and has_intent)
+                       else [])
     has_text = bool(text.strip() or components.strip())
     if not has_text:
         return {"status": "ok", "notes": notes,
@@ -295,45 +287,9 @@ def _repair_analyze(images, text, components, model):
                 "causes": [], "steps": [],
                 "issue": "", "resolution": resolution,
                 "device": device, "details": details, "ask": ask,
-                "aids": [], "instances": [], "legend": [],
+                "instances": [], "legend": [],
                 "overlay": None}
     appliance = notes.replace("The appliance is ", "").rstrip(".").strip()
-    issue = text.strip()
-    if appliance and appliance.lower() in issue.lower():
-        query = issue
-    else:
-        query = " ".join([s for s in [appliance, issue] if s]).strip()
-    query = query or "appliance repair"
-    if device and device.lower() not in query.lower():
-        query = f"{device} {query}"
-    videos = repair_aids.fetch_video_ids(query + " repair tutorial")
-    aids = [{
-        "kind": "videos",
-        "title": f"Video tutorials: {query}",
-        "url": repair_aids.youtube_search_url(query + " repair tutorial"),
-        "videos": videos,
-    }, {
-        "kind": "images",
-        "title": f"Reference pictures: {query}",
-        "url": repair_aids.images_search_url(query),
-    }]
-    if wanted:
-        part_query = f"{query} {wanted[0]} fix"
-        aids.append({
-            "kind": "videos",
-            "title": f"Videos: fixing the {wanted[0]}",
-            "url": repair_aids.youtube_search_url(part_query),
-            "videos": [],
-        })
-    for i, st in enumerate(steps):
-        check = st.get("check", "") if isinstance(st, dict) else str(st)
-        if check:
-            aids.append({
-                "kind": "videos",
-                "title": f"Step {i + 1} video: {check[:70]}",
-                "url": repair_aids.youtube_search_url(f"{query} {check}"),
-                "videos": [],
-            })
     from .risk import assess_risk
     risk = assess_risk(device or appliance, text)
     return {"status": "ok", "notes": notes,
@@ -343,9 +299,9 @@ def _repair_analyze(images, text, components, model):
             "device": device, "details": details, "ask": ask,
             "safety": safety,
             "risk": risk,
-            "aids": aids,
             "instances": instances,
             "legend": canonical,
+            "highlight_parts": highlight_parts,
             "overlay": highlight}
 
 

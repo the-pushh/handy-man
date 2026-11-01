@@ -39,7 +39,6 @@ export default function RepairWalkthrough({
     { check: string; how: string; part: string | null; caution?: string | null }[]
   >([]);
   const [legend, setLegend] = useState<{ label: string; color: string; tag?: string }[]>([]);
-  const [aids, setAids] = useState<{ title: string; url: string; kind?: string; videos?: { id: string; url: string }[] }[]>([]);
   const [resolution, setResolution] = useState<string>("");
   const [device, setDevice] = useState<string>("");
   const [ask, setAsk] = useState<string>("");
@@ -261,7 +260,6 @@ export default function RepairWalkthrough({
     setCauses([]);
     setSteps([]);
     setLegend([]);
-    setAids([]);
     setSaid([]);
     setStepIdx(0);
     setResolution("");
@@ -279,7 +277,8 @@ export default function RepairWalkthrough({
     setContactName("");
     setContactPhone("");
     setContactAddr("");
-    await say(
+    // Spoken while the analysis runs, not before it starts.
+    void say(
       `Looking at your ${fs.length > 1 ? `${fs.length} views` : "photo"} now. ` +
         "Figuring out the appliance and its parts."
     );
@@ -331,7 +330,6 @@ export default function RepairWalkthrough({
         | null
         | undefined;
       setLegend(data.legend || overlay?.legend || []);
-      setAids(data.aids || []);
       setInventory(data.components || []);
       if (overlay?.image_b64) {
         setOverlayURL(
@@ -339,6 +337,26 @@ export default function RepairWalkthrough({
         );
       } else {
         setOverlayURL("");
+      }
+      // muse-image highlight arrives after the result (10-20s): fetch it
+      // in the background so the verdict and steps show immediately.
+      const hlParts: string[] = data.highlight_parts || [];
+      if (!list.length && hlParts.length && fileRef.current) {
+        const hfd = new FormData();
+        hfd.append("file", fileRef.current);
+        hfd.append("part", hlParts[0]);
+        hfd.append("legend", JSON.stringify(data.legend || []));
+        mark("highlight requested", hlParts[0]);
+        void fetch(`${base}/api/repair/highlight`, { method: "POST", body: hfd })
+          .then((hr) => hr.json())
+          .then((hd) => {
+            mark("highlight returned", hd.status);
+            if (myRun === runSeq.current && hd.overlay?.image_b64) {
+              setOverlayURL(`data:${hd.overlay.mime || "image/webp"};base64,${hd.overlay.image_b64}`);
+              setStatus("Highlighted image");
+            }
+          })
+          .catch(() => undefined);
       }
       setStatus(
         list.length
@@ -378,38 +396,15 @@ export default function RepairWalkthrough({
         );
       }
       setResolution(data.resolution || "");
-      if (data.device) {
-        setDevice(data.device);
-        await say(`I can see this is a ${data.device}.`);
-      }
+      if (data.device) setDevice(data.device);
       if (data.details && typeof data.details === "object") {
         setDetails(data.details);
-        const bits = [
-          data.details.color ? `in ${data.details.color}` : "",
-          data.details.condition ? `looking ${data.details.condition}` : "",
-          data.details.serial ? `serial ${data.details.serial}` : "",
-        ].filter(Boolean);
-        if (bits.length) await say(`Details: ${bits.join(", ")}.`);
       }
       if (data.issue) {
         await say(`I understand the issue as: ${data.issue}`);
       }
-      const firstTag = (data.legend || overlay?.legend || [])[0]?.tag;
-      const hasParts =
-        list.length > 0 || (data.components || []).length > 0;
-      await say(
-        `${data.notes || "Analysis done."} ${
-          overlay?.image_b64
-            ? firstTag
-              ? `I have marked the first part as ${firstTag} on your photo.`
-              : `I have marked the parts on your photo.`
-            : hasParts
-              ? `I found the parts, but could not draw the highlights.`
-              : "But no parts came back to highlight."
-        }`
-      );
       if (foundCauses.length) {
-        await say(`Likely causes: ${foundCauses.join(". ")}`);
+        await say(`Most likely: ${foundCauses[0]}.`);
       }
       setStepIdx(0);
       if (foundSteps.length) {
@@ -783,13 +778,6 @@ export default function RepairWalkthrough({
                     <span className="evidence-note">{s.part}</span>
                   </div>
                 )}
-                {aids
-                  .filter((a) => a.title.startsWith(`Step ${stepIdx + 1} video`))
-                  .map((a, j) => (
-                    <div key={j}>
-                      <a href={a.url} target="_blank" rel="noreferrer">Video for this step</a>
-                    </div>
-                  ))}
               </div>
             );
           })()}
@@ -916,31 +904,6 @@ export default function RepairWalkthrough({
           <button type="button" className="btn-ink" onClick={() => void shareTicket()}>
             Share booking request
           </button>
-        </div>
-      )}
-      {aids.filter((a) => !a.title.startsWith("Step ")).length > 0 && (
-        <div style={{ marginTop: 8 }}>
-          <p className="sheet-label">Watch and learn</p>
-          {aids
-            .filter((a) => !a.title.startsWith("Step "))
-            .map((a, i) => (
-              <div key={i} style={{ marginBottom: 12 }}>
-                {(a.videos || []).map((v) => (
-                  <div key={v.id} style={{ marginBottom: 8, border: "1px solid var(--line)" }}>
-                    <iframe
-                      width="100%"
-                      height="240"
-                      style={{ display: "block", border: 0 }}
-                      src={`https://www.youtube-nocookie.com/embed/${v.id}`}
-                      title={a.title}
-                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                      allowFullScreen
-                    />
-                  </div>
-                ))}
-                <a href={a.url} target="_blank" rel="noreferrer">{a.title}</a>
-              </div>
-            ))}
         </div>
       )}
       {instances.map((inst, i) => (
