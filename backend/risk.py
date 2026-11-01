@@ -45,6 +45,9 @@ AC = _rx(r"air ?condition", r"\bac\b", r"split ac", r"window ac",
 INVERTER = _rx(r"inverter", r"\bups\b", r"tubular battery",
                r"lead[- ]acid", r"battery bank")
 LAPTOP = _rx(r"laptop", r"notebook", r"macbook", r"thinkpad", r"chromebook")
+# What sits behind a two-wheeler's body panels.
+BEHIND_PANEL = _rx(r"batter", r"starter (?:relay|motor|solenoid)", r"relay",
+                   r"fuse", r"wiring", r"regulator rectifier", r"\becu\b")
 
 
 @dataclass
@@ -257,6 +260,16 @@ def judge(device: str = "", issue: str = "", steps: list | None = None,
                     fired.append(rule)
                 if i not in blocked:
                     blocked.append(i)
+
+    # The finding itself can force a pro even when the model only
+    # proposed outside checks: on a two-wheeler the battery, starter
+    # relay, fuses and wiring all sit behind body panels, so a most-
+    # likely cause there means the fix needs the panel off.
+    top_cause = str((causes or [""])[0] or "")
+    panel = next(r for r in RULES if r.id == "vehicle-body-panel")
+    if (VEHICLE.search(job.context) and BEHIND_PANEL.search(top_cause)
+            and panel not in fired):
+        fired.append(panel)
 
     if not fired:
         return {"verdict": "diy", "rule": None, "title": None,

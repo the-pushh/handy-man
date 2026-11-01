@@ -308,7 +308,7 @@ def _repair_analyze(images, text, components, model, prior=None):
     # one (safe checks) and names the fired rule in plain words.
     from .risk import judge
     verdict = judge(f"{device} {analysis.get('appliance') or ''}".strip(),
-                    text, steps)
+                    text, steps, causes)
     proposed = len(steps)
     steps = [steps[i] for i in verdict["allowed_steps"]]
     verdict["proposed_steps"] = proposed

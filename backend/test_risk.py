@@ -130,6 +130,21 @@ def test_spark_scooter_proposal_is_overridden():
     assert v["title"] == "Opening the scooter's panel needs a mechanic."
 
 
+def test_scooter_weak_battery_finding_needs_mechanic_even_without_panel_step():
+    # Spark sometimes proposes only the outside checks; the finding
+    # (battery) still means the panel has to come off.
+    v = judge("Honda Activa scooter", "self start dead, kick start works",
+              SPARK_SCOOTER_STEPS[:3], causes=["weak battery", "brake switch"])
+    expect(v, "pro", "vehicle-body-panel", allowed=[0, 1, 2])
+    assert v["title"] == "Opening the scooter's panel needs a mechanic."
+
+
+def test_scooter_kill_switch_finding_stays_diy():
+    v = judge("Honda Activa scooter", "self start dead",
+              SPARK_SCOOTER_STEPS[:2], causes=["kill switch left off", "weak battery"])
+    expect(v, "diy")
+
+
 # --- Other forcing rules -------------------------------------------------
 
 def test_danger_symptom_stops_everything():
