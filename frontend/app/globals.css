@@ -735,3 +735,35 @@ body {
 .heard-card table { width: 100%; border-collapse: collapse; font-size: 15px; }
 .heard-card td { padding: 6px 0; border-top: 1px solid var(--grid-major); vertical-align: top; }
 .heard-card td:first-child { font-family: var(--mono); font-size: 12px; font-weight: 700; width: 34%; color: var(--line-muted); }
+
+/* Call a pro: the brief to share, then nearby pros. */
+.call-pro { margin-top: 16px; }
+.brief-card {
+  border: 2px solid var(--line);
+  background: var(--paper-raised);
+  padding: 14px 16px;
+}
+.brief-card table { width: 100%; border-collapse: collapse; font-size: 16px; }
+.brief-card td { padding: 7px 0; border-top: 1px solid var(--grid-major); vertical-align: top; }
+.brief-card td:first-child { font-family: var(--mono); font-size: 12px; font-weight: 700; width: 30%; color: var(--line-muted); }
+.brief-card ul { margin: 0; padding-left: 18px; }
+.brief-attach { display: flex; gap: 8px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+.brief-attach img { height: 72px; border: 1px solid var(--line-faint); }
+.brief-attach audio { height: 36px; max-width: 100%; }
+.brief-actions { display: grid; grid-template-columns: 1fr 2fr; gap: 8px; margin-top: 12px; }
+.pro-list { list-style: none; margin: 0; padding: 0; }
+.pro-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--grid-major);
+}
+.pro-name { font-size: 18px; font-weight: 700; margin: 0; }
+.pro-meta { font-family: var(--mono); font-size: 13px; margin: 2px 0; color: var(--line-muted); }
+.pro-meta .open { color: var(--success); }
+.pro-meta .closed { color: var(--error); }
+.pro-addr { font-size: 13px; margin: 0; color: var(--line-muted); }
+.pro-actions { display: flex; flex-direction: column; gap: 6px; flex: none; }
+.pro-actions a { text-align: center; text-decoration: none; padding: 10px 16px; }
+.places-credit { margin-top: 8px; font-size: 12px; }

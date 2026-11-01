@@ -9,6 +9,7 @@ import { resolveApiBase } from "../lib/apiBase";
 import { mark } from "../lib/timeline";
 import { requestDiagnosis } from "../lib/diagnosis";
 import type { Heard } from "../lib/recorder";
+import CallAPro from "./CallAPro";
 
 /* The rules layer's decision (backend/risk.py): the model proposes
    steps, the rules decide which an owner may do. */
@@ -85,19 +86,6 @@ export default function RepairWalkthrough({
   const [stepLoading, setStepLoading] = useState<boolean>(false);
   const [fixed, setFixed] = useState<boolean>(false);
   const [booking, setBooking] = useState<boolean>(false);
-  const [permit, setPermit] = useState<boolean>(false);
-  const [contactName, setContactName] = useState<string>("");
-  const [contactPhone, setContactPhone] = useState<string>("");
-  const [contactAddr, setContactAddr] = useState<string>("");
-  const [ticket, setTicket] = useState<{
-    ref: string;
-    summary: string;
-    device: string;
-    issue: string;
-    name: string;
-    phone: string;
-    address: string;
-  } | null>(null);
   const [hidden, setHidden] = useState<Set<number>>(new Set());
   const imgRef = useRef<HTMLImageElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -329,11 +317,6 @@ export default function RepairWalkthrough({
     setVerdict(null);
     setFixed(false);
     setBooking(false);
-    setPermit(false);
-    setTicket(null);
-    setContactName("");
-    setContactPhone("");
-    setContactAddr("");
     // Spoken while the analysis runs, not before it starts.
     void say("Working out what's wrong.");
     try {
@@ -554,66 +537,10 @@ export default function RepairWalkthrough({
       await say("Great, glad it is fixed. Closing the loop here.");
     } else {
       setBooking(true);
-      await say(
-        "Sorry it is still broken. I can book a handyman visit with " +
-          "everything I found. Do you want me to go ahead?"
-      );
+      await say("Sorry. Here's who can help nearby.");
     }
   }
 
-  async function startBooking(yes: boolean): Promise<void> {
-    if (!yes) {
-      await say("No problem, I will not book anyone.");
-      return;
-    }
-    setPermit(true);
-    await say(
-      "Thanks. Tell me your name, phone number, and where the handyman should come."
-    );
-  }
-
-  async function raiseTicket(): Promise<void> {
-    const now = new Date();
-    const ref = `HM-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}-${Math.floor(1000 + Math.random() * 9000)}`;
-    const t = {
-      ref,
-      summary: `Visit for: ${issue}`,
-      device: device || "unknown device",
-      issue,
-      name: contactName.trim() || "not given",
-      phone: contactPhone.trim() || "not given",
-      address: contactAddr.trim() || "not given",
-    };
-    setTicket(t);
-    await say(
-      `Booking request ${ref} is ready. ${t.summary}, for ${t.device}. ` +
-        "No service provider is connected yet, so share this request with your handyman."
-    );
-  }
-
-  async function shareTicket(): Promise<void> {
-    if (!ticket) return;
-    const text =
-      `${ticket.ref}: ${ticket.summary}\nDevice: ${ticket.device}\n` +
-      `Contact: ${ticket.name} (${ticket.phone})\nAddress: ${ticket.address}`;
-    try {
-      const nav = window.navigator as Navigator & {
-        share?: (d: { title: string; text: string }) => Promise<void>;
-      };
-      if (nav.share) {
-        await nav.share({ title: ticket.ref, text });
-        return;
-      }
-    } catch (_) {
-      // Fall through to clipboard.
-    }
-    try {
-      await window.navigator.clipboard.writeText(text);
-      await say("Request copied. Paste it to your handyman.");
-    } catch (_) {
-      await say("Sharing is not available here. Note down the reference.");
-    }
-  }
 
   function toggle(i: number) {
     const next = new Set(hidden);
@@ -837,7 +764,7 @@ export default function RepairWalkthrough({
                   {verdict.proposed_steps} steps the model suggested.
                 </p>
               )}
-              {!booking && !ticket && (
+              {!booking && (
                 <button type="button" className="btn-primary" onClick={() => setBooking(true)}>
                   Find a {verdict.trade || "pro"}
                 </button>
@@ -938,75 +865,21 @@ export default function RepairWalkthrough({
           {fixed && <p>Fixed — nice work. Close this and point the camera at the next thing.</p>}
         </div>
       )}
-      {booking && !ticket && (
-        <div className="consent-sheet">
-          <p className="sheet-label">Book a handyman?</p>
-          <table>
-            <tbody>
-              <tr><td>Device</td><td>{device || "as identified above"}</td></tr>
-              <tr><td>Issue</td><td>{issue}</td></tr>
-              <tr><td>Shares</td><td>photos, findings and contact you enter below</td></tr>
-            </tbody>
-          </table>
-          <p>May I go ahead?</p>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button type="button" className="btn-primary" onClick={() => void startBooking(true)}>
-              Yes, book one
-            </button>
-            <button type="button" className="btn-ink" onClick={() => setBooking(false)}>
-              No thanks
-            </button>
-          </div>
-        </div>
-      )}
-      {booking && !ticket && permit && (
-        <div className="consent-sheet" style={{ marginTop: 8, display: "grid", gap: 8 }}>
-          <input
-            value={contactName}
-            onChange={(e) => setContactName(e.target.value)}
-            placeholder="Your name"
-            className="text-input"
-            autoComplete="off"
-          />
-          <input
-            value={contactPhone}
-            onChange={(e) => setContactPhone(e.target.value)}
-            placeholder="Phone number"
-            className="text-input"
-            autoComplete="off"
-          />
-          <input
-            value={contactAddr}
-            onChange={(e) => setContactAddr(e.target.value)}
-            placeholder="Visit address / note"
-            className="text-input"
-            autoComplete="off"
-          />
-          <button type="button" className="btn-primary" onClick={() => void raiseTicket()}>
-            Raise booking request
-          </button>
-        </div>
-      )}
-      {ticket && (
-        <div className="consent-sheet">
-          <p className="sheet-label">Booking request {ticket.ref}</p>
-          <p>{ticket.summary}</p>
-          <table>
-            <tbody>
-              <tr><td>Device</td><td>{ticket.device}</td></tr>
-              <tr><td>Issue</td><td>{ticket.issue}</td></tr>
-              <tr><td>Contact</td><td>{ticket.name} ({ticket.phone})</td></tr>
-              <tr><td>Address</td><td>{ticket.address}</td></tr>
-            </tbody>
-          </table>
-          <p>
-            No provider is connected yet, so this request is ready to send —
-            share it with your handyman or service center.
-          </p>
-          <button type="button" className="btn-ink" onClick={() => void shareTicket()}>
-            Share booking request
-          </button>
-        </div>
+      {booking && (
+        <CallAPro
+          api={API}
+          trade={verdict?.trade || "repair service"}
+          brief={{
+            device: device || "",
+            issue,
+            finding: verdict?.headline || causes[0] || "needs a closer look",
+            rule: verdict?.verdict === "pro" ? verdict.title : null,
+            checks: steps.slice(0, Math.max(stepIdx + 1, 1)).map((st) => st.check),
+            sound: heard ? heard.summary : null,
+            photo: fileRef.current || null,
+            clip: heard?.clip || null,
+          }}
+        />
       )}
       {instances.map((inst, i) => (
         <label key={i} style={{ display: "block", marginTop: 4 }}>

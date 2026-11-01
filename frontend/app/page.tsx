@@ -564,6 +564,7 @@ export default function Home() {
         const fd = new FormData();
         fd.append("file", clip.file, "clip.wav");
         last = (await (await fetch(`${apiBase()}/api/listen`, { method: "POST", body: fd })).json()) as Heard;
+        if (last) last.clip = clip.file;
         mark("sound checked", `${last?.features?.beeps} beeps, wonder ${last?.wonder?.beeps}, agree ${last?.agree}`);
         if (last && !last.rerecord) break;
       } catch (_) {

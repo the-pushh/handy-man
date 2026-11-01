@@ -130,4 +130,6 @@ export interface Heard {
   agree: boolean;
   rerecord: boolean;
   summary: string;
+  // The recorded clip itself (client-side), attached when sharing.
+  clip?: File;
 }
