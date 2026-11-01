@@ -3,7 +3,8 @@
 Config (environment):
   MUSE_SPARK_API_URL   base URL of the completions endpoint
   MUSE_SPARK_API_KEY   bearer key (paste yours; never commit it)
-  MUSE_SPARK_MODEL     default: muse-spark-contributor (cheap test model)
+  MUSE_SPARK_MODEL     default: muse-spark-1.3 (full model; set to e.g.
+                       muse-spark-1.3-contributor for cheap testing)
 
 WIRE-FORMAT ASSUMPTION (unverified until the key lands): an
 OpenAI-compatible POST {url}/chat/completions with
@@ -22,7 +23,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-MODEL_DEFAULT = "muse-spark-1.3-contributor"
+MODEL_DEFAULT = "muse-spark-1.3"
 
 
 def _config() -> tuple:
