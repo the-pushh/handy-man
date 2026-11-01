@@ -6,10 +6,10 @@
 #   make phone    start servers + tunnel both via cloudflared; print URLs
 #   make backend  run the FastAPI backend alone (port 8000)
 #   make frontend run the Next.js frontend alone (port 3000)
-#   make deploy   deploy Glimmer + mms-tts to Modal
+#   make deploy   deploy the backend to Modal (backend/modal_app.py)
 #   make auth     authenticate this machine with Modal (opens browser)
 #   make clean    remove local build output
-#   make container build the Cloud Run image and run it on :8080 with .env
+#   make container build the backend Docker image (local use) and run it on :8080 with .env
 
 VENV := .venv
 PYTHON := $(VENV)/bin/python
@@ -85,7 +85,7 @@ phone: setup
 	wait
 
 # The production backend image, run locally on :8080 with your .env
-# (development mode: no proxy secret). Same image Cloud Run runs.
+# (development mode: no proxy secret). Local stand-in for the Modal deploy.
 container:
 	docker build -f backend/Dockerfile -t handyman-backend:local .
 	docker run --rm -p 8080:8080 --cpus 2 -m 4g --env-file .env \

@@ -1,5 +1,5 @@
 /* Production proxy: the browser only ever talks to this origin. Every
-   /api/* request is rewritten to the Cloud Run backend (a Vercel external
+   /api/* request is rewritten to the Modal backend (a Vercel external
    rewrite, which waits up to 120s for the first byte; our slowest call
    is well under 60s). Two headers are added on the way:
      x-handyman-proxy  the shared secret; the backend rejects /api/*

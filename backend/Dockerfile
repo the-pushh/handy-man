@@ -1,4 +1,5 @@
-# Handyman backend for Cloud Run. Build from the repo root:
+# Handyman backend as a container, for local use (`make container`).
+# Production runs on Modal instead (backend/modal_app.py). Build from the repo root:
 #   docker build -f backend/Dockerfile -t handyman-backend .
 # Python matches local dev (3.14). The MMS voices are downloaded at build
 # time so a new instance speaks without fetching ~150 MB first.
@@ -13,7 +14,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# CPU-only torch (the CUDA build is ~2 GB larger and unused on Cloud Run),
+# CPU-only torch (the CUDA build is ~2 GB larger and unused here),
 # then everything else pinned in requirements.txt except torch and modal.
 COPY backend/requirements.txt backend/requirements.txt
 RUN pip install --index-url https://download.pytorch.org/whl/cpu torch==2.15.0 \
@@ -31,7 +32,7 @@ COPY backend backend
 RUN useradd --create-home --uid 10001 app && chown -R app /models
 USER app
 
-# Cloud Run sets PORT. One worker: TTS and SAM decoding keep their models
+# PORT defaults to 8080. One worker: TTS and SAM decoding keep their models
 # and process pool in memory; concurrency comes from the threadpool.
 ENV PORT=8080 HANDYMAN_ENV=production
 EXPOSE 8080

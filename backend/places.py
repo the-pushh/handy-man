@@ -11,7 +11,7 @@ Two endpoints of Places API (New):
     service, AC technician, ...). Results are ranked by distance.
 
 No scraping and no manual-entry fallback: no key or no results means an
-empty list with a reason the UI shows.
+empty list with a reason, and the UI offers a Google Maps search link.
 """
 
 import json

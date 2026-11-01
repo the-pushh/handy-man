@@ -1,8 +1,8 @@
 """Per-IP and per-session limits that keep a free, login-less app affordable.
 
-In memory, per instance: with Cloud Run capped at 3 instances, a visitor
+In memory, per instance: with Modal capped at 3 containers, a visitor
 spread across all of them gets at most 3x the configured numbers, which
-is fine for protecting the bill (the GCP budget alert is the backstop).
+is fine for protecting the bill (Modal's max_containers is the backstop).
 No database, nothing written to disk.
 """
 

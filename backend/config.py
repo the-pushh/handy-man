@@ -4,7 +4,7 @@ Every variable is documented in backend/.env.example. `validate()` runs
 when the server starts and stops it with a message naming each missing or
 bad variable, instead of failing later on a user's first turn.
 
-HANDYMAN_ENV=production (set by the Cloud Run deploy) makes the proxy
+HANDYMAN_ENV=production (set by backend/modal_app.py) makes the proxy
 secret and allowed origin required and SPARK_MODEL=prod mandatory.
 """
 
@@ -34,7 +34,7 @@ def _list(name: str) -> list:
 
 # Shared secret the Vercel middleware adds to every proxied /api request
 # (x-handyman-proxy). Required in production; when set, requests without
-# it get 403, so the Cloud Run URL cannot be used to skip the rate limits.
+# it get 403, so the Modal URL cannot be used to skip the rate limits.
 PROXY_SECRET = os.environ.get("PROXY_SECRET", "").strip()
 # Browser origins allowed by CORS. Production traffic is same-origin
 # through the Vercel proxy, so this only matters for direct calls.
@@ -74,6 +74,7 @@ def validate() -> None:
                             f"{model or 'nothing'!r}.")
     if not os.environ.get("GOOGLE_PLACES_API_KEY", "").strip():
         print("[config] GOOGLE_PLACES_API_KEY is not set: 'call a pro' will "
-              "show no nearby listings.", file=sys.stderr)
+              "show a Find nearby (Google Maps) button instead of listings.",
+              file=sys.stderr)
     if problems:
         raise SystemExit("[config] Cannot start:\n  - " + "\n  - ".join(problems))

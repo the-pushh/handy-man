@@ -97,7 +97,7 @@ async def time_requests(request: Request, call_next):
     """Guard and log every request.
 
     With PROXY_SECRET set (production), /api/* needs the secret the
-    Vercel middleware adds, so the Cloud Run URL can't be called directly
+    Vercel middleware adds, so the Modal URL can't be called directly
     to dodge the limits. Then a per-IP request budget, then one log line:
     path, upload size, server time.
     """

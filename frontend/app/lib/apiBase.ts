@@ -1,5 +1,5 @@
 // Where the browser sends /api/* requests.
-// Production: same origin ("" -> relative /api/...), proxied to Cloud Run
+// Production: same origin ("" -> relative /api/...), proxied to the Modal backend
 // by middleware.ts. There is no backend picker in production builds.
 // Development: env override, then the per-browser saved value (the
 // tunnel picker), then same-host port 8000.
