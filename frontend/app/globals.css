@@ -564,3 +564,24 @@ body {
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+/* Verdict card: the rules layer's decision, big enough to read in a
+   screen recording. */
+.verdict-card {
+  margin-top: 12px;
+  padding: 16px;
+  border: 2px solid var(--line);
+  background: var(--paper-raised);
+}
+.verdict-card .verdict-title {
+  font-family: var(--mono);
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.15;
+  margin: 4px 0 12px;
+}
+.verdict-card.diy { border-color: var(--success); }
+.verdict-card.diy .verdict-title { color: var(--success); }
+.verdict-card.pro { border-color: var(--error); }
+.verdict-card.pro .verdict-title { color: var(--error); }
+.verdict-card .btn-primary { margin-top: 12px; width: 100%; }

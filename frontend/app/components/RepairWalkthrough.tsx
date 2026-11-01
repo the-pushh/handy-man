@@ -9,6 +9,19 @@ import { resolveApiBase } from "../lib/apiBase";
 import { mark } from "../lib/timeline";
 import { requestDiagnosis } from "../lib/diagnosis";
 
+/* The rules layer's decision (backend/risk.py): the model proposes
+   steps, the rules decide which an owner may do. */
+interface Verdict {
+  verdict: "diy" | "pro";
+  rule: string | null;
+  title: string | null;
+  headline: string;
+  trade: string | null;
+  fired: string[];
+  blocked_steps: number[];
+  proposed_steps: number;
+}
+
 interface Instance {
   label: string;
   score: number | null;
@@ -51,9 +64,7 @@ export default function RepairWalkthrough({
   const [device, setDevice] = useState<string>("");
   const [ask, setAsk] = useState<string>("");
   const [safety, setSafety] = useState<string[]>([]);
-  const [risk, setRisk] = useState<{ level: string; hazard: string; reason: string } | null>(null);
-  // riskOk: the user explicitly accepted responsibility for a high-risk job.
-  const [riskOk, setRiskOk] = useState<boolean>(false);
+  const [verdict, setVerdict] = useState<Verdict | null>(null);
   const [inventory, setInventory] = useState<
     { label: string; color?: string | null; condition?: string | null; position?: string | null }[]
   >([]);
@@ -201,9 +212,9 @@ export default function RepairWalkthrough({
   // last.
   const synthQueue = useRef<Promise<unknown>>(Promise.resolve());
 
-  function say(line: string): Promise<void> {
+  function say(line: string, maxSeconds?: number): Promise<void> {
     setSaid((prev) => [...prev, line]);
-    const audio = synthQueue.current.then(() => fetchSpeech(line));
+    const audio = synthQueue.current.then(() => fetchSpeech(line, maxSeconds));
     synthQueue.current = audio.catch(() => null);
     speechQueue.current = speechQueue.current
       .then(() => audio)
@@ -226,13 +237,13 @@ export default function RepairWalkthrough({
   }
 
   /* MMS-TTS audio for a line as an object URL, or null (browser voice). */
-  async function fetchSpeech(line: string): Promise<string | null> {
+  async function fetchSpeech(line: string, maxSeconds?: number): Promise<string | null> {
     mark("tts request", JSON.stringify(line.slice(0, 40)));
     try {
       const r = await fetch(`${API}/api/tts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: line, lang: "en" }),
+        body: JSON.stringify({ text: line, lang: "en", max_seconds: maxSeconds ?? null }),
       });
       const data = await r.json();
       mark("tts audio received", data.audio_b64 ? "" : "fallback");
@@ -309,8 +320,7 @@ export default function RepairWalkthrough({
     setAsk("");
     setInventory([]);
     setSafety([]);
-    setRisk(null);
-    setRiskOk(false);
+    setVerdict(null);
     setFixed(false);
     setBooking(false);
     setPermit(false);
@@ -416,16 +426,10 @@ export default function RepairWalkthrough({
       setStatus(segLabels.length ? "Outlining parts…" : "");
       const foundSafety: string[] = data.safety || [];
       setSafety(foundSafety);
-      const foundRisk = data.risk && typeof data.risk === "object" ? data.risk : null;
-      setRisk(foundRisk);
-      setRiskOk(false);
-      if (foundRisk && foundRisk.level === "high") {
-        await say(
-          `Safety warning. ${foundRisk.reason} This could be dangerous. ` +
-            "I can pull in a handyman for you, or you can proceed at your " +
-            "own risk. Tap your choice on the screen."
-        );
-      }
+      const v: Verdict | null = data.verdict || null;
+      setVerdict(v);
+      // The verdict, out loud, in one short sentence (< 2s), then step 1.
+      if (v?.headline) void say(v.headline, 1.9);
       if (data.ask && !(data.steps || []).length) {
         setAsk(data.ask);
         await say(data.ask);
@@ -447,7 +451,7 @@ export default function RepairWalkthrough({
         setDetails(data.details);
       }
       setStepIdx(0);
-      if (foundSteps.length && !(foundRisk && foundRisk.level === "high")) {
+      if (foundSteps.length) {
         await speakStep(
           foundSteps[0],
           0,
@@ -535,15 +539,6 @@ export default function RepairWalkthrough({
       setStepLoading(false);
     }
     await speakStep(st, i, steps.length);
-  }
-
-  async function acceptRisk(): Promise<void> {
-    setRiskOk(true);
-    await say(
-      "Understood — you are proceeding at your own risk. Follow each step " +
-        "exactly, and stop straight away if anything sparks, smokes or " +
-        "smells burnt."
-    );
   }
 
   async function confirmFixed(yes: boolean): Promise<void> {
@@ -782,26 +777,38 @@ export default function RepairWalkthrough({
           </ul>
         </div>
       )}
-      {risk?.level === "high" && !riskOk && !booking && !ticket && (
-        <div className="consent-sheet">
-          <p className="sheet-label">Risky job — your call</p>
-          <div className="callout callout-dont-touch">
-            <p className="sheet-label">Warning</p>
-            <p>{risk.reason}</p>
-          </div>
-          <p>Want me to pull in people who can help, or proceed at your own risk?</p>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button type="button" className="btn-primary" onClick={() => setBooking(true)}>
-              Get help
-            </button>
-            <button type="button" className="btn-outline" onClick={() => void acceptRisk()}>
-              I proceed at my own risk
-            </button>
-          </div>
+      {verdict && (
+        <div className={`verdict-card ${verdict.verdict}`}>
+          <p className="sheet-label">Verdict</p>
+          <p className="verdict-title">
+            {verdict.verdict === "diy" ? "You can fix this" : "Call a pro"}
+          </p>
+          {verdict.verdict === "pro" && (
+            <>
+              <div className="callout callout-dont-touch">
+                <p className="sheet-label">Safety rule</p>
+                <p>{verdict.title}</p>
+              </div>
+              {verdict.blocked_steps.length > 0 && (
+                <p className="evidence-note">
+                  The rules removed {verdict.blocked_steps.length} of the{" "}
+                  {verdict.proposed_steps} steps the model suggested.
+                </p>
+              )}
+              {!booking && !ticket && (
+                <button type="button" className="btn-primary" onClick={() => setBooking(true)}>
+                  Find a {verdict.trade || "pro"}
+                </button>
+              )}
+            </>
+          )}
         </div>
       )}
-      {steps.length > 0 && !(risk?.level === "high" && !riskOk) && (
+      {steps.length > 0 && (
         <div style={{ marginTop: 8 }}>
+          {verdict?.verdict === "pro" && (
+            <p className="sheet-label">Safe checks before you call</p>
+          )}
           <p className="step-count">{String(stepIdx + 1).padStart(2, "0")}/{String(steps.length).padStart(2, "0")}</p>
           <div className="ticks">
             {steps.map((_, i) => (
