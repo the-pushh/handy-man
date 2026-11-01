@@ -92,7 +92,11 @@ def _acts_on(verbs: list, *objects: str):
     """
     v = "(?:" + "|".join(verbs) + r")\w*"
     o = "(?:" + "|".join(objects) + ")"
-    fwd = re.compile(rf"\b{v}(?:\s+[^\s]+){{0,4}}?\s+{o}", re.I)
+    # Between verb and object: up to four words, none a preposition, so
+    # "swing the louver fully open on the front casing" (open as a
+    # state, casing as a location) does not read as opening the casing.
+    gap = r"(?:\s+(?!(?:on|in|at|from|under|behind|near|with|by|into|onto|over|beside|inside|below|above)\b)[^\s]+)"
+    fwd = re.compile(rf"\b{v}{gap}{{0,4}}?\s+{o}", re.I)
     back = re.compile(rf"\b{o}\w*(?:\s+[^\s]+){{0,3}}?\s+{v}", re.I)
 
     def check(text: str) -> bool:
@@ -172,7 +176,7 @@ RULES = [
          "Call an electrician.",
          "electrician",
          applies=lambda job: True,
-         step=_hands_on(r"(?:loose |live |\w+ )?wir(?:e|es|ing)\b", r"mains",
+         step=_hands_on(r"wir(?:e|es|ing)\b", r"mains",
                         r"switchboard", r"switch board", r"mcb\b",
                         r"fuse box", r"distribution box", r"socket",
                         r"plug point", r"capacitor", r"pcb",
@@ -182,17 +186,17 @@ RULES = [
          "This one needs a mechanic.",
          "two-wheeler mechanic",
          applies=lambda job: bool(VEHICLE.search(job.context)),
-         step=_opens(r"(?:\w+ )?panel", r"cowl", r"fairing",
+         step=_opens(r"panel", r"cowl", r"fairing",
                      r"floor ?(?:board|panel|mat)",
                      r"battery (?:cover|box|compartment|lid)",
-                     r"(?:\w+ )?cover")),
+                     r"cover")),
     Rule("battery-terminals",
          "Battery terminals carry high current; anything beyond looking "
          "at them is for a technician.",
          "Needs a technician.",
          "battery service",
          applies=lambda job: True,
-         step=_hands_on(r"(?:battery |\w+ )?terminals?",
+         step=_hands_on(r"terminals?",
                         r"battery (?:lead|cable|clamp|post|wire)s?",
                         r"negative lead", r"positive lead")),
     Rule("sealed-casing",
@@ -201,11 +205,11 @@ RULES = [
          "Needs a technician.",
          "appliance technician",
          applies=lambda job: True,
-         step=_opens(r"(?:\w+ )?(?:\w+ )?casing", r"(?:\w+ )?housing",
+         step=_opens(r"casing", r"housing",
                      r"enclosure", r"(?:back|rear) (?:panel|cover)",
-                     r"cover screws", r"cabinet", r"(?:\w+ )?outdoor unit",
-                     r"compressor", r"(?:\w+ )?coil", r"blower",
-                     r"(?:\w+ )?panel", r"(?:\w+ )?cover")),
+                     r"cover screws", r"cabinet", r"outdoor unit",
+                     r"compressor", r"coil", r"blower",
+                     r"panel", r"cover")),
 ]
 
 TRADE_BY_DEVICE = [

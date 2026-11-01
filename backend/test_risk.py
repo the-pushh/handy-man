@@ -179,12 +179,13 @@ SPARK_AC_STEPS = [
     step("inspect front panel dust buildup", "lift front panel up from front casing and slide filters out with plastic handle, wash dry and refit"),
     step("Clear air outlet vent", "With front casing closed, wipe air outlet vent slats with dry cloth using wooden stick for dust"),
     step("Inspect front panel filter", "Unplug AC, lift front panel with plastic tool, remove filter, wash dry fully, refit under front casing"),
+    step("Louver", "Power on, use remote to swing louver fully open on front casing and confirm cold air exits"),
 ]
 
 
 def test_spark_ac_front_casing_wording_stays_diy():
     v = judge("LG DUALCOOL air conditioner", "AC is not cooling", SPARK_AC_STEPS)
-    expect(v, "diy", allowed=[0, 1, 2, 3])
+    expect(v, "diy", allowed=[0, 1, 2, 3, 4])
 
 
 def test_opening_the_front_casing_is_pro():
