@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # UNUSED: the backend now deploys to Modal (backend/modal_app.py, see
-# MY_TODO.md). Kept for reference only; nothing runs this script.
+# the README). Kept for reference only; nothing runs this script.
 #
 # One-time Google Cloud setup for the Handyman backend.
 #
@@ -103,20 +103,20 @@ put_secret() { # name, prompt, [optional]
   fi
   read -rsp "$prompt: " value; echo
   if [ -z "$value" ]; then
-    [ -n "$optional" ] && { echo "skipped $name (add it later, MY_TODO step 4)"; return; }
+    [ -n "$optional" ] && { echo "skipped $name"; return; }
     echo "empty value, aborting"; exit 1
   fi
   printf '%s' "$value" | gcloud secrets versions add "$name" --data-file=- >/dev/null
 }
 put_secret handyman-meta-api-key "Meta Model API key (MUSE_SPARK_API_KEY)"
-put_secret handyman-places-api-key "Google Places API key (Enter to skip; MY_TODO step 4)" optional
+put_secret handyman-places-api-key "Google Places API key (Enter to skip)" optional
 if ! gcloud secrets describe handyman-proxy-secret >/dev/null 2>&1; then
   gcloud secrets create handyman-proxy-secret --replication-policy=automatic >/dev/null
 fi
 if ! gcloud secrets versions list handyman-proxy-secret --filter="state=ENABLED" \
      --limit=1 --format='value(name)' | grep -q .; then
   openssl rand -hex 32 | tr -d '\n' | gcloud secrets versions add handyman-proxy-secret --data-file=- >/dev/null
-  echo "handyman-proxy-secret generated (Vercel needs the same value; see MY_TODO)"
+  echo "handyman-proxy-secret generated (Vercel needs the same value)"
 fi
 
 say "Secret access"
@@ -172,7 +172,7 @@ if ! gcloud billing budgets list --billing-account="$BILLING_ACCOUNT" \
     --notifications-rule-monitoring-notification-channels="$CHANNEL"
 fi
 
-say "Done. Set these GitHub repository variables (MY_TODO step 6):"
+say "Done. Set these GitHub repository variables:"
 cat <<EOF
 gh variable set GCP_PROJECT_ID   --body "$PROJECT_ID"
 gh variable set GCP_WIF_PROVIDER --body "$WIF_PROVIDER"

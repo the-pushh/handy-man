@@ -32,7 +32,7 @@ pros with a ready-to-share brief.
 ## Deploy
 
 Backend on [Modal](https://modal.com), frontend on Vercel. No tunnels, no
-login, no database. The checklist is `MY_TODO.md`.
+login, no database. Steps: the Deploy section below.
 
 - **Backend:** `modal deploy backend/modal_app.py`. It builds the image
   from `backend/requirements.txt` (CPU-only torch, both MMS voices baked in
