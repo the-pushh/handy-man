@@ -1082,7 +1082,7 @@ export default function Home() {
       )}
 
       {showHistory && (
-        <div className="overlay">
+        <div className="overlay mat">
           <History onClose={() => setShowHistory(false)} />
         </div>
       )}

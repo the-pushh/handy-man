@@ -16,14 +16,14 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
-          href="https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&family=Space+Grotesk:wght@400;500;700&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
           rel="stylesheet"
         />
       </head>
       <body>
         {/* The app is built for phones. On a wider screen it runs inside a
             phone-shaped frame, so it looks the same everywhere. */}
-        <div className="phone">
+        <div className="phone mat">
           {children}
           <TraceDrawer />
         </div>

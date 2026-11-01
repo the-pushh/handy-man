@@ -24,9 +24,12 @@
   --error-container: #43292a;
   --info: #a9c6d0;
   --info-container: #2e3d44;
+  --mat-minor: rgba(234, 226, 198, 0.05);
+  --mat-mid: rgba(234, 226, 198, 0.11);
+  --mat-major: rgba(234, 226, 198, 0.24);
   --trace-h: 0px; /* the trace drawer is hidden unless ?trace */
-  --mono: "Courier Prime", "Courier New", monospace;
-  --sans: "Space Grotesk", system-ui, sans-serif;
+  --sans: "Inter", system-ui, -apple-system, sans-serif;
+  --mono: var(--sans); /* labels too: one typeface, Inter */
 }
 
 * { box-sizing: border-box; }
@@ -51,14 +54,25 @@ html, body {
   overflow: hidden;
   container-type: size;
   transform: translateZ(0);
+}
+
+/* Precision mat: a thin line every 8px, every 5th line (40px) dimly
+   picked out, every 10th line (80px) highlighted. All layers start at the
+   same corner, so the lines coincide like a cutting mat's. */
+.mat, .overlay.mat {
   background-color: var(--paper-deep);
   background-image:
-    linear-gradient(var(--grid) 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid) 1px, transparent 1px),
-    linear-gradient(var(--grid-major) 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid-major) 1px, transparent 1px);
-  background-size: 16px 16px, 16px 16px, 80px 80px, 80px 80px;
+    linear-gradient(var(--mat-major) 1px, transparent 1px),
+    linear-gradient(90deg, var(--mat-major) 1px, transparent 1px),
+    linear-gradient(var(--mat-mid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--mat-mid) 1px, transparent 1px),
+    linear-gradient(var(--mat-minor) 1px, transparent 1px),
+    linear-gradient(90deg, var(--mat-minor) 1px, transparent 1px);
+  background-size: 80px 80px, 80px 80px, 40px 40px, 40px 40px, 8px 8px, 8px 8px;
+  background-position: -1px -1px;
 }
+/* A scrolling sheet keeps its grid under the content as it scrolls. */
+.overlay.mat { background-attachment: local; }
 
 /* Wider than a phone (laptop, tablet): a centred phone-shaped frame,
    9:19.5 like a modern phone, as tall as the window allows. */
@@ -101,19 +115,13 @@ html, body {
    The precision-mat grid lives on the app around the cutout — side
    margins, title bar and control bar all carry it. */
 .stage-camera { display: flex; flex-direction: column; }
-.gridbars {
-  background-image:
-    linear-gradient(var(--grid) 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid) 1px, transparent 1px),
-    linear-gradient(var(--grid-major) 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid-major) 1px, transparent 1px);
-  background-size: 16px 16px, 16px 16px, 80px 80px, 80px 80px;
-}
+/* No grid of its own: the one precision mat on .phone shows through,
+   so every line stays on the same 8px lattice. */
+.gridbars { background: transparent; }
 /* Title bar: HANDYMAN centred, grid behind. */
 .titleframe {
   position: relative;
   min-height: 52px;
-  background-color: var(--paper-deep);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -510,7 +518,6 @@ html, body {
 /* Bottom control bar: upload | orb | type, each labelled, grid behind. */
 .controlbar {
   position: relative;
-  background-color: var(--paper-deep);
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
   align-items: end;
