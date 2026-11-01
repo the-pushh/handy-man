@@ -170,8 +170,13 @@ async def repair_analyze(file: UploadFile = File(...),
                           stills: list[UploadFile] = File(default=[]),
                           text: str = Form(""),
                           components: str = Form(""),
+                          perception: str = Form(""),
                           model: str | None = Form(None)):
     """Analyze, then attach every model call's trace record.
+
+    `perception` (JSON) is the first look's Spark perception of this same
+    still, sent back by the client so the walkthrough goes straight to
+    diagnosis instead of perceiving the still a second time.
 
     Uploads are read here; the blocking model calls run in a worker
     thread so they never stall the event loop (a stalled loop made
@@ -183,13 +188,17 @@ async def repair_analyze(file: UploadFile = File(...),
     for extra in stills or []:
         images.append(await extra.read())
     images = images_normalized(images)
+    try:
+        prior = json.loads(perception) if perception.strip() else None
+    except json.JSONDecodeError:
+        prior = None
     out = await run_in_threadpool(_repair_analyze, images, text,
-                                  components, model)
+                                  components, model, prior)
     out["trace"] = trace.export()
     return out
 
 
-def _repair_analyze(images, text, components, model):
+def _repair_analyze(images, text, components, model, prior=None):
     """Repair flow: image in -> Muse Spark analysis + overlay highlights.
 
     One hosted gateway (MUSE_SPARK_API_URL/KEY): Spark
@@ -199,9 +208,8 @@ def _repair_analyze(images, text, components, model):
     """
     from concurrent.futures import ThreadPoolExecutor
 
-    from . import sam31, spark
+    from . import spark
 
-    image = images[-1]  # highlight/SAM work on the latest framing
     wanted = [c.strip() for c in (components or "").split(",") if c.strip()]
     wanted_given = bool(wanted)
     analysis: dict = {}
@@ -216,9 +224,13 @@ def _repair_analyze(images, text, components, model):
     ask = ""
     inventory = []
     safety: list = []
+    reuse = (isinstance(prior, dict) and isinstance(prior.get("components"), list)
+             and len(images) == 1)
     if not wanted:
         try:
             from concurrent.futures import as_completed
+            if reuse:
+                raise _Reuse()
             analyses = []
             first_error: Exception | None = None
             with ThreadPoolExecutor(max_workers=3) as pool:
@@ -233,6 +245,8 @@ def _repair_analyze(images, text, components, model):
                             first_error = exc
             if not analyses:
                 raise first_error or RuntimeError("no stills analyzed")
+        except _Reuse:
+            analyses = [prior]
         except RuntimeError as exc:
             status = ("needs-api-key" if "not configured" in str(exc)
                       else "spark-error")
@@ -269,30 +283,19 @@ def _repair_analyze(images, text, components, model):
             relevant = [w for w in wanted if w.lower() in diag_rel]
         else:
             relevant = []
-    highlight = None
     from .muse_image import assign_legend
     canonical = assign_legend(relevant or wanted[:4])
-    # SAM 3.1 segments short noun phrases: the parts the steps name (in
-    # step order) plus the diagnosis' relevant parts, or the appliance
-    # itself on the first look when there is no issue text yet.
+    # SAM runs in its own request (/api/segment) so the verdict does not
+    # wait for masks. These are the noun phrases it should segment: the
+    # parts the steps name (in step order) plus the relevant parts, or
+    # the appliance itself on the first look.
     step_parts = [st.get("part") for st in steps
                   if isinstance(st, dict) and st.get("part")]
     appliance_name = analysis.get("appliance") if not wanted_given else None
-    seg_labels = list(dict.fromkeys(step_parts + relevant)) or (
+    segment_labels = list(dict.fromkeys(step_parts + relevant)) or (
         [appliance_name or (wanted[0] if wanted else "")]
         if not text.strip() else wanted[:2])
-    seg_labels = [lbl for lbl in seg_labels if lbl]
-    try:
-        instances = sam31.segment(image, seg_labels)
-    except Exception:
-        instances = []
-    found = {i["label"].lower() for i in instances}
-    has_intent = bool(text.strip() or components.strip() or steps)
-    # Parts SAM did not find fall back to a muse-image illustration,
-    # which the UI labels "illustrative", never "SAM".
-    first = step_parts[0] if step_parts else (seg_labels or [None])[0]
-    highlight_parts = ([first] if has_intent and first
-                       and first.lower() not in found else [])
+    segment_labels = [lbl for lbl in segment_labels if lbl][:4]
     has_text = bool(text.strip() or components.strip())
     if not has_text:
         return {"status": "ok", "notes": notes,
@@ -300,7 +303,9 @@ def _repair_analyze(images, text, components, model):
                 "causes": [], "steps": [],
                 "issue": "", "resolution": resolution,
                 "device": device, "details": details, "ask": ask,
-                "instances": instances, "legend": [],
+                "perception": analysis or None,
+                "segment_labels": segment_labels,
+                "instances": [], "legend": [],
                 "overlay": None}
     appliance = notes.replace("The appliance is ", "").rstrip(".").strip()
     from .risk import assess_risk
@@ -312,10 +317,37 @@ def _repair_analyze(images, text, components, model):
             "device": device, "details": details, "ask": ask,
             "safety": safety,
             "risk": risk,
-            "instances": instances,
+            "instances": [],
             "legend": canonical,
-            "highlight_parts": highlight_parts,
-            "overlay": highlight}
+            "segment_labels": segment_labels,
+            "overlay": None}
+
+
+class _Reuse(Exception):
+    """Internal: skip perception, the client sent the first look's."""
+
+
+@app.post("/api/segment")
+async def segment(file: UploadFile = File(...), labels: str = Form(...)):
+    """SAM 3.1 masks for up to 4 noun phrases (JSON list or comma list)."""
+    from . import sam31
+
+    trace.begin()
+    image = images_normalized([await file.read()])[0]
+    try:
+        wanted = json.loads(labels)
+        if not isinstance(wanted, list):
+            raise ValueError
+    except (json.JSONDecodeError, ValueError):
+        wanted = [w for w in labels.split(",")]
+    wanted = [str(w).strip() for w in wanted if str(w).strip()]
+    try:
+        instances = await run_in_threadpool(sam31.segment, image, wanted)
+        return {"status": "ok", "instances": instances,
+                "trace": trace.export()}
+    except Exception as exc:
+        return {"status": "segment-error", "detail": str(exc),
+                "instances": [], "trace": trace.export()}
 
 
 @app.post("/api/caption")
