@@ -418,6 +418,7 @@ export default function RepairWalkthrough({
       // Questions first: the owner looks, taps an answer, and the server
       // decides with those answers (one more diagnose, no re-perceive).
       const qs: Question[] = data.status === "ok" ? data.questions || [] : [];
+      if (data.perception?.appliance) setAppliance(data.perception.appliance);
       if (qs.length && myRun === runSeq.current) {
         mark("questions shown", `${qs.length}`);
         setStatus("");
@@ -701,13 +702,17 @@ export default function RepairWalkthrough({
   }
 
 
-  function toggle(i: number) {
+  /* Show or hide every mask of one part at once. */
+  function toggleLabel(idx: number[], on: boolean) {
     const next = new Set(hidden);
-    if (next.has(i)) next.delete(i);
-    else next.add(i);
+    for (const i of idx) {
+      if (on) next.add(i);
+      else next.delete(i);
+    }
     setHidden(next);
     void drawMasks(instances, next);
   }
+
 
   const busy = status && !failure ? status : "";
   const name = appliance || device || "your device";
@@ -787,18 +792,24 @@ export default function RepairWalkthrough({
           ) : instances.length > 0 ? (
             <figcaption>
               Outlined by SAM 3.1:{" "}
-              {instances.map((inst, i) => (
-                <button
-                  key={i}
-                  type="button"
-                  className={`mask-chip${hidden.has(i) ? " off" : ""}`}
-                  onClick={() => toggle(i)}
-                  aria-pressed={!hidden.has(i)}
-                >
-                  {inst.label}
-                  {inst.score != null ? ` ${Math.round(inst.score * 100)}%` : ""}
-                </button>
-              ))}
+              {[...new Set(instances.map((inst) => inst.label))].map((label) => {
+                const mine = instances.flatMap((inst, i) => (inst.label === label ? [i] : []));
+                const on = mine.some((i) => !hidden.has(i));
+                const best = Math.max(...mine.map((i) => instances[i].score ?? 0));
+                return (
+                  <button
+                    key={label}
+                    type="button"
+                    className={`mask-chip${on ? "" : " off"}`}
+                    onClick={() => toggleLabel(mine, on)}
+                    aria-pressed={on}
+                  >
+                    {label}
+                    {best ? ` ${Math.round(best * 100)}%` : ""}
+                    {mine.length > 1 ? ` ×${mine.length}` : ""}
+                  </button>
+                );
+              })}
             </figcaption>
           ) : null}
         </figure>
