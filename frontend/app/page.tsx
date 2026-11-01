@@ -21,6 +21,7 @@ import Waveform from "./components/Waveform";
 import Orb from "./components/Orb";
 import type { OrbState } from "./components/Orb";
 import RepairWalkthrough from "./components/RepairWalkthrough";
+import History from "./components/History";
 
 interface Overlay {
   files: File[];
@@ -128,6 +129,7 @@ export default function Home() {
   // survives) but is hidden so the camera shows while the owner aims.
   const [peek, setPeek] = useState<string>("");
   const darkWarned = useRef<boolean>(false);
+  const [showHistory, setShowHistory] = useState<boolean>(false);
   // "No" on the confirm card: name the device instead of re-pointing.
   const [fixing, setFixing] = useState<boolean>(false);
   const [fixText, setFixText] = useState<string>("");
@@ -835,7 +837,14 @@ export default function Home() {
 
   return (
     <main className="stage stage-camera">
-      <div className="titleframe gridbars">HANDYMAN</div>
+      <div className="titleframe gridbars">
+        HANDYMAN
+        {!overlay && !confirm && (
+          <button type="button" className="history-open" onClick={() => setShowHistory(true)}>
+            History
+          </button>
+        )}
+      </div>
 
       <div className="cutout">
         <video ref={videoRef} className="live" autoPlay playsInline muted />
@@ -1069,6 +1078,12 @@ export default function Home() {
             onRecheck={recheckStill}
             onClose={() => setOverlay(null)}
           />
+        </div>
+      )}
+
+      {showHistory && (
+        <div className="overlay">
+          <History onClose={() => setShowHistory(false)} />
         </div>
       )}
 

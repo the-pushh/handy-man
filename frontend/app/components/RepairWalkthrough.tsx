@@ -10,6 +10,7 @@ import { mark, turnElapsed } from "../lib/timeline";
 import { requestDiagnosis } from "../lib/diagnosis";
 import type { Heard } from "../lib/recorder";
 import CallAPro from "./CallAPro";
+import { newJobId, putMedia, saveJob, updateJob } from "../lib/history";
 
 /* The rules layer's decision (backend/risk.py): the model proposes
    steps, the rules decide which an owner may do. */
@@ -102,6 +103,8 @@ export default function RepairWalkthrough({
   const [safety, setSafety] = useState<string[]>([]);
   const [verdict, setVerdict] = useState<Verdict | null>(null);
   const [failure, setFailure] = useState<{ title: string; hint: string } | null>(null);
+  // This turn's entry in the on-device history (lib/history.ts).
+  const jobId = useRef<string | null>(null);
   const [appliance, setAppliance] = useState<string>("");
   const [focus, setFocus] = useState<string | null>(null);
   const [inventory, setInventory] = useState<
@@ -132,6 +135,7 @@ export default function RepairWalkthrough({
   // a time before it; answered ones stay as a ticked checklist.
   const [questions, setQuestions] = useState<Question[]>([]);
   const [answered, setAnswered] = useState<{ ask: string; reply: string }[]>([]);
+  const answeredRef = useRef<{ ask: string; reply: string }[]>([]);
   const answerResolve = useRef<((a: { ask: string; reply: string }[]) => void) | null>(null);
   // Called when only the last question is left, with the replies so far.
   const lastQuestion = useRef<((sofar: { ask: string; reply: string }[]) => void) | null>(null);
@@ -368,6 +372,7 @@ export default function RepairWalkthrough({
     onLast?: (sofar: { ask: string; reply: string }[]) => void
   ): Promise<{ ask: string; reply: string }[]> {
     setAnswered([]);
+    answeredRef.current = [];
     setQuestions(qs);
     lastQuestion.current = onLast || null;
     if (qs.length === 1) onLast?.([]);
@@ -379,6 +384,7 @@ export default function RepairWalkthrough({
   function reply(q: Question, text: string) {
     const next = [...answered, { ask: q.ask, reply: text }];
     setAnswered(next);
+    answeredRef.current = next;
     if (next.length === questions.length - 1) lastQuestion.current?.(next);
     if (next.length >= questions.length) {
       setQuestions([]);
@@ -544,6 +550,33 @@ export default function RepairWalkthrough({
       setSafety(foundSafety);
       const v: Verdict | null = data.verdict || null;
       setVerdict(v);
+      if (v && myRun === runSeq.current) {
+        const id = jobId.current || newJobId();
+        jobId.current = id;
+        saveJob({
+          id,
+          date: new Date().toISOString(),
+          device: [data.device, data.perception?.appliance].filter(Boolean).join(" ") || "device",
+          issue: t,
+          verdict: v.verdict,
+          rule: v.rule,
+          ruleTitle: v.title,
+          headline: v.headline,
+          trade: v.trade,
+          steps: foundSteps.map((st: { check: string; how: string; caution?: string | null }) => ({
+            check: st.check,
+            how: st.how,
+            caution: st.caution || null,
+          })),
+          answers: answeredRef.current,
+          outcome: null,
+          finding: v.headline || foundCauses[0] || "",
+          sound: heard ? heard.summary : null,
+          media: {},
+        });
+        void putMedia(id, "before", fs[0]);
+        void putMedia(id, "clip", heard?.clip);
+      }
       if (v) mark("verdict", `${v.verdict} ${v.rule || ""} "${v.headline}"`);
       // The verdict, out loud, in one short sentence (< 2s), then step 1.
       if (v?.headline) void say(v.headline, 1.9);
@@ -681,6 +714,13 @@ export default function RepairWalkthrough({
     try {
       const r = await (await fetch(`${API}/api/recheck`, { method: "POST", body: fd })).json();
       mark("recheck", `${r.status} looks_fixed=${r.looks_fixed}`);
+      if (jobId.current) {
+        updateJob(jobId.current, {
+          recheck: { looksFixed: r.looks_fixed ?? null, seen: r.seen || r.next || "" },
+          seconds,
+        });
+        void putMedia(jobId.current, "after", after);
+      }
       setDone((d) =>
         d && {
           ...d,
@@ -695,7 +735,14 @@ export default function RepairWalkthrough({
     }
   }
 
+  /* "Find a pro" from a pro verdict: that is this job's outcome. */
+  function openPro(): void {
+    setBooking(true);
+    if (jobId.current) updateJob(jobId.current, { outcome: "called a pro" });
+  }
+
   async function confirmFixed(yes: boolean): Promise<void> {
+    if (jobId.current) updateJob(jobId.current, { outcome: yes ? "fixed" : "still broken" });
     if (yes) {
       setFixed(true);
     } else {
@@ -904,7 +951,7 @@ export default function RepairWalkthrough({
             </p>
           )}
           {verdict.verdict === "pro" && !booking && (
-            <button type="button" className="btn-primary" onClick={() => setBooking(true)}>
+            <button type="button" className="btn-primary" onClick={openPro}>
               Find a {verdict.trade || "pro"}
             </button>
           )}
@@ -994,7 +1041,7 @@ export default function RepairWalkthrough({
                 stepIdx < steps.length - 1
                   ? void goStep(stepIdx + 1)
                   : verdict?.verdict === "pro"
-                    ? setBooking(true)
+                    ? openPro()
                     : void finishFix()
               }
               disabled={stepLoading}
