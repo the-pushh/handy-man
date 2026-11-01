@@ -22,6 +22,11 @@ export function mark(hop: string, detail?: string): void {
   console.log(`[hm] +${t.toFixed(2)}s ${hop}${detail ? " " + detail : ""}`);
 }
 
+/* Seconds since the current turn started (0 before any turn). */
+export function turnElapsed(): number {
+  return t0 ? (performance.now() - t0) / 1000 : 0;
+}
+
 export function kb(n: number): string {
   return `${Math.round(n / 1024)}KB`;
 }

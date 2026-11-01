@@ -6,7 +6,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { resolveApiBase } from "../lib/apiBase";
-import { mark } from "../lib/timeline";
+import { mark, turnElapsed } from "../lib/timeline";
 import { requestDiagnosis } from "../lib/diagnosis";
 import type { Heard } from "../lib/recorder";
 import CallAPro from "./CallAPro";
@@ -41,6 +41,8 @@ interface Question {
 
 const ORANGE = "#e86a17";
 
+const cap = (t: string) => (t ? t[0].toUpperCase() + t.slice(1) : t);
+
 export default function RepairWalkthrough({
   files,
   issue,
@@ -49,6 +51,7 @@ export default function RepairWalkthrough({
   heard,
   onListen,
   onMoreViews,
+  onRecheck,
   onClose,
 }: {
   files: File[];
@@ -60,6 +63,8 @@ export default function RepairWalkthrough({
   heard?: Heard | null;
   onListen?: () => void;
   onMoreViews?: () => void;
+  // Final camera re-check: aim at the part, returns the "after" still.
+  onRecheck?: (part: string | null) => Promise<File | null>;
   onClose: () => void;
 }) {
   const [imgURL, setImgURL] = useState<string>("");
@@ -78,6 +83,7 @@ export default function RepairWalkthrough({
   const [ask, setAsk] = useState<string>("");
   const [safety, setSafety] = useState<string[]>([]);
   const [verdict, setVerdict] = useState<Verdict | null>(null);
+  const [focus, setFocus] = useState<string | null>(null);
   const [inventory, setInventory] = useState<
     { label: string; color?: string | null; condition?: string | null; position?: string | null }[]
   >([]);
@@ -92,6 +98,15 @@ export default function RepairWalkthrough({
   const [stepLoading, setStepLoading] = useState<boolean>(false);
   const [fixed, setFixed] = useState<boolean>(false);
   const [booking, setBooking] = useState<boolean>(false);
+  // Done screen: before/after stills, Spark's re-check, time taken.
+  const [done, setDone] = useState<{
+    afterURL: string;
+    state: "checking" | "ok" | "error";
+    looksFixed: boolean | null;
+    seen: string;
+    next: string | null;
+    seconds: number;
+  } | null>(null);
   const [hidden, setHidden] = useState<Set<number>>(new Set());
   // Look-only questions whose answer can flip the verdict, asked one at
   // a time before it; answered ones stay as a ticked checklist.
@@ -349,6 +364,7 @@ export default function RepairWalkthrough({
     setAnswered([]);
     setFixed(false);
     setBooking(false);
+    setDone(null);
     // Spoken while the analysis runs, not before it starts.
     void say("Working out what's wrong.");
     try {
@@ -407,6 +423,7 @@ export default function RepairWalkthrough({
       );
       setCauses(foundCauses);
       setSteps(foundSteps);
+      setFocus(data.focus || null);
       const list: Instance[] = data.instances || [];
       setInstances(list);
       mark("verdict rendered", `${foundSteps.length} steps`);
@@ -582,10 +599,43 @@ export default function RepairWalkthrough({
     await speakStep(st, i, steps.length);
   }
 
+  /* Last step done: camera re-check of the part, then the Done card. */
+  async function finishFix(): Promise<void> {
+    const part = focus || steps.find((s) => s.part)?.part || null;
+    const seconds = Math.round(turnElapsed());
+    const after = onRecheck ? await onRecheck(part) : null;
+    if (!after) {
+      setDone({ afterURL: "", state: "error", looksFixed: null, seen: "", next: null, seconds });
+      return;
+    }
+    setDone({ afterURL: URL.createObjectURL(after), state: "checking", looksFixed: null, seen: "", next: null, seconds });
+    mark("recheck sent", part || "");
+    const fd = new FormData();
+    fd.append("before", files[0], "before.jpg");
+    fd.append("after", after, "after.jpg");
+    const last = steps[steps.length - 1];
+    fd.append("fix", `${verdict?.headline || ""} Last step: ${last ? `${last.check}. ${last.how}` : ""}`);
+    if (part) fd.append("part", part);
+    try {
+      const r = await (await fetch(`${API}/api/recheck`, { method: "POST", body: fd })).json();
+      mark("recheck", `${r.status} looks_fixed=${r.looks_fixed}`);
+      setDone((d) =>
+        d && {
+          ...d,
+          state: r.status === "ok" ? "ok" : "error",
+          looksFixed: r.looks_fixed ?? null,
+          seen: r.seen || "",
+          next: r.next || null,
+        }
+      );
+    } catch (_) {
+      setDone((d) => d && { ...d, state: "error" });
+    }
+  }
+
   async function confirmFixed(yes: boolean): Promise<void> {
     if (yes) {
       setFixed(true);
-      await say("Great, glad it is fixed. Closing the loop here.");
     } else {
       setBooking(true);
       await say("Sorry. Here's who can help nearby.");
@@ -904,10 +954,22 @@ export default function RepairWalkthrough({
             <button
               type="button"
               className="btn-primary"
-              onClick={() => void goStep(stepIdx + 1)}
-              disabled={stepIdx >= steps.length - 1 || stepLoading}
+              onClick={() =>
+                stepIdx < steps.length - 1
+                  ? void goStep(stepIdx + 1)
+                  : verdict?.verdict === "pro"
+                    ? setBooking(true)
+                    : void finishFix()
+              }
+              disabled={stepLoading || (done?.state === "checking")}
             >
-              {stepLoading ? "Highlighting…" : stepIdx >= steps.length - 1 ? "Done" : "Next step"}
+              {stepLoading
+                ? "Highlighting…"
+                : stepIdx < steps.length - 1
+                  ? "Next step"
+                  : verdict?.verdict === "pro"
+                    ? `Find a ${verdict.trade || "pro"}`
+                    : "Done, check it"}
             </button>
           </div>
         </div>
@@ -923,7 +985,56 @@ export default function RepairWalkthrough({
           ))}
         </div>
       )}
-      {resolution && (
+      {done && (
+        <section className={`done-card ${done.looksFixed === true ? "ok" : done.looksFixed === false ? "bad" : ""}`}>
+          <p className="sheet-label">Final check</p>
+          <div className="before-after">
+            <figure>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={stillURLs[0] || imgURL} alt="before the fix" />
+              <figcaption>Before</figcaption>
+            </figure>
+            <figure>
+              {done.afterURL ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={done.afterURL} alt="after the fix" />
+              ) : (
+                <div className="after-missing">No camera frame</div>
+              )}
+              <figcaption>After</figcaption>
+            </figure>
+          </div>
+          <p className="done-result" role="status">
+            {done.state === "checking" && "Checking the after photo…"}
+            {done.state === "error" && "Couldn't run the check. Try again, or just tell me below."}
+            {done.state === "ok" && done.looksFixed === true && <>✓ {done.seen}</>}
+            {done.state === "ok" && done.looksFixed === false && <>✗ {cap(done.next || done.seen)}</>}
+            {done.state === "ok" && done.looksFixed === null && <>Couldn&apos;t see it clearly. {cap(done.next || "")}</>}
+          </p>
+          {done.state !== "checking" && done.looksFixed !== true && (
+            <button type="button" className="btn-outline" onClick={() => void finishFix()}>
+              Check again
+            </button>
+          )}
+          <div className="done-stats">
+            <div><strong>{done.seconds < 60 ? `${done.seconds} s` : `${Math.floor(done.seconds / 60)} min ${done.seconds % 60} s`}</strong><span>time taken</span></div>
+            <div><strong>₹0</strong><span>spent</span></div>
+            <div><strong>{steps.length}</strong><span>steps done</span></div>
+          </div>
+          {!fixed && !booking && done.state !== "checking" && (
+            <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+              <button type="button" className="btn-success" onClick={() => void confirmFixed(true)}>
+                It works now
+              </button>
+              <button type="button" className="btn-outline" onClick={() => void confirmFixed(false)}>
+                Still broken
+              </button>
+            </div>
+          )}
+          {fixed && <p className="done-result">Fixed. Close this and point the camera at the next thing.</p>}
+        </section>
+      )}
+      {resolution && !done && (
         <div style={{ marginTop: 8 }}>
           <p className="sheet-label">Did it work?</p>
           <p>{resolution}</p>

@@ -122,6 +122,9 @@ export default function Home() {
   const aiOscRef = useRef<boolean>(false);
 
   const [overlay, setOverlay] = useState<Overlay | null>(null);
+  // Final camera re-check: the walkthrough stays mounted (its state
+  // survives) but is hidden so the camera shows while the owner aims.
+  const [peek, setPeek] = useState<string>("");
   const [orb, setOrb] = useState<OrbState>("idle");
   const [listening, setListening] = useState<boolean>(false);
   const [statusMsg, setStatusMsg] = useState<string>("");
@@ -620,6 +623,20 @@ export default function Home() {
     });
   }
 
+  // The walkthrough's final re-check: show the camera, let the owner aim
+  // at the fixed part, grab one "after" still, then come back.
+  async function recheckStill(part: string | null): Promise<File | null> {
+    const aim = part ? `Point at the ${part}` : "Point at what you fixed";
+    setPeek(aim);
+    setStatusMsg(aim);
+    await new Promise((r) => setTimeout(r, 3000));
+    const still = await captureStillAsync();
+    mark("recheck still", still ? kb(still.size) : "none");
+    setStatusMsg("");
+    setPeek("");
+    return still;
+  }
+
   async function confirmNo() {
     stopListeningInner();
     confirmRef.current = null;
@@ -933,7 +950,7 @@ export default function Home() {
       </nav>
 
       {overlay && (
-        <div className="overlay">
+        <div className="overlay" hidden={!!peek}>
           <RepairWalkthrough
             key={overlay.key}
             files={overlay.files}
@@ -943,6 +960,7 @@ export default function Home() {
             heard={overlay.heard}
             onListen={() => void listenAgain(overlay)}
             onMoreViews={() => void addView(overlay)}
+            onRecheck={recheckStill}
             onClose={() => setOverlay(null)}
           />
         </div>
