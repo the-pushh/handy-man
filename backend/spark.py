@@ -126,7 +126,9 @@ def _complete(url: str, key: str, payload: dict,
         reply = _post(url, key, payload, purpose=purpose, image=image)
         parsed = _extract_json(reply)
         reply["_trace"]["parsed"] = parsed
-        if all(parsed.get(k) for k in required):
+        # Retry only when keys are absent (cut off / broken JSON). An
+        # empty list is a valid answer, e.g. no parts in the photo.
+        if all(k in parsed for k in required):
             return parsed
     except RuntimeError:
         parsed = {}
