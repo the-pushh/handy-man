@@ -13,6 +13,7 @@ import { kb, mark, turnStart } from "./lib/timeline";
 import { drawStill, shrinkPhoto } from "./lib/still";
 import { composeMasks } from "./lib/masks";
 import type { SamInstance } from "./lib/masks";
+import { requestDiagnosis } from "./lib/diagnosis";
 import Orb from "./components/Orb";
 import type { OrbState } from "./components/Orb";
 import RepairWalkthrough from "./components/RepairWalkthrough";
@@ -24,6 +25,7 @@ interface Overlay {
   // The first look's Spark perception of files[0]; reused so the
   // walkthrough goes straight to diagnosis. Null once views are added.
   perception: unknown;
+  prefetched: Promise<unknown> | null;
 }
 
 interface Confirm {
@@ -32,6 +34,8 @@ interface Confirm {
   frameURL: string;
   frame: File;
   perception: unknown;
+  // Diagnosis for (frame, issue), started while the user confirms.
+  diagnosis: Promise<unknown> | null;
   // Who drew the highlight: SAM 3.1 masks, a muse-image illustration,
   // or nothing yet (plain photo).
   highlight: "sam" | "illustrative" | "none";
@@ -424,6 +428,11 @@ export default function Home() {
         frameURL,
         frame,
         perception: data.perception || null,
+        // Start diagnosing now: by the time the user says yes, the
+        // verdict is mostly done. Dropped if they say no.
+        diagnosis: data.perception
+          ? requestDiagnosis(apiBase(), [frame], said, data.perception).catch(() => null)
+          : null,
         highlight: "none",
       };
       // SAM 3.1 masks for the appliance arrive ~2s later in their own
@@ -505,6 +514,7 @@ export default function Home() {
       text: issueRef.current,
       key: turnRef.current,
       perception: c.perception,
+      prefetched: c.diagnosis,
     });
   }
 
@@ -526,6 +536,7 @@ export default function Home() {
       text: prev.text,
       key: turnRef.current,
       perception: null,
+      prefetched: null,
     });
   }
 
@@ -847,6 +858,7 @@ export default function Home() {
             files={overlay.files}
             issue={overlay.text}
             perception={overlay.perception}
+            prefetched={overlay.prefetched}
             onMoreViews={() => void addView(overlay)}
             onClose={() => setOverlay(null)}
           />

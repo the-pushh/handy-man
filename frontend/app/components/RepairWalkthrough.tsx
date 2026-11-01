@@ -6,7 +6,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { resolveApiBase } from "../lib/apiBase";
-import { kb, mark } from "../lib/timeline";
+import { mark } from "../lib/timeline";
+import { requestDiagnosis } from "../lib/diagnosis";
 
 interface Instance {
   label: string;
@@ -23,12 +24,15 @@ export default function RepairWalkthrough({
   files,
   issue,
   perception,
+  prefetched,
   onMoreViews,
   onClose,
 }: {
   files: File[];
   issue: string;
   perception?: unknown;
+  // Diagnosis already started during the device confirmation.
+  prefetched?: Promise<unknown> | null;
   onMoreViews?: () => void;
   onClose: () => void;
 }) {
@@ -311,18 +315,10 @@ export default function RepairWalkthrough({
     // Spoken while the analysis runs, not before it starts.
     void say("Working out what's wrong.");
     try {
-      mark("walkthrough analyze sent", `${fs.length} stills ${kb(fs.reduce((n, f) => n + f.size, 0))}`);
-      const fd = new FormData();
-      fd.append("file", fs[0], "still-0.jpg");
-      fs.slice(1).forEach((s, i) => fd.append("stills", s, `still-${i + 1}.jpg`));
-      fd.append("text", t);
-      // One still: reuse the first look's perception, go straight to
-      // diagnosis. Extra views are perceived afresh.
-      if (fs.length === 1 && perception) {
-        fd.append("perception", JSON.stringify(perception));
-      }
-      const r = await fetch(`${base}/api/repair/analyze`, { method: "POST", body: fd });
-      const data = await r.json();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const data: any =
+        (prefetched ? await prefetched : null) ||
+        (await requestDiagnosis(base, fs, t, perception));
       mark("walkthrough analyze returned", `${data.status} trace=${(data.trace || []).length} calls`);
       for (const c of data.trace || []) {
         mark(`  server: ${c.model} ${c.purpose}`, `+${c.start_s}s took ${(c.latency_ms / 1000).toFixed(1)}s ${c.status}`);
@@ -482,12 +478,18 @@ export default function RepairWalkthrough({
     leg: { label: string; tag?: string }[] = legend
   ): Promise<void> {
     const tag = tagFor(st.part, leg);
-    await say(
-      `Step ${i + 1} of ${total}: check ${st.check}.` +
-        (st.how ? ` How: ${st.how}` : "") +
-        (tag ? ` Look for ${tag} on the photo.` : "") +
-        (st.caution ? ` Careful: ${st.caution}` : "")
-    );
+    // Short pieces, each synthesised as soon as it is queued: the first
+    // is a small clip that starts within a second or two, the rest
+    // stream in behind it instead of one large WAV over the tunnel.
+    const parts = [
+      `Step ${i + 1} of ${total}: ${st.check}.`,
+      st.how,
+      tag ? `Look for ${tag} on the photo.` : "",
+      st.caution ? `Careful: ${st.caution}` : "",
+    ].filter(Boolean) as string[];
+    let last: Promise<void> = Promise.resolve();
+    for (const p of parts) last = say(p);
+    await last;
   }
 
   async function goStep(i: number): Promise<void> {
