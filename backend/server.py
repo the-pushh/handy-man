@@ -368,6 +368,32 @@ class _Reuse(Exception):
     """Internal: skip perception, the client sent the first look's."""
 
 
+class ProsRequest(BaseModel):
+    trade: str
+    lat: float
+    lng: float
+
+
+@app.post("/api/pros")
+async def pros(req: ProsRequest):
+    """Nearby pros for the verdict's trade (Places API New, key stays
+    server-side; location travels in the body, never in a URL)."""
+    from . import places
+
+    trace.begin()
+    try:
+        found = await run_in_threadpool(places.nearby, req.trade,
+                                        req.lat, req.lng)
+        return {"status": "ok", "pros": found, "trade": req.trade,
+                "trace": trace.export()}
+    except LookupError as exc:
+        return {"status": "needs-places-key", "detail": str(exc),
+                "pros": [], "trace": trace.export()}
+    except Exception as exc:
+        return {"status": "places-error", "detail": str(exc)[:300],
+                "pros": [], "trace": trace.export()}
+
+
 @app.post("/api/listen")
 async def listen(file: UploadFile = File(...)):
     """A 3-5s WAV -> measured features + Muse Wonder's hearing.
