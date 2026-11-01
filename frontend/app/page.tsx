@@ -21,19 +21,22 @@ interface Overlay {
   files: File[];
   text: string;
   key: number;
+  // The first look's Spark perception of files[0]; reused so the
+  // walkthrough goes straight to diagnosis. Null once views are added.
+  perception: unknown;
 }
 
 interface Confirm {
   device: string;
   overlayURL: string;
   frameURL: string;
+  frame: File;
+  perception: unknown;
   // Who drew the highlight: SAM 3.1 masks, a muse-image illustration,
   // or nothing yet (plain photo).
   highlight: "sam" | "illustrative" | "none";
 }
 
-const INTAKE_STILLS = 3;
-const INTAKE_GAP_MS = 1500;
 
 function apiBase(): string {
   if (typeof window === "undefined") return "http://127.0.0.1:8000";
@@ -372,8 +375,8 @@ export default function Home() {
     setTranscript(said);
     issueRef.current = said;
     turnStart("turn start (issue heard)");
-    await detectIssueLang(said);
-    mark("detect-language done");
+    // Only picks the narration voice; never blocks the look.
+    void detectIssueLang(said).then(() => mark("detect-language done"));
     setOrb("thinking");
     setStatusMsg("Looking at what I can see…");
     const frame = provided || pendingFrameRef.current || (await captureStillAsync());
@@ -415,44 +418,66 @@ export default function Home() {
         "this appliance";
       const label = (data.components || [])[0]?.label || device;
       const frameURL = URL.createObjectURL(frame);
-      const sam: SamInstance[] = data.instances || [];
       const curl: Confirm = {
         device,
-        overlayURL: sam.length ? await composeMasks(frameURL, sam) : frameURL,
+        overlayURL: frameURL,
         frameURL,
-        highlight: sam.length ? "sam" : "none",
+        frame,
+        perception: data.perception || null,
+        highlight: "none",
       };
-      if (sam.length) mark("sam masks shown", `${sam.length} masks`);
-      // No SAM match: fall back to a muse-image illustration (10-20s),
-      // swapped in when it lands and labelled illustrative.
-      if (!sam.length) {
+      // SAM 3.1 masks for the appliance arrive ~2s later in their own
+      // request; muse-image (labelled illustrative) only if SAM finds
+      // nothing. Neither delays the card or the question.
+      const swap = (patch: Partial<Confirm>) => {
+        const cur = confirmRef.current;
+        if (!cur || cur.frameURL !== frameURL) return;
+        const next = { ...cur, ...patch };
+        confirmRef.current = next;
+        setConfirm(next);
+      };
+      const segLabels: string[] = data.segment_labels || [];
+      void (async () => {
+        let sam: SamInstance[] = [];
+        if (segLabels.length) {
+          const sfd = new FormData();
+          sfd.append("file", frame, "frame.jpg");
+          sfd.append("labels", JSON.stringify(segLabels));
+          try {
+            const sd = await (await fetch(`${apiBase()}/api/segment`, { method: "POST", body: sfd })).json();
+            sam = sd.instances || [];
+          } catch (_) {
+            sam = [];
+          }
+        }
+        mark("sam returned", `${sam.length} masks`);
+        if (sam.length) {
+          swap({ overlayURL: await composeMasks(frameURL, sam), highlight: "sam" });
+          return;
+        }
         const hfd = new FormData();
         hfd.append("file", frame, "frame.jpg");
         hfd.append("part", label);
         mark("highlight requested", label);
-        void fetch(`${apiBase()}/api/repair/highlight`, { method: "POST", body: hfd })
-          .then((hr) => hr.json())
-          .then((hdata) => {
-            mark("highlight returned", hdata.status);
-            const cur = confirmRef.current;
-            if (cur === curl && hdata.overlay?.image_b64) {
-              const next: Confirm = {
-                ...cur,
-                overlayURL: `data:${hdata.overlay.mime || "image/webp"};base64,${hdata.overlay.image_b64}`,
-                highlight: "illustrative",
-              };
-              confirmRef.current = next;
-              setConfirm(next);
-            }
-          })
-          .catch(() => undefined);
-      }
+        try {
+          const hdata = await (await fetch(`${apiBase()}/api/repair/highlight`, { method: "POST", body: hfd })).json();
+          mark("highlight returned", hdata.status);
+          if (hdata.overlay?.image_b64) {
+            swap({
+              overlayURL: `data:${hdata.overlay.mime || "image/webp"};base64,${hdata.overlay.image_b64}`,
+              highlight: "illustrative",
+            });
+          }
+        } catch (_) {
+          // The plain photo stays; the question still works.
+        }
+      })();
       confirmRef.current = curl;
       setConfirm(curl);
       setStatusMsg("");
       setOrb("asking");
       mark("confirm card rendered");
-      await say(`Is this the ${device} you need help with? Say yes or no.`);
+      await say(`Is this your ${device}?`);
       listenForConfirm();
     } catch (e) {
       setStatusMsg("Failed: " + (e as Error).message);
@@ -469,31 +494,39 @@ export default function Home() {
     stopListeningInner();
     confirmRef.current = null;
     setConfirm(null);
+    setOrb("idle");
+    setStatusMsg("");
+    // One still by default: the frame the user just confirmed, with its
+    // perception. More views only on demand (addView).
+    void say("Got it.");
+    turnRef.current += 1;
+    setOverlay({
+      files: [c.frame],
+      text: issueRef.current,
+      key: turnRef.current,
+      perception: c.perception,
+    });
+  }
+
+  // On demand from the walkthrough: capture one more view of the faulty
+  // area and re-run on all views (fresh perception of each).
+  async function addView(prev: Overlay) {
+    setOverlay(null);
     setOrb("thinking");
-    await say(`Good, your ${c.device}. Capturing detailed views now.`);
-    const stills: File[] = [];
-    const prompts = [
-      "Hold steady, capturing the first view.",
-      "Now move a little closer to the faulty area.",
-      "One more — a slightly different angle.",
-    ];
-    for (let i = 0; i < INTAKE_STILLS; i++) {
-      if (i > 0) await new Promise((r) => setTimeout(r, INTAKE_GAP_MS));
-      setStatusMsg(`Capturing view ${i + 1} of ${INTAKE_STILLS}…`);
-      void say(prompts[i]);
-      const still = await captureStillAsync();
-      mark(`intake still ${i + 1}`, still ? kb(still.size) : "none");
-      if (still) stills.push(still);
-    }
-    if (!stills.length) {
-      setStatusMsg("Camera not ready yet — try again.");
-      setOrb("idle");
-      return;
-    }
+    setStatusMsg("Point closer at the faulty part…");
+    void say("Point closer at the faulty part.");
+    await new Promise((r) => setTimeout(r, 2000));
+    const still = await captureStillAsync();
+    mark("extra view", still ? kb(still.size) : "none");
     setStatusMsg("");
     setOrb("idle");
     turnRef.current += 1;
-    setOverlay({ files: stills, text: issueRef.current, key: turnRef.current });
+    setOverlay({
+      files: still ? [...prev.files, still] : prev.files,
+      text: prev.text,
+      key: turnRef.current,
+      perception: null,
+    });
   }
 
   async function confirmNo() {
@@ -813,6 +846,8 @@ export default function Home() {
             key={overlay.key}
             files={overlay.files}
             issue={overlay.text}
+            perception={overlay.perception}
+            onMoreViews={() => void addView(overlay)}
             onClose={() => setOverlay(null)}
           />
         </div>

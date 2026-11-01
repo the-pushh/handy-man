@@ -22,10 +22,14 @@ const ORANGE = "#e86a17";
 export default function RepairWalkthrough({
   files,
   issue,
+  perception,
+  onMoreViews,
   onClose,
 }: {
   files: File[];
   issue: string;
+  perception?: unknown;
+  onMoreViews?: () => void;
   onClose: () => void;
 }) {
   const [imgURL, setImgURL] = useState<string>("");
@@ -184,10 +188,16 @@ export default function RepairWalkthrough({
   // effect in dev) must not clobber fresh state like the risk decision.
   const runSeq = useRef<number>(0);
 
+  // Pipelined speech: each line's audio is synthesised the moment it is
+  // queued, and plays when the previous line finishes. So step 1 is
+  // ready to play as soon as the verdict renders, never waiting on a
+  // synthesis round-trip after the line before it.
   function say(line: string): Promise<void> {
     setSaid((prev) => [...prev, line]);
+    const audio = fetchSpeech(line);
     speechQueue.current = speechQueue.current
-      .then(() => speakOnce(line))
+      .then(() => audio)
+      .then((url) => playSpeech(url, line))
       .catch(() => {});
     return speechQueue.current;
   }
@@ -205,7 +215,8 @@ export default function RepairWalkthrough({
     return fallbackVoice.current;
   }
 
-  async function speakOnce(line: string): Promise<void> {
+  /* MMS-TTS audio for a line as an object URL, or null (browser voice). */
+  async function fetchSpeech(line: string): Promise<string | null> {
     mark("tts request", JSON.stringify(line.slice(0, 40)));
     try {
       const r = await fetch(`${API}/api/tts`, {
@@ -215,29 +226,30 @@ export default function RepairWalkthrough({
       });
       const data = await r.json();
       mark("tts audio received", data.audio_b64 ? "" : "fallback");
-      if (data.audio_b64) {
-        const bytes = Uint8Array.from(atob(data.audio_b64), (c) =>
-          c.charCodeAt(0)
-        );
-        const url = URL.createObjectURL(
-          new Blob([bytes], { type: data.mime || "audio/wav" })
-        );
-        await new Promise<void>((res) => {
-          const done = () => {
-            mark("tts playback ended");
-            res();
-          };
-          const a = new Audio(url);
-          a.onended = done;
-          a.onerror = done;
-          setTimeout(done, 120000);
-          a.play().catch(done);
-        });
-        URL.revokeObjectURL(url);
-        return;
-      }
+      if (!data.audio_b64) return null;
+      const bytes = Uint8Array.from(atob(data.audio_b64), (c) => c.charCodeAt(0));
+      return URL.createObjectURL(new Blob([bytes], { type: data.mime || "audio/wav" }));
     } catch (_) {
-      // Fall through to the browser voice.
+      return null;
+    }
+  }
+
+  async function playSpeech(url: string | null, line: string): Promise<void> {
+    mark("tts playback start", JSON.stringify(line.slice(0, 40)));
+    if (url) {
+      await new Promise<void>((res) => {
+        const done = () => {
+          mark("tts playback ended");
+          res();
+        };
+        const a = new Audio(url);
+        a.onended = done;
+        a.onerror = done;
+        setTimeout(done, 120000);
+        a.play().catch(done);
+      });
+      URL.revokeObjectURL(url);
+      return;
     }
     await new Promise<void>((res) => {
       const done = () => res();
@@ -297,16 +309,18 @@ export default function RepairWalkthrough({
     setContactPhone("");
     setContactAddr("");
     // Spoken while the analysis runs, not before it starts.
-    void say(
-      `Looking at your ${fs.length > 1 ? `${fs.length} views` : "photo"} now. ` +
-        "Figuring out the appliance and its parts."
-    );
+    void say("Working out what's wrong.");
     try {
       mark("walkthrough analyze sent", `${fs.length} stills ${kb(fs.reduce((n, f) => n + f.size, 0))}`);
       const fd = new FormData();
       fd.append("file", fs[0], "still-0.jpg");
       fs.slice(1).forEach((s, i) => fd.append("stills", s, `still-${i + 1}.jpg`));
       fd.append("text", t);
+      // One still: reuse the first look's perception, go straight to
+      // diagnosis. Extra views are perceived afresh.
+      if (fs.length === 1 && perception) {
+        fd.append("perception", JSON.stringify(perception));
+      }
       const r = await fetch(`${base}/api/repair/analyze`, { method: "POST", body: fd });
       const data = await r.json();
       mark("walkthrough analyze returned", `${data.status} trace=${(data.trace || []).length} calls`);
@@ -343,11 +357,7 @@ export default function RepairWalkthrough({
       setSteps(foundSteps);
       const list: Instance[] = data.instances || [];
       setInstances(list);
-      // SAM masks for step 1's part go up immediately, before narration.
-      if (list.length) {
-        const covered = showStepMasks(foundSteps[0]?.part, list);
-        mark("sam masks shown", `${list.length} masks, step 1 ${covered ? "covered" : "not covered"}`);
-      }
+      mark("verdict rendered", `${foundSteps.length} steps`);
       const overlay = data.overlay as
         | { image_b64: string; mime: string; legend: { label: string; color: string; tag?: string }[] }
         | null
@@ -361,38 +371,49 @@ export default function RepairWalkthrough({
       } else {
         setOverlayURL("");
       }
-      // muse-image highlight arrives after the result (10-20s): fetch it
-      // in the background so the verdict and steps show immediately.
-      const hlParts: string[] = data.highlight_parts || [];
-      if (!list.length && hlParts.length && fileRef.current) {
-        const hfd = new FormData();
-        hfd.append("file", fileRef.current);
-        hfd.append("part", hlParts[0]);
-        hfd.append("legend", JSON.stringify(data.legend || []));
-        mark("highlight requested", hlParts[0]);
-        void fetch(`${base}/api/repair/highlight`, { method: "POST", body: hfd })
-          .then((hr) => hr.json())
-          .then((hd) => {
+      // SAM 3.1 masks arrive in their own request (~2-3s) after the
+      // verdict; muse-image (labelled illustrative) only for a step-1
+      // part SAM could not find.
+      const segLabels: string[] = data.segment_labels || [];
+      const still = fileRef.current;
+      if (segLabels.length && still) {
+        void (async () => {
+          const sfd = new FormData();
+          sfd.append("file", still);
+          sfd.append("labels", JSON.stringify(segLabels));
+          let sam: Instance[] = [];
+          try {
+            const sd = await (await fetch(`${base}/api/segment`, { method: "POST", body: sfd })).json();
+            sam = sd.instances || [];
+          } catch (_) {
+            sam = [];
+          }
+          if (myRun !== runSeq.current) return;
+          setInstances(sam);
+          const part = foundSteps[0]?.part;
+          const covered = sam.length ? showStepMasks(part, sam) : false;
+          mark("sam masks shown", `${sam.length} masks, step 1 ${covered ? "covered" : "not covered"}`);
+          setStatus(sam.length ? `SAM 3.1: ${sam.length} masks` : "");
+          if (covered || !part) return;
+          const hfd = new FormData();
+          hfd.append("file", still);
+          hfd.append("part", part);
+          hfd.append("legend", JSON.stringify(data.legend || []));
+          mark("highlight requested", part);
+          try {
+            const hd = await (await fetch(`${base}/api/repair/highlight`, { method: "POST", body: hfd })).json();
             mark("highlight returned", hd.status);
             if (myRun === runSeq.current && hd.overlay?.image_b64) {
               setOverlayURL(`data:${hd.overlay.mime || "image/webp"};base64,${hd.overlay.image_b64}`);
-              setStatus("Highlighted image");
             }
-          })
-          .catch(() => undefined);
+          } catch (_) {
+            // Step text still guides without a picture.
+          }
+        })();
       }
-      setStatus(
-        list.length
-          ? `SAM 3.1: ${list.length} masks`
-          : overlay?.image_b64
-            ? "Highlighted image"
-            : "No masks came back."
-      );
+      setStatus(segLabels.length ? "Outlining parts…" : "");
       const foundSafety: string[] = data.safety || [];
       setSafety(foundSafety);
-      if (foundSafety.length) {
-        await say(`Before you touch anything: ${foundSafety.join(". ")}`);
-      }
       const foundRisk = data.risk && typeof data.risk === "object" ? data.risk : null;
       setRisk(foundRisk);
       setRiskOk(false);
@@ -423,14 +444,8 @@ export default function RepairWalkthrough({
       if (data.details && typeof data.details === "object") {
         setDetails(data.details);
       }
-      if (data.issue) {
-        await say(`I understand the issue as: ${data.issue}`);
-      }
-      if (foundCauses.length) {
-        await say(`Most likely: ${foundCauses[0]}.`);
-      }
       setStepIdx(0);
-      if (foundSteps.length) {
+      if (foundSteps.length && !(foundRisk && foundRisk.level === "high")) {
         await speakStep(
           foundSteps[0],
           0,
@@ -619,6 +634,11 @@ export default function RepairWalkthrough({
       )}
       <p>
         You said: <em>&ldquo;{issue}&rdquo;</em>{" "}
+        {onMoreViews && (
+          <button type="button" className="btn-outline" onClick={onMoreViews}>
+            Add a closer view
+          </button>
+        )}
         <button type="button" className="btn-outline" onClick={onClose}>
           Close and point the camera again
         </button>
