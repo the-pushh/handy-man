@@ -3,3 +3,6 @@
 __pycache__/
 *.pyc
 .DS_Store
+
+# SAM table overlays and json
+eval/out/
