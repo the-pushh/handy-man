@@ -896,3 +896,6 @@ body {
 .workings summary { font-family: var(--mono); font-weight: 700; cursor: pointer; padding: 8px 0; color: var(--line); }
 .workings ul, .workings ol { padding-left: 18px; }
 .workings strong { color: var(--line); }
+.verdict-meta { grid-template-columns: 1fr 1fr; }
+.verdict-meta div:last-child:nth-child(odd) { grid-column: 1 / -1; }
+.verdict-meta dd { overflow-wrap: anywhere; }
