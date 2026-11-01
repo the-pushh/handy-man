@@ -232,15 +232,30 @@ export default function RepairWalkthrough({
   // last.
   const synthQueue = useRef<Promise<unknown>>(Promise.resolve());
 
+  // Bumped by hush(): lines queued before it never play.
+  const speechGen = useRef<number>(0);
+  const playing = useRef<HTMLAudioElement | null>(null);
+
   function say(line: string, maxSeconds?: number): Promise<void> {
     setSaid((prev) => [...prev, line]);
+    const gen = speechGen.current;
     const audio = synthQueue.current.then(() => fetchSpeech(line, maxSeconds));
     synthQueue.current = audio.catch(() => null);
     speechQueue.current = speechQueue.current
       .then(() => audio)
-      .then((url) => playSpeech(url, line))
+      .then((url) => (gen === speechGen.current ? playSpeech(url, line) : undefined))
       .catch(() => {});
     return speechQueue.current;
+  }
+
+  /* Stop the line playing now and drop everything queued after it
+     (moving to another step, or leaving for the camera re-check). */
+  function hush(): void {
+    speechGen.current += 1;
+    playing.current?.pause();
+    playing.current?.dispatchEvent(new Event("ended"));
+    playing.current = null;
+    if (typeof window !== "undefined") window.speechSynthesis?.cancel();
   }
 
   // One pinned browser voice for the whole session, so the fallback
@@ -284,6 +299,7 @@ export default function RepairWalkthrough({
           res();
         };
         const a = new Audio(url);
+        playing.current = a;
         a.onended = done;
         a.onerror = done;
         setTimeout(done, 120000);
@@ -562,6 +578,7 @@ export default function RepairWalkthrough({
 
   async function goStep(i: number): Promise<void> {
     if (i < 0 || i >= steps.length || !fileRef.current) return;
+    hush(); // the previous step never talks over this one
     setStepIdx(i);
     const st = steps[i];
     // SAM already outlined this part: show its mask, skip muse-image.
@@ -602,6 +619,7 @@ export default function RepairWalkthrough({
   /* Last step done: camera re-check of the part, then the Done card. */
   async function finishFix(): Promise<void> {
     const part = focus || steps.find((s) => s.part)?.part || null;
+    hush();
     const seconds = Math.round(turnElapsed());
     const after = onRecheck ? await onRecheck(part) : null;
     if (!after) {
