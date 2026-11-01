@@ -203,6 +203,8 @@ def _repair_analyze(images, text, components, model):
 
     image = images[-1]  # highlight/SAM work on the latest framing
     wanted = [c.strip() for c in (components or "").split(",") if c.strip()]
+    wanted_given = bool(wanted)
+    analysis: dict = {}
     notes = ""
     causes: list = []
     steps: list = []
@@ -275,10 +277,11 @@ def _repair_analyze(images, text, components, model):
     # itself on the first look when there is no issue text yet.
     step_parts = [st.get("part") for st in steps
                   if isinstance(st, dict) and st.get("part")]
-    appliance_name = notes.replace("The appliance is ", "").rstrip(".")
+    appliance_name = analysis.get("appliance") if not wanted_given else None
     seg_labels = list(dict.fromkeys(step_parts + relevant)) or (
-        [appliance_name] if appliance_name and not text.strip()
-        else wanted[:2])
+        [appliance_name or (wanted[0] if wanted else "")]
+        if not text.strip() else wanted[:2])
+    seg_labels = [lbl for lbl in seg_labels if lbl]
     try:
         instances = sam31.segment(image, seg_labels)
     except Exception:

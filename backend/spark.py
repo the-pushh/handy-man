@@ -200,7 +200,9 @@ def analyze_image(image_bytes: bytes, user_text: str = "",
         "reasoning_effort": "low",
         "response_format": {"type": "json_object"},
     }
-    parsed = _complete(url, key, payload, ["components", "appliance"],
+    # Only `components` is required: a photo with no appliance in it
+    # legitimately has no appliance, and retrying for one wasted ~4s.
+    parsed = _complete(url, key, payload, ["components"],
                        purpose="perceive", image=image_bytes)
     raw_components = parsed.get("components", [])
     components = [{"label": str(c.get("label", "")).strip(),
@@ -229,7 +231,8 @@ def analyze_image(image_bytes: bytes, user_text: str = "",
     } if isinstance(det, dict) else {
         "serial": None, "color": None, "condition": None,
         "markings": [], "other": []}
-    return {"notes": notes, "components": components,
+    return {"notes": notes, "appliance": appliance or None,
+            "components": components,
             "brand": brand, "device_model": device_model, "device": device,
             "details": details, "ask": ask,
             "model": model or default_model}
@@ -242,14 +245,15 @@ def merge_analyses(analyses: list) -> dict:
     components merge by label with missing color/condition/position
     filled in from later stills.
     """
-    merged: dict = {"notes": "", "components": [], "brand": None,
+    merged: dict = {"notes": "", "appliance": None, "components": [],
+                    "brand": None,
                     "device_model": None, "device": None, "details": {},
                     "ask": ""}
     seen: dict = {}
     for a in analyses:
         if not merged["notes"] and a.get("notes"):
             merged["notes"] = a["notes"]
-        for key in ("brand", "device_model", "device", "ask"):
+        for key in ("appliance", "brand", "device_model", "device", "ask"):
             if not merged[key] and a.get(key):
                 merged[key] = a[key]
         det, mdet = a.get("details", {}), merged["details"]
