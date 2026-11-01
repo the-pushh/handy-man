@@ -418,8 +418,9 @@ export default function Home() {
       mark("analyze(1 still, no text) returned", `trace=${(data.trace || []).length} calls`);
       const device: string =
         data.device ||
-        (data.notes || "").replace("The appliance is ", "").replace(/\.$/, "") ||
-        "this appliance";
+        data.perception?.appliance ||
+        (data.components || [])[0]?.label ||
+        "device";
       const label = (data.components || [])[0]?.label || device;
       const frameURL = URL.createObjectURL(frame);
       const curl: Confirm = {
