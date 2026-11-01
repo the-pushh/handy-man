@@ -1,32 +1,69 @@
-# HandyMan — voice-first AR repair assistant
+# Handyman
 
-Point at an appliance (geyser, washing machine, switchboard…), describe the
-issue by voice, get probable causes with highlighted components and spoken
-step-by-step guidance.
+Fix what you can. Call for what you can't.
 
-## Stack (all local-first; Modal is parked)
+**Live:** https://<your-vercel-domain> (free to use, no login)
 
-- Frontend: Next.js + TypeScript in `frontend/` (port 3000, proxies `/api/*` to FastAPI).
-- Backend: FastAPI in `backend/server.py` (port 8000): staged SSE pipeline
-  (`backend/pipeline.py`), language detect (`backend/lang.py`), narration
-  templates (`backend/voice_lines.py`), local TTS (`backend/tts_local.py`).
+Point your phone at something broken and say what's wrong. Meta's models
+look, listen and diagnose; a rules layer decides whether you can fix it
+yourself. If you can, it walks you through it step by step and checks the
+result with the camera. If not, it names the safety rule and shows nearby
+pros with a ready-to-share brief.
+
+## Stack
+
+- Frontend: Next.js + TypeScript in `frontend/`, on Vercel. The browser
+  only talks to its own origin; `frontend/middleware.ts` proxies `/api/*`
+  to the backend.
+- Backend: FastAPI in `backend/server.py`, a container on Cloud Run
+  (asia-south1). Model calls go to Meta's hosted Model API; the safety
+  rules are `backend/risk.py`; speech is local MMS-TTS.
 
 | Role | Model | Where |
 |---|---|---|
-| Speech-to-text | muse voice transcribe | Browser speech recognition now, `/api/transcribe` hook for server-side |
-| Language detect | lexicons + script + langdetect → MMS codes | `backend/lang.py` — Hinglish/code-mix first, 6 anchored languages, CJK split, 55 statistical |
-| Narration translate | nllb-200-distilled (cached) | `backend/i18n.py` + `backend/voice_lines_i18n.json` — every NLLB-covered voice |
-| Object detection | sam3.1 | Staged proposals in `backend/pipeline.py` + tap-to-tag in UI |
-| On-device reasoning | muse glimmer | Heuristic in `backend/voice_lines.py` (no public weights exist) |
-| Overlay generation | muse image | Real spliced evidence crops + vector highlights |
-| TTS | mms-tts, all 999 voices | Lazy local checkpoints in the transcript's own language (`backend/mms_languages.json`) |
+| Perception, diagnosis, decision, re-check | `muse-spark-1.3` (prod), `muse-spark-1.3-contributor` (local dev) | `backend/spark.py` |
+| Part outlines | `sam-3.1` | `backend/sam31.py` |
+| Hearing beeps and clicks | `muse-wonder-1.0` + measured audio features | `backend/wonder.py`, `backend/audiofeat.py` |
+| Illustrative highlight (fallback when SAM finds nothing) | `muse-image-1.0` | `backend/muse_image.py` |
+| Speech | MMS-TTS (English and Hindi voices baked into the image) | `backend/tts_local.py` |
+| Speech-to-text | browser speech recognition | `frontend/app/page.tsx` |
+| Nearby pros | Google Places API (New) | `backend/places.py` |
+
+## Deploy
+
+Backend on Google Cloud Run with CI/CD from GitHub Actions, frontend on
+Vercel. No tunnels, no login, no database.
+
+- **One-time setup:** follow `MY_TODO.md` in order. It runs
+  `infra/setup.sh` (project, APIs, Artifact Registry, Secret Manager,
+  Workload Identity Federation, budget alert) and walks through the
+  Vercel and GitHub settings.
+- **Every push to `main`:** `.github/workflows/backend.yml` runs the
+  checks (ruff, `backend/test_*.py`, frontend typecheck), builds
+  `backend/Dockerfile`, deploys a Cloud Run revision with no traffic,
+  smoke-tests it (health + one tiny live Spark call), then moves traffic
+  to it. Pull requests run the checks only. GCP auth is Workload Identity
+  Federation; there are no service-account keys.
+- **Configuration:** every variable is documented in
+  `backend/.env.example` and `frontend/.env.example`. The backend refuses
+  to start if a required one is missing. Secrets (Meta key, Places key,
+  proxy secret) live in Secret Manager and Vercel only.
+- **Protecting the bill:** per-IP limits on fixes and requests, a cap on
+  Places lookups per session and per IP, at most 3 Cloud Run instances,
+  a budget alert, and one JSON usage line per request in Cloud Logging
+  (`jsonPayload.kind="usage"`).
+- **History:** past jobs stay in the browser (localStorage for the facts,
+  IndexedDB for small before/after thumbnails and the sound clip, last 20
+  jobs). Nothing is stored on the server.
+
+Run the production container locally: `make container` (uses your `.env`).
 
 ## Languages
 
 - Voice: all 999 MMS-TTS checkpoints, downloaded lazily on first use
   (`/api/languages` lists them; the UI has an Auto-detect + picker).
-- Narration: authored English/Hindi/Hinglish, NLLB-translated for every
-  other voice NLLB covers, cached in `backend/voice_lines_i18n.json`.
+- Narration: the model's own replies (English; Hindi and Hinglish voices
+  are baked in).
 - Honest gaps: some languages have no MMS voice at all (verified absent:
   Mandarin, Japanese, Italian, Norwegian) — those reply in English with
   the recognizer still set to your language. Symptom matching runs
@@ -189,7 +226,7 @@ highlights each step's part with an IKEA-style A/B/C legend while the
 MMS voice talks you through it — one step at a time with Next/Back,
 plus embedded tutorial videos, reference-picture links, and a closing
 resolution check. Needs `MUSE_SPARK_API_URL` + `MUSE_SPARK_API_KEY` in
-`.env` (see `.env.example`). Hosted `sam-3.1` masks stay a hook point
+`.env` (see `backend/.env.example`). Hosted `sam-3.1` masks stay a hook point
 until its dashboard request format lands.
 
 ## Flow (voice is the only trigger)
