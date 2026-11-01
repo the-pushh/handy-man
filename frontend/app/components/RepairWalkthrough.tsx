@@ -428,6 +428,7 @@ export default function RepairWalkthrough({
       setSafety(foundSafety);
       const v: Verdict | null = data.verdict || null;
       setVerdict(v);
+      if (v) mark("verdict", `${v.verdict} ${v.rule || ""} "${v.headline}"`);
       // The verdict, out loud, in one short sentence (< 2s), then step 1.
       if (v?.headline) void say(v.headline, 1.9);
       if (data.ask && !(data.steps || []).length) {
