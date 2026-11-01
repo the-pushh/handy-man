@@ -3,7 +3,7 @@
 Deploy (from the repo root):
     modal deploy backend/modal_app.py
 
-The URL it prints (https://<workspace>--handyman-backend-web.modal.run)
+The URL it prints (https://<workspace>--handyman-backend.modal.run)
 is Vercel's BACKEND_URL.
 
 Settings come from the Modal secret "handyman" (Modal dashboard >
@@ -101,7 +101,7 @@ class Web:
         tts_local.synthesize("ready", VOICES[0])
         print(f"[modal] TTS warm in {time.time() - start:.1f}s", flush=True)
 
-    @modal.asgi_app()
+    @modal.asgi_app(label=APP_NAME)
     def web(self):
         from backend.server import app as fastapi_app
 
