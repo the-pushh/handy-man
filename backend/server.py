@@ -50,6 +50,20 @@ app.add_middleware(
 )
 
 
+@app.on_event("startup")
+def warm_tts() -> None:
+    """Load the English MMS voice in the background at boot, so the
+    first spoken line is not a 5-8s cold model load."""
+    import threading
+
+    def warm():
+        try:
+            tts_local.synthesize("ready", "facebook/mms-tts-eng")
+        except Exception:
+            pass
+    threading.Thread(target=warm, daemon=True).start()
+
+
 @app.middleware("http")
 async def time_requests(request: Request, call_next):
     """One log line per request: path, upload size, server time."""
