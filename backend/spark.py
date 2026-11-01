@@ -364,7 +364,12 @@ def diagnose(appliance: str, device: str | None, labels: list,
         '"part": "part label or null", '
         '"options": ["Green CHARGING", "Red LOW BATT", "None"]}], '
         '"resolution": "how to verify the fix worked and what to do '
-        'if it did not"}. '
+        'if it did not", '
+        '"difficulty": "easy", "minutes": 20, '
+        '"tools": ["soft brush", "bucket of water"], '
+        '"confidence": "high", '
+        '"based_on": ["photo: dust on the front grille", '
+        '"you said: airflow weak on high fan"]}. '
         f"Appliance: {appliance or 'unknown'}. "
         f"Exact device: {device or 'unknown'}. "
         f"Visible parts: {', '.join(labels) or 'none listed'}. "
@@ -404,6 +409,12 @@ def diagnose(appliance: str, device: str | None, labels: list,
         "include safety: power/battery to disconnect, non-conductive "
         "tools (wood/plastic), parts to never touch, water/heat "
         "warnings where relevant; each step gets its own caution. "
+        "difficulty is easy, medium or hard for an untrained owner; "
+        "minutes is the owner's time for the steps; tools are what they "
+        "need at home (empty if none); confidence is high, medium or low "
+        "in the finding; based_on is 2-3 short pieces of evidence, each "
+        "starting with 'photo:', 'you said:' or 'sound:', taken only "
+        "from what is given here. Leave these out when steps are empty. "
         "headline is the finding as one spoken sentence of at most 5 "
         "words in total, starting with \"Looks like\". "
         "Emit compact JSON, start with {, keep it under 700 tokens."
@@ -456,6 +467,18 @@ def diagnose(appliance: str, device: str | None, labels: list,
             "headline": headline,
             "causes": causes, "relevant": relevant, "steps": steps[:8],
             "safety": safety, "questions": questions[:2],
+            "difficulty": str(parsed.get("difficulty") or "").strip().lower()
+            if str(parsed.get("difficulty") or "").strip().lower()
+            in ("easy", "medium", "hard") else None,
+            "minutes": int(parsed["minutes"])
+            if str(parsed.get("minutes", "")).strip().isdigit() else None,
+            "tools": [str(t).strip() for t in parsed.get("tools") or []
+                      if str(t).strip()][:5],
+            "confidence": str(parsed.get("confidence") or "").strip().lower()
+            if str(parsed.get("confidence") or "").strip().lower()
+            in ("high", "medium", "low") else None,
+            "based_on": [str(b).strip() for b in parsed.get("based_on") or []
+                         if str(b).strip()][:3],
             "resolution": str(parsed.get("resolution", "")).strip()}
 
 

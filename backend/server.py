@@ -263,6 +263,7 @@ def _repair_analyze(images, text, components, model, prior=None,
     safety: list = []
     questions: list = []
     diag_questions = False
+    meta: dict = {}
     headline = ""
     reuse = (isinstance(prior, dict) and isinstance(prior.get("components"), list)
              and len(images) == 1)
@@ -338,6 +339,9 @@ def _repair_analyze(images, text, components, model, prior=None,
             headline = diag.get("headline", "")
             questions = diag.get("questions", [])
             diag_questions = bool(questions)
+            meta = {k: diag.get(k) for k in ("difficulty", "minutes",
+                                             "tools", "confidence",
+                                             "based_on")}
             diag_rel = [r.lower() for r in diag["relevant"]]
             relevant = [w for w in wanted if w.lower() in diag_rel]
         else:
@@ -378,6 +382,7 @@ def _repair_analyze(images, text, components, model, prior=None,
         # left the steps for after the answers: decide with no answers.
         return _repair_analyze(images, text, components, model, analysis,
                                sound, "Nothing checked yet.", ahead)
+    verdict.update(meta)
     verdict["final"] = not questions
     # The part the final camera re-check looks at: the issue-relevant
     # part the steps work on most, else the part named most often.
