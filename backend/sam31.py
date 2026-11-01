@@ -1,19 +1,23 @@
-"""SAM 3.1 via Meta's hosted model API (repair flow).
+"""SAM 3.1 via Meta's hosted Model API: noun phrase in, masks out.
 
-Same gateway as Muse Spark: MUSE_SPARK_API_URL + MUSE_SPARK_API_KEY,
-model id "sam-3.1". No local weights, no gated download.
+Same gateway as Muse Spark (MUSE_SPARK_API_URL + MUSE_SPARK_API_KEY),
+model id "sam-3.1" on /responses. Wire format per Meta's SAM 3 protocol
+(github.com/meta-models/meta-sam, protocol/sam3.md), verified
+2026-11-01 against the live API:
 
-WIRE FORMAT (verified 2026-10-30 against the live gateway):
-  - Path: POST {base}{MUSE_SAM_PATH} (default: /responses; the base URL
-    already ends in /v1, so /v1/segment would double the prefix and 404).
-  - The gateway itself says: "The model `sam-3.1` is not available on
-    [chat/completions]. Use /v1/responses."
-  - Request: OpenAI Responses shape {"model": "sam-3.1",
-    "input": [{role, content: [{input_text, input_image}]}]}.
-  - OPEN: what makes the model emit masks/boxes instead of empty text.
-    If your Meta dashboard shows a sample sam-3.1 /responses request
-    (tool type, modalities flag, or output schema), paste it in and only
-    _request()/_extract_text() change.
+  - input_text is ONLY a noun phrase ("air filter", "kill switch") or
+    box/point object prompts, never instructions. A sentence is read as
+    a concept that matches nothing, which is why earlier probes that
+    sent long instructions always came back empty.
+  - An empty output_text is a valid answer: zero matches.
+  - Output is special-token text, one line per frame:
+      <0f>0<|box;x1=..;y1=..;x2=..;y2=..;w=W;h=H;c=0.88|><|mask;x=0;y=0;data=H,W,!payload|>
+    The mask covers its box. Decoded with meta-sam-parser (Meta's
+    reference parser), never by hand.
+  - Responses metadata: mask_encoding="one_bit" (13x smaller payload,
+    same pixels) and include_confidence="true" (adds c=).
+
+One phrase per request; several phrases run in parallel (~2s each).
 """
 
 import base64
@@ -21,8 +25,9 @@ import io
 import json
 import os
 import re
-import urllib.request
 import urllib.error
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 
 from PIL import Image
 
@@ -30,6 +35,9 @@ from . import trace
 
 MODEL_ID = "sam-3.1"
 DEFAULT_PATH = "/responses"
+METADATA = {"mask_encoding": "one_bit", "include_confidence": "true"}
+MIN_CONFIDENCE = 0.3
+MAX_PER_PHRASE = 3
 
 
 def _config() -> tuple:
@@ -44,8 +52,19 @@ def _config() -> tuple:
     return url + path, key
 
 
+def concept(label: str) -> str:
+    """Reduce a part label to the short noun phrase SAM expects.
+
+    "the air filter (behind front grille)" -> "air filter".
+    """
+    text = re.sub(r"\(.*?\)", " ", str(label or "")).lower()
+    text = re.sub(r"[^a-z0-9 \-/]", " ", text)
+    words = [w for w in text.split() if w not in ("the", "a", "an", "its")]
+    return " ".join(words[:4])
+
+
 def _request(endpoint: str, key: str, payload: dict,
-             timeout: int = 180) -> dict:
+             timeout: int = 60) -> dict:
     req = urllib.request.Request(
         endpoint,
         data=json.dumps(payload).encode(),
@@ -62,90 +81,143 @@ def _request(endpoint: str, key: str, payload: dict,
         raise RuntimeError(f"SAM 3.1 request failed: {exc}") from exc
 
 
-def _extract_text(reply: dict) -> str:
-    for item in reply.get("output", []):
-        if item.get("type") == "message":
-            for part in item.get("content", []):
-                if part.get("type") == "output_text" and part.get("text"):
-                    return part["text"]
-    return ""
+def _output_text(reply: dict) -> str:
+    return "".join(
+        part.get("text") or ""
+        for item in reply.get("output", []) if item.get("type") == "message"
+        for part in item.get("content", [])
+        if part.get("type") == "output_text")
 
 
-def segment(image_bytes: bytes, labels: list, threshold: float = 0.3) -> list:
-    """Cut one mask per label via the hosted API. See module docstring."""
+def parse_output(text: str, label: str) -> list:
+    """Token text -> [{label, score, box (normalised), mask PNG}]."""
+    from meta_sam_parser import (CompletedOutcome, decode_mask_to_raster,
+                                 image_segmentation_format)
+
+    parser = image_segmentation_format().create_parser()
+    list(parser.push(text))
+    result = parser.finish(CompletedOutcome()).result
+    boxes = {r.object_id: r for r in result.records if r.kind == "box"}
+    size = re.search(r";w=(\d+);h=(\d+)", text)
+    if not size:
+        return []
+    fw, fh = int(size.group(1)), int(size.group(2))
+    out = []
+    for rec in result.records:
+        if rec.kind != "mask":
+            continue
+        box = boxes.get(rec.object_id)
+        score = (box.confidence if box and box.confidence is not None
+                 else rec.confidence)
+        if score is not None and score < MIN_CONFIDENCE:
+            continue
+        b = rec.bounds
+        out.append({
+            "label": label,
+            "source": MODEL_ID,
+            "score": round(float(score), 3) if score is not None else None,
+            "box": {"x": b.left / fw, "y": b.top / fh,
+                    "w": (b.right - b.left) / fw,
+                    "h": (b.bottom - b.top) / fh},
+            "mask_png_b64": _mask_png(decode_mask_to_raster(rec.mask),
+                                      rec.mask.width, rec.mask.height),
+            "mask_w": rec.mask.width,
+            "mask_h": rec.mask.height,
+        })
+    out.sort(key=lambda i: -(i["score"] or 0))
+    return out[:MAX_PER_PHRASE]
+
+
+def _mask_png(raster: bytes, width: int, height: int) -> str:
+    """Binary raster -> RGBA PNG, opaque where the mask is on.
+
+    The frontend tints by alpha (source-in), so off pixels must be
+    transparent, not black.
+    """
+    alpha = Image.frombytes("L", (width, height),
+                            bytes(255 if v else 0 for v in raster))
+    img = Image.new("RGBA", (width, height), (255, 255, 255, 0))
+    img.putalpha(alpha)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", optimize=True)
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+def mask_preview(image_bytes: bytes, instances: list,
+                 side: int = 240) -> str | None:
+    """Thumbnail of the still with SAM masks in orange, for the trace."""
+    try:
+        base = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        w, h = base.size
+        layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        for inst in instances:
+            m = Image.open(io.BytesIO(
+                base64.b64decode(inst["mask_png_b64"]))).getchannel("A")
+            b = inst["box"]
+            x, y = int(b["x"] * w), int(b["y"] * h)
+            bw, bh = max(1, int(b["w"] * w)), max(1, int(b["h"] * h))
+            tint = Image.new("RGBA", (bw, bh), (232, 106, 23, 150))
+            layer.paste(tint, (x, y), m.resize((bw, bh)))
+        out = Image.alpha_composite(base.convert("RGBA"), layer)
+        out.thumbnail((side, side))
+        buf = io.BytesIO()
+        out.convert("RGB").save(buf, format="JPEG", quality=70)
+        return ("data:image/jpeg;base64,"
+                + base64.b64encode(buf.getvalue()).decode())
+    except Exception:
+        return None
+
+
+def segment_one(image_bytes: bytes, label: str) -> list:
+    """One noun phrase -> its instances (possibly none)."""
     endpoint, key = _config()
-    b64 = base64.b64encode(image_bytes).decode()
+    phrase = concept(label)
+    if not phrase:
+        return []
     payload = {
         "model": MODEL_ID,
-        "input": [{
-            "role": "user",
-            "content": [
-                {"type": "input_text",
-                 "text": (
-                     "Segment each of these appliance parts in the image: "
-                     + ", ".join(labels) + ". Respond with a single JSON "
-                     'object {"instances": [{"label", "score", "box": '
-                     '{"x","y","w","h"} normalized top-left origin, '
-                     '"polygon": [[x,y],...] normalized}]} and nothing else.'
-                 )},
-                {"type": "input_image",
-                 "image_url": f"data:image/jpeg;base64,{b64}"},
-            ],
-        }],
+        "input": [{"role": "user", "content": [
+            {"type": "input_text", "text": phrase},
+            {"type": "input_image", "image_url": "data:image/jpeg;base64,"
+             + base64.b64encode(image_bytes).decode()},
+        ]}],
+        "metadata": METADATA,
     }
-    with trace.call(MODEL_ID, "segment: " + ", ".join(labels),
-                    image_bytes) as rec:
+    with trace.call(MODEL_ID, f"segment: {phrase}", image_bytes) as rec:
         reply = _request(endpoint, key, payload)
-        rec["usage"] = reply.get("usage")
-        rec["raw_text"] = json.dumps(reply)[:2000]
-    text = _extract_text(reply)
-    if not text.strip():
-        raise RuntimeError(
-            "SAM 3.1 returned empty text on /responses — the dashboard's "
-            "sample request (tool type / modalities / output schema) is "
-            "needed to trigger mask output."
-        )
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", text, re.DOTALL)
-        try:
-            parsed = json.loads(match.group(0)) if match else {}
-        except (json.JSONDecodeError, AttributeError):
-            parsed = {}
-    instances = parsed.get("instances", []) if isinstance(parsed, dict) else []
-    return [_parse(inst, labels) for inst in instances]
+        text = _output_text(reply)
+        rec["raw_text"] = text[:600]
+        rec["request_text"] = phrase
+        instances = parse_output(text, label) if text.strip() else []
+        rec["parsed"] = {
+            "matches": len(instances),
+            "instances": [{"score": i["score"],
+                           "box": {k: round(v, 3)
+                                   for k, v in i["box"].items()}}
+                          for i in instances]}
+        if instances:
+            rec["mask_thumb"] = mask_preview(image_bytes, instances)
+    return instances
 
 
-def _parse(inst: dict, labels: list) -> dict:
-    label = str(inst.get("label", labels[0] if labels else "part"))
-    box = inst.get("box") or {"x": 0, "y": 0, "w": 1, "h": 1}
-    out = {
-        "label": label,
-        "score": float(inst.get("score", 1.0)),
-        "box": {k: float(box.get(k, 0)) for k in ("x", "y", "w", "h")},
-    }
-    if inst.get("mask_png_b64"):
-        out["mask_png_b64"] = inst["mask_png_b64"]
-        out["mask_w"] = int(inst.get("mask_w", 96))
-        out["mask_h"] = int(inst.get("mask_h", 96))
-    elif inst.get("polygon"):
-        out.update(_rasterize(inst["polygon"]))
-    else:
-        raise RuntimeError(
-            f"SAM 3.1 reply for {label!r} has neither mask_png_b64 nor "
-            "polygon — check the endpoint's response format."
-        )
-    return out
-
-
-def _rasterize(polygon: list, size: int = 96) -> dict:
-    """Fallback: burn a normalized polygon into a small mask bitmap."""
-    from PIL import ImageDraw
-    img = Image.new("L", (size, size), 0)
-    pts = [(x * size, y * size) for x, y in polygon]
-    ImageDraw.Draw(img).polygon(pts, fill=255)
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return {"mask_png_b64": base64.b64encode(buf.getvalue()).decode(),
-            "mask_w": size, "mask_h": size}
+def segment(image_bytes: bytes, labels: list, max_parts: int = 4) -> list:
+    """Segment up to `max_parts` labels in parallel; flat instance list."""
+    seen, todo = set(), []
+    for label in labels:
+        phrase = concept(label)
+        if phrase and phrase not in seen:
+            seen.add(phrase)
+            todo.append(label)
+    todo = todo[:max_parts]
+    if not todo:
+        return []
+    with ThreadPoolExecutor(max_workers=len(todo)) as pool:
+        futures = [trace.run_in(pool, segment_one, image_bytes, label)
+                   for label in todo]
+        out = []
+        for fut in futures:
+            try:
+                out.extend(fut.result())
+            except Exception:
+                pass  # one failed phrase never sinks the others
+        return out

@@ -10,3 +10,4 @@ soundfile
 langdetect
 iso639-lang
 sentencepiece
+meta-sam-parser==0.1.0
