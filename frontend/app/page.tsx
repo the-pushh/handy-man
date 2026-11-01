@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getSpeechRecognition } from "./lib/speech";
 import type { SpeechRecognitionLike } from "./lib/speech";
-import { resolveApiBase } from "./lib/apiBase";
+import { IS_PROD, resolveApiBase } from "./lib/apiBase";
 import { kb, mark, turnStart } from "./lib/timeline";
 import { drawStill, meanLuma, TOO_DARK, shrinkPhoto } from "./lib/still";
 import { composeMasks } from "./lib/masks";
@@ -50,6 +50,7 @@ interface Confirm {
 
 
 function apiBase(): string {
+  if (IS_PROD) return "";
   if (typeof window === "undefined") return "http://127.0.0.1:8000";
   let saved: string | null = null;
   try {
@@ -454,9 +455,11 @@ export default function Home() {
       if (data.status !== "ok") {
         mark("first look failed", `${data.status}: ${data.detail || ""}`);
         setStatusMsg(
-          data.status === "needs-api-key"
-            ? "The model isn't set up on this server."
-            : "Couldn't make it out that time. Tap the button to try again."
+          data.status === "rate-limited"
+            ? data.detail
+            : data.status === "needs-api-key"
+              ? "The model isn't set up on this server."
+              : "Couldn't make it out that time. Tap the button to try again."
         );
         setOrb("idle");
         return;
@@ -911,7 +914,7 @@ export default function Home() {
         {transcript && (
           <p className="transcript">&ldquo;{transcript}&rdquo;</p>
         )}
-        {(beEdit || !beHost) && <BackendRow
+        {!IS_PROD && (beEdit || !beHost) && <BackendRow
           host={beHost}
           editing={beEdit}
           onToggle={() => {

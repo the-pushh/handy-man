@@ -5,6 +5,7 @@
    backend's Places API (New) proxy. No manual-entry fallback. */
 
 import { useEffect, useState } from "react";
+import { sessionId } from "../lib/apiBase";
 
 interface Pro {
   id: string;
@@ -66,7 +67,7 @@ export default function CallAPro({ api, trade, brief }: { api: string; trade: st
         try {
           const r = await fetch(`${api}/api/pros`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", "x-session": sessionId() },
             // Location in the body, never in a URL.
             body: JSON.stringify({ trade, lat: pos.coords.latitude, lng: pos.coords.longitude }),
           });
@@ -77,6 +78,8 @@ export default function CallAPro({ api, trade, brief }: { api: string; trade: st
                 ? { kind: "ok", pros: d.pros }
                 : { kind: "message", text: `No ${trade} found within 5 km.` }
             );
+          } else if (d.status === "rate-limited") {
+            setState({ kind: "message", text: d.detail });
           } else if (d.status === "needs-places-key") {
             setState({ kind: "message", text: "Nearby search isn't set up on this server yet." });
           } else {

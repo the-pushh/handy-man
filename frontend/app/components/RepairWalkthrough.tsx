@@ -5,7 +5,7 @@
    spoken thinking throughout. Embedded in the main app's repair view. */
 
 import { useEffect, useRef, useState } from "react";
-import { resolveApiBase } from "../lib/apiBase";
+import { IS_PROD, resolveApiBase } from "../lib/apiBase";
 import { mark, turnElapsed } from "../lib/timeline";
 import { requestDiagnosis } from "../lib/diagnosis";
 import type { Heard } from "../lib/recorder";
@@ -30,7 +30,9 @@ interface Verdict {
 }
 
 /* What went wrong, in words for the owner (never the raw error). */
-function failureFor(status: string): { title: string; hint: string } {
+function failureFor(status: string, detail = ""): { title: string; hint: string } {
+  if (status === "rate-limited")
+    return { title: "Slow down a little.", hint: detail || "Too many fixes at once. Try again soon." };
   if (status === "needs-api-key")
     return { title: "The model isn't set up on this server.", hint: "Add the API key to .env and restart the backend." };
   if (status === "timeout")
@@ -217,6 +219,7 @@ export default function RepairWalkthrough({
   // NEXT_PUBLIC_API_BASE; per-browser override below (localStorage)
   // wins — set it once from the phone when tunnel URLs rotate.
   function defaultAPI(): string {
+    if (IS_PROD) return "";
     if (typeof window === "undefined") return "http://127.0.0.1:8000";
     let saved: string | null = null;
     try {
@@ -460,7 +463,7 @@ export default function RepairWalkthrough({
         setStatus("");
         setNotes(data.notes || "");
         setInventory(data.components || []);
-        setFailure(failureFor(data.status));
+        setFailure(failureFor(data.status, data.detail));
         return;
       }
       setAppliance(data.perception?.appliance || "");
@@ -581,7 +584,7 @@ export default function RepairWalkthrough({
       setFailure(failureFor(timedOut ? "timeout" : "network"));
       // Still on the same-host fallback (no env, nothing saved): the
       // backend is probably behind a tunnel, so offer to paste it.
-      if (!timedOut && API === `http://${window.location.hostname}:8000`) setNeedBase(true);
+      if (!IS_PROD && !timedOut && API === `http://${window.location.hostname}:8000`) setNeedBase(true);
     }
   }
 
