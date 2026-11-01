@@ -136,9 +136,19 @@ def _pool():
     return _POOL
 
 
+def _warm_job(_: int) -> None:
+    import time
+    time.sleep(0.2)  # hold the worker so the next job spawns another
+
+
 def warm() -> None:
-    """Start the decode workers ahead of the first request."""
-    _pool().submit(prefilter, "").result()
+    """Start every decode worker ahead of the first request.
+
+    One warm job only started one worker; the second spawned during the
+    first real segment call and slowed everything else on the machine.
+    """
+    from meta_sam_parser import image_segmentation_format  # noqa: F401
+    list(_pool().map(_warm_job, range(2)))
 
 
 def parse_output(text: str, label: str) -> list:

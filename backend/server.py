@@ -72,7 +72,8 @@ async def time_requests(request: Request, call_next):
     start = time.time()
     response = await call_next(request)
     size = request.headers.get("content-length", "0")
-    print(f"[req] {time.strftime('%H:%M:%S')} {request.method} "
+    print(f"[req] {time.strftime('%H:%M:%S', time.localtime(start))}"
+          f".{int(start * 1000) % 1000:03d} {request.method} "
           f"{request.url.path} in={int(size) // 1024}KB "
           f"{(time.time() - start) * 1000:.0f}ms -> {response.status_code}",
           flush=True)
