@@ -343,6 +343,14 @@ def _repair_analyze(images, text, components, model, prior=None,
         [{"check": q["ask"], "how": " ".join(q["options"])}])["verdict"]
         == "diy"]
     verdict["final"] = not questions
+    # The part the final camera re-check looks at: the issue-relevant
+    # part the steps work on most, else the part named most often.
+    from collections import Counter
+    named = Counter(st.get("part") for st in steps
+                    if isinstance(st, dict) and st.get("part"))
+    focus = next((r for r in relevant if named.get(r)), None) or (
+        named.most_common(1)[0][0] if named else
+        (relevant[0] if relevant else None))
     risk = {"level": "high" if verdict["verdict"] == "pro" else "standard",
             "hazard": verdict["rule"] or "", "reason": verdict["title"] or ""}
     from .muse_image import assign_legend
@@ -388,6 +396,7 @@ def _repair_analyze(images, text, components, model, prior=None,
             "device": device, "details": details, "ask": ask,
             "safety": safety,
             "questions": questions,
+            "focus": focus,
             "perception": analysis or None,
             "verdict": verdict,
             "risk": risk,
@@ -499,6 +508,24 @@ async def segment(file: UploadFile = File(...), labels: str = Form(...)):
     except Exception as exc:
         return {"status": "segment-error", "detail": str(exc),
                 "instances": [], "trace": trace.export()}
+
+
+@app.post("/api/recheck")
+async def recheck(before: UploadFile = File(...),
+                  after: UploadFile = File(...),
+                  fix: str = Form(""), part: str = Form("")):
+    """Final camera re-check: Spark compares the before and after stills."""
+    from . import spark
+
+    trace.begin()
+    b, a = images_normalized([await before.read(), await after.read()])
+    try:
+        out = await run_in_threadpool(spark.recheck, b, a, fix,
+                                      part.strip() or None)
+        return {"status": "ok", **out, "trace": trace.export()}
+    except Exception as exc:
+        return {"status": "recheck-error", "detail": str(exc),
+                "trace": trace.export()}
 
 
 @app.post("/api/caption")

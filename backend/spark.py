@@ -53,7 +53,8 @@ def _config() -> tuple:
 # 5-8s but occasionally 20s+. If a call has not returned by its normal
 # worst case, one identical "hedge" request is sent and whichever
 # finishes first wins. Both show in the trace.
-HEDGE_AFTER_S = {"perceive": 7.0, "diagnose": 8.0, "decide": 12.0}
+HEDGE_AFTER_S = {"perceive": 7.0, "diagnose": 8.0, "decide": 12.0,
+                 "recheck": 8.0}
 
 
 def _post(url: str, key: str, payload: dict, timeout: int = 120,
@@ -376,8 +377,10 @@ def diagnose(appliance: str, device: str | None, labels: list,
            "an empty questions list. " if answers.strip() else
            "questions: at most 2 things the owner can check right now "
            "by only looking or listening (no tools, no opening, no "
-           "touching anything electrical) whose answer would change the "
-           "plan, e.g. which indicator light is lit, or, for anything on "
+           "touching anything electrical), and only when one of the "
+           "options would change whether the owner can fix it or which "
+           "fix it is; skip anything that would only add detail. E.g. "
+           "which indicator light is lit, or, for anything on "
            "a lead-acid battery (inverter, UPS), where the battery's "
            "water-level floats sit (ask even when the battery is out of "
            "frame: the owner can walk over and look). Ask in plain "
@@ -447,6 +450,45 @@ def diagnose(appliance: str, device: str | None, labels: list,
             "causes": causes, "relevant": relevant, "steps": steps[:8],
             "safety": safety, "questions": questions[:2],
             "resolution": str(parsed.get("resolution", "")).strip()}
+
+
+def recheck(before: bytes, after: bytes, fix: str, part: str | None = None,
+            model: str | None = None) -> dict:
+    """Final camera re-check: does the after photo show the fix done?
+
+    Two stills (before the fix, after it) and what the fix was. Returns
+    {"looks_fixed": bool | None, "seen": str, "next": str | None};
+    None means the after photo does not show the part clearly enough.
+    """
+    url, key, default_model = _config()
+    img = lambda b: {"type": "image_url", "image_url": {  # noqa: E731
+        "url": "data:image/jpeg;base64," + base64.b64encode(b).decode()}}
+    prompt = (
+        "Two photos of the same device: the first BEFORE a home fix, "
+        "the second AFTER it. "
+        f"The fix: {fix.strip()} "
+        + (f"Part to check: {part}. " if part else "") +
+        "Judge only what the AFTER photo shows. Respond with one JSON "
+        'object: {"looks_fixed": true, "seen": "what the after photo '
+        'shows about that part, max 12 words", "next": "the one thing '
+        'to redo, max 12 words, or null"}. looks_fixed is null when the '
+        "after photo does not show the part clearly enough to tell; "
+        "never guess. Start with {.")
+    payload = {
+        "model": model or default_model,
+        "messages": [{"role": "user", "content": [
+            {"type": "text", "text": prompt}, img(before), img(after)]}],
+        "max_tokens": 3000,
+        "reasoning_effort": "low",
+        "response_format": {"type": "json_object"},
+    }
+    parsed = _complete(url, key, payload, ["looks_fixed"],
+                       purpose="recheck", image=after)
+    lf = parsed.get("looks_fixed")
+    nxt = str(parsed.get("next") or "").strip()
+    return {"looks_fixed": lf if isinstance(lf, bool) else None,
+            "seen": str(parsed.get("seen") or "").strip(),
+            "next": None if nxt.lower() in ("", "null", "none") else nxt}
 
 
 def caption(image_bytes: bytes, model: str | None = None) -> str:
