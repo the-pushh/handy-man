@@ -10,7 +10,7 @@ import { getSpeechRecognition } from "./lib/speech";
 import type { SpeechRecognitionLike } from "./lib/speech";
 import { resolveApiBase } from "./lib/apiBase";
 import { kb, mark, turnStart } from "./lib/timeline";
-import { drawStill, shrinkPhoto } from "./lib/still";
+import { drawStill, meanLuma, TOO_DARK, shrinkPhoto } from "./lib/still";
 import { composeMasks } from "./lib/masks";
 import type { SamInstance } from "./lib/masks";
 import { requestDiagnosis } from "./lib/diagnosis";
@@ -126,6 +126,7 @@ export default function Home() {
   // Final camera re-check: the walkthrough stays mounted (its state
   // survives) but is hidden so the camera shows while the owner aims.
   const [peek, setPeek] = useState<string>("");
+  const darkWarned = useRef<boolean>(false);
   // "No" on the confirm card: name the device instead of re-pointing.
   const [fixing, setFixing] = useState<boolean>(false);
   const [fixText, setFixText] = useState<string>("");
@@ -137,6 +138,13 @@ export default function Home() {
   const [typeOpen, setTypeOpen] = useState<boolean>(false);
   const [beEdit, setBeEdit] = useState<boolean>(false);
   const [beHost, setBeHost] = useState<string>("");
+  // The backend row only shows until an address is configured (env or
+  // saved), so it stays out of recordings; the walkthrough offers to
+  // paste one if the server can't be reached.
+  useEffect(() => {
+    const base = apiBase();
+    if (base !== `http://${window.location.hostname}:8000` || window.location.port === "3000") setBeHost(base);
+  }, []);
   const [mic, setMic] = useState<AnalyserNode | null>(null);
 
   useEffect(() => {
@@ -400,6 +408,19 @@ export default function Home() {
     const frame = provided || pendingFrameRef.current || (await captureStillAsync());
     pendingFrameRef.current = null;
     mark("frame captured", frame ? kb(frame.size) : "none");
+    // Bad light: say so once and let the owner fix it; a second tap in
+    // the dark goes ahead anyway (the model may still manage).
+    if (frame && !provided) {
+      const luma = await meanLuma(frame);
+      mark("brightness", luma == null ? "?" : luma.toFixed(0));
+      if (luma != null && luma < TOO_DARK && !darkWarned.current) {
+        darkWarned.current = true;
+        setStatusMsg("Too dark to see it. Turn on a light or the torch, then tap again.");
+        setOrb("idle");
+        return;
+      }
+      darkWarned.current = false;
+    }
     if (!frame) {
       setStatusMsg("Camera not ready yet — try again.");
       setOrb("idle");
@@ -430,10 +451,13 @@ export default function Home() {
       const data = await r.json();
       perceived = true;
       mark("analyze(1 still, no text) returned", `trace=${(data.trace || []).length} calls`);
+      // "Panasonic air conditioner": brand plus what it is, so the owner
+      // can catch a misread ("voltage stabilizer") and correct it.
+      const brand: string = data.perception?.brand || "";
+      const what: string = data.perception?.appliance || (data.components || [])[0]?.label || "";
       const device: string =
+        (what && brand && !what.toLowerCase().includes(brand.toLowerCase()) ? `${brand} ${what}` : what) ||
         data.device ||
-        data.perception?.appliance ||
-        (data.components || [])[0]?.label ||
         "device";
       const label = (data.components || [])[0]?.label || device;
       const frameURL = URL.createObjectURL(frame);
@@ -779,7 +803,13 @@ export default function Home() {
     statusMsg ||
     (confirm
       ? `Is this your ${confirm.device}? Say yes or no.`
-      : "Point at the device, then tap the orb and say what you need.");
+      : "Point at what's broken, tap the button and tell me.");
+  // What the app is doing right now, always visible during a turn.
+  const phase = mic || orb === "listening"
+    ? "Listening"
+    : orb === "thinking"
+      ? statusMsg.startsWith("I'm looking at") ? "Thinking" : "Seeing"
+      : null;
 
   function collapseType(): void {
     setTypeOpen(false);
@@ -797,6 +827,11 @@ export default function Home() {
         <span className="crop bl" />
         <span className="crop br" />
 
+        {phase && !confirm && (
+          <p className="status-chip scan-chip" role="status">
+            <span className="dot" aria-hidden="true" /> {phase}
+          </p>
+        )}
         {!confirm && !mic && (
           <div className="cutout-bar" role="status">
             {cutoutLine}
@@ -806,7 +841,7 @@ export default function Home() {
 
         {confirm && (
           <div className="confirm-card">
-            <p className="sheet-label">Is this your device?</p>
+            <p className="instruction confirm-q">Is this your {confirm.device}?</p>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={confirm.overlayURL} alt={`highlighted ${confirm.device}`} />
             {confirm.highlight !== "none" && (
@@ -816,7 +851,6 @@ export default function Home() {
                   : "Illustrative highlight (muse-image), not a measured outline"}
               </p>
             )}
-            <p className="instruction">{confirm.device}</p>
             <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
               <button type="button" className="btn-success" onClick={() => void confirmYes()}>
                 Yes
@@ -862,7 +896,7 @@ export default function Home() {
         {transcript && (
           <p className="transcript">&ldquo;{transcript}&rdquo;</p>
         )}
-        <BackendRow
+        {(beEdit || !beHost) && <BackendRow
           host={beHost}
           editing={beEdit}
           onToggle={() => {
@@ -878,7 +912,7 @@ export default function Home() {
             setBeHost(url);
             setBeEdit(false);
           }}
-        />
+        />}
       </section>
 
       <nav
@@ -981,7 +1015,7 @@ export default function Home() {
                 getHuman={getHumanLevel}
                 getAi={getAiLevel}
               />
-              <span className="cb-label">TAP + SPEAK</span>
+              <span className="cb-label cb-main">WHAT&apos;S BROKEN?</span>
             </div>
 
             <div className="cb-cell">

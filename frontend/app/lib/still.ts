@@ -36,3 +36,25 @@ export async function shrinkPhoto(file: File): Promise<File> {
     return file;
   }
 }
+
+/* Mean brightness 0-255 of a still (64px sample). The real demo photos
+   measure 94-149, a dim inverter cupboard included; a dark room is < 30. */
+export const TOO_DARK = 30;
+
+export async function meanLuma(file: Blob): Promise<number | null> {
+  try {
+    const bmp = await createImageBitmap(file);
+    const c = document.createElement("canvas");
+    c.width = 64;
+    c.height = Math.max(1, Math.round((64 * bmp.height) / bmp.width));
+    const ctx = c.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(bmp, 0, 0, c.width, c.height);
+    const px = ctx.getImageData(0, 0, c.width, c.height).data;
+    let sum = 0;
+    for (let i = 0; i < px.length; i += 4) sum += 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
+    return sum / (px.length / 4);
+  } catch (_) {
+    return null;
+  }
+}
