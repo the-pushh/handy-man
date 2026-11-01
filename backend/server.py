@@ -238,6 +238,7 @@ def _repair_analyze(images, text, components, model, prior=None):
     ask = ""
     inventory = []
     safety: list = []
+    headline = ""
     reuse = (isinstance(prior, dict) and isinstance(prior.get("components"), list)
              and len(images) == 1)
     if not wanted:
@@ -293,10 +294,24 @@ def _repair_analyze(images, text, components, model, prior=None):
             understood = diag["issue"]
             resolution = diag["resolution"]
             safety = diag["safety"]
+            headline = diag.get("headline", "")
             diag_rel = [r.lower() for r in diag["relevant"]]
             relevant = [w for w in wanted if w.lower() in diag_rel]
         else:
             relevant = []
+    # The model proposed the steps; the rules decide which an owner may
+    # do. A "pro" verdict keeps only the steps before the first blocked
+    # one (safe checks) and names the fired rule in plain words.
+    from .risk import judge
+    verdict = judge(f"{device} {analysis.get('appliance') or ''}".strip(),
+                    text, steps)
+    proposed = len(steps)
+    steps = [steps[i] for i in verdict["allowed_steps"]]
+    verdict["proposed_steps"] = proposed
+    verdict["headline"] = (verdict["spoken"] if verdict["verdict"] == "pro"
+                           else headline)
+    risk = {"level": "high" if verdict["verdict"] == "pro" else "standard",
+            "hazard": verdict["rule"] or "", "reason": verdict["title"] or ""}
     from .muse_image import assign_legend
     canonical = assign_legend(relevant or wanted[:4])
     # SAM runs in its own request (/api/segment) so the verdict does not
@@ -322,14 +337,13 @@ def _repair_analyze(images, text, components, model, prior=None):
                 "instances": [], "legend": [],
                 "overlay": None}
     appliance = notes.replace("The appliance is ", "").rstrip(".").strip()
-    from .risk import assess_risk
-    risk = assess_risk(device or appliance, text)
     return {"status": "ok", "notes": notes,
             "components": inventory,
             "causes": causes, "steps": steps,
             "issue": understood, "resolution": resolution,
             "device": device, "details": details, "ask": ask,
             "safety": safety,
+            "verdict": verdict,
             "risk": risk,
             "instances": [],
             "legend": canonical,

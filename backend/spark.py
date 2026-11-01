@@ -328,6 +328,7 @@ def diagnose(appliance: str, device: str | None, labels: list,
         "setup, assembly, and installation alike. Respond with a single "
         "JSON object and nothing else, with exactly these keys: "
         '{"issue": "restate the problem in one line", '
+        '"headline": "Looks like a clogged filter.", '
         '"causes": ["likely cause one"], '
         '"relevant": ["part label tied to the issue"], '
         '"steps": [{"check": "what to inspect", '
@@ -349,6 +350,8 @@ def diagnose(appliance: str, device: str | None, labels: list,
         "include safety: power/battery to disconnect, non-conductive "
         "tools (wood/plastic), parts to never touch, water/heat "
         "warnings where relevant; each step gets its own caution. "
+        "headline is the finding as one spoken sentence of at most 5 "
+        "words, starting with \"Looks like\". "
         "Emit compact JSON, start with {, keep it under 700 tokens."
     )
     payload = {
@@ -380,7 +383,9 @@ def diagnose(appliance: str, device: str | None, labels: list,
                           "part": None, "caution": None})
     safety = [str(x).strip() for x in parsed.get("safety", [])
               if str(x).strip()][:6]
+    headline = " ".join(str(parsed.get("headline", "")).split()[:7])
     return {"issue": str(parsed.get("issue", "")).strip(),
+            "headline": headline,
             "causes": causes, "relevant": relevant, "steps": steps[:8],
             "safety": safety,
             "resolution": str(parsed.get("resolution", "")).strip()}
