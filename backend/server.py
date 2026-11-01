@@ -198,6 +198,7 @@ async def repair_analyze(file: UploadFile = File(...),
                           sound: str = Form(""),
                           answers: str = Form(""),
                           owner: str = Form(""),
+                          ahead: str = Form(""),
                           model: str | None = Form(None)):
     """Analyze, then attach every model call's trace record.
 
@@ -227,13 +228,13 @@ async def repair_analyze(file: UploadFile = File(...),
         prior = {**(prior or {}), "owner_says": owner.strip()}
     out = await run_in_threadpool(_repair_analyze, images, text,
                                   components, model, prior, sound,
-                                  answers)
+                                  answers, bool(ahead.strip()))
     out["trace"] = trace.export()
     return out
 
 
 def _repair_analyze(images, text, components, model, prior=None,
-                    sound="", answers=""):
+                    sound="", answers="", ahead=False):
     """Repair flow: image in -> Muse Spark analysis + overlay highlights.
 
     One hosted gateway (MUSE_SPARK_API_URL/KEY): Spark
@@ -244,6 +245,7 @@ def _repair_analyze(images, text, components, model, prior=None,
     from concurrent.futures import ThreadPoolExecutor
 
     from . import spark
+    from .risk import INVERTER
 
     wanted = [c.strip() for c in (components or "").split(",") if c.strip()]
     wanted_given = bool(wanted)
@@ -260,6 +262,7 @@ def _repair_analyze(images, text, components, model, prior=None,
     inventory = []
     safety: list = []
     questions: list = []
+    diag_questions = False
     headline = ""
     reuse = (isinstance(prior, dict) and isinstance(prior.get("components"), list)
              and len(images) == 1)
@@ -312,7 +315,13 @@ def _repair_analyze(images, text, components, model, prior=None,
                 diag = spark.diagnose(
                     notes.replace("The appliance is ", "").rstrip("."),
                     device or None, wanted, text, model=model,
-                    sound=sound, answers=answers,
+                    sound=sound, answers=answers, ahead=ahead,
+                    # Answers pass: medium where the call is subtle
+                    # (inverter floats vs terminals), low elsewhere
+                    # (same AC findings, ~1.5s faster).
+                    effort=(("medium" if INVERTER.search(
+                        f"{device} {analysis.get('appliance') or ''} {text}")
+                        else "low") if answers.strip() else None),
                     markings=(details.get("markings", [])
                               + details.get("other", []))[:10])
             except Exception as exc:
@@ -328,6 +337,7 @@ def _repair_analyze(images, text, components, model, prior=None,
             safety = diag["safety"]
             headline = diag.get("headline", "")
             questions = diag.get("questions", [])
+            diag_questions = bool(questions)
             diag_rel = [r.lower() for r in diag["relevant"]]
             relevant = [w for w in wanted if w.lower() in diag_rel]
         else:
@@ -336,8 +346,10 @@ def _repair_analyze(images, text, components, model, prior=None,
     # do. A "pro" verdict keeps only the steps before the first blocked
     # one (safe checks) and names the fired rule in plain words.
     from .risk import judge
+    # The spoken finding leads the causes: it is what the owner hears,
+    # so a finding only a pro can fix ("low refrigerant") forces "pro".
     verdict = judge(f"{device} {analysis.get('appliance') or ''}".strip(),
-                    text, steps, causes)
+                    text, steps, causes, finding=headline)
     proposed = len(steps)
     verdict["removed"] = [steps[i].get("check", "") + (
         f": {steps[i].get('how')}" if steps[i].get("how") else "")
@@ -354,6 +366,18 @@ def _repair_analyze(images, text, components, model, prior=None,
         f"{device} {analysis.get('appliance') or ''}".strip(), "",
         [{"check": q["ask"], "how": " ".join(q["options"])}])["verdict"]
         == "diy"]
+    # One question when it looks like an owner fix (keeps the AC fast);
+    # up to two for inverter/battery cases (indicator light + floats)
+    # and for anything heading to a pro.
+    ctx = f"{device} {analysis.get('appliance') or ''} {text}"
+    questions = questions[:2 if (verdict["verdict"] == "pro"
+                                 or INVERTER.search(ctx)) else 1]
+    if not questions and not steps and text.strip() and answers.strip() == "" \
+            and diag_questions:
+        # Every question was dropped by the rules or the cap, and pass 1
+        # left the steps for after the answers: decide with no answers.
+        return _repair_analyze(images, text, components, model, analysis,
+                               sound, "Nothing checked yet.", ahead)
     verdict["final"] = not questions
     # The part the final camera re-check looks at: the issue-relevant
     # part the steps work on most, else the part named most often.

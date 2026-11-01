@@ -336,7 +336,8 @@ def merge_analyses(analyses: list) -> dict:
 def diagnose(appliance: str, device: str | None, labels: list,
              user_text: str, model: str | None = None,
              sound: str = "", answers: str = "",
-             markings: list | None = None) -> dict:
+             markings: list | None = None, ahead: bool = False,
+             effort: str | None = None) -> dict:
     """Call 2 (text-only): causes, relevant parts, steps, safety, fix check.
 
     Split from perception so neither reply hits the token ceiling.
@@ -379,7 +380,11 @@ def diagnose(appliance: str, device: str | None, labels: list,
            "by only looking or listening (no tools, no opening, no "
            "touching anything electrical), and only when one of the "
            "options would change whether the owner can fix it or which "
-           "fix it is; skip anything that would only add detail. E.g. "
+           "fix it is; skip anything that would only add detail. Most "
+           "decisive question first. Ask about the condition that makes "
+           "the answer decisive, not whether something works at all: "
+           "'Is the airflow weak even on high fan speed?', not 'Is air "
+           "blowing from the vent?'. E.g. "
            "which indicator light is lit, or, for anything on "
            "a lead-acid battery (inverter, UPS), where the battery's "
            "water-level floats sit (ask even when the battery is out of "
@@ -388,8 +393,9 @@ def diagnose(appliance: str, device: str | None, labels: list,
            "8 words. 2-4 short options each, using the exact words "
            "printed on the device when there are any. Empty list when "
            "the photo, the "
-           "report and the sound already settle it. Steps are still "
-           "your best plan for the most likely answer. ") +
+           "report and the sound already settle it. When you ask any "
+           "question, return steps, safety and resolution empty: they "
+           "are written once the owner answers. ") +
         "If it is a setup or assembly task, steps are the build/install "
         "order with parts and tools needed; if a repair, steps diagnose "
         "and fix. Each step must name WHAT and exactly HOW, referencing "
@@ -407,11 +413,12 @@ def diagnose(appliance: str, device: str | None, labels: list,
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 8000,
         # The answers pass is the verdict: it gets more reasoning.
-        "reasoning_effort": "medium" if answers.strip() else "low",
+        "reasoning_effort": effort or ("medium" if answers.strip() else "low"),
         "response_format": {"type": "json_object"},
     }
     parsed = _complete(url, key, payload, ["causes", "steps"],
-                       purpose="decide" if answers.strip() else "diagnose")
+                       purpose=("decide (ahead)" if ahead else "decide")
+                       if answers.strip() else "diagnose")
     causes = [str(c).strip() for c in parsed.get("causes", [])
               if str(c).strip()][:5]
     relevant = [str(r).strip() for r in parsed.get("relevant", [])

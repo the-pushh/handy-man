@@ -113,6 +113,8 @@ export default function RepairWalkthrough({
   const [questions, setQuestions] = useState<Question[]>([]);
   const [answered, setAnswered] = useState<{ ask: string; reply: string }[]>([]);
   const answerResolve = useRef<((a: { ask: string; reply: string }[]) => void) | null>(null);
+  // Called when only the last question is left, with the replies so far.
+  const lastQuestion = useRef<((sofar: { ask: string; reply: string }[]) => void) | null>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileRef = useRef<File | null>(null);
@@ -340,9 +342,14 @@ export default function RepairWalkthrough({
   }, []);
 
   /* Show the questions one at a time; resolves with every reply. */
-  function askAll(qs: Question[]): Promise<{ ask: string; reply: string }[]> {
+  function askAll(
+    qs: Question[],
+    onLast?: (sofar: { ask: string; reply: string }[]) => void
+  ): Promise<{ ask: string; reply: string }[]> {
     setAnswered([]);
     setQuestions(qs);
+    lastQuestion.current = onLast || null;
+    if (qs.length === 1) onLast?.([]);
     return new Promise((resolve) => {
       answerResolve.current = resolve;
     });
@@ -351,6 +358,7 @@ export default function RepairWalkthrough({
   function reply(q: Question, text: string) {
     const next = [...answered, { ask: q.ask, reply: text }];
     setAnswered(next);
+    if (next.length === questions.length - 1) lastQuestion.current?.(next);
     if (next.length >= questions.length) {
       setQuestions([]);
       answerResolve.current?.(next);
@@ -394,18 +402,33 @@ export default function RepairWalkthrough({
       if (qs.length && myRun === runSeq.current) {
         mark("questions shown", `${qs.length}`);
         setStatus("");
-        const replies = await askAll(qs);
+        // Decide ahead: once only the last question is left, one decide
+        // request per possible answer starts while the owner looks, so
+        // the tap picks a result that is already on its way.
+        const persp = data.perception || perception;
+        const sound = heard?.summary || "";
+        const text = (rs: { ask: string; reply: string }[]) =>
+          rs.map((r) => `${r.ask} ${r.reply}.`).join(" ");
+        const ahead = new Map<string, Promise<unknown>>();
+        const replies = await askAll(qs, (sofar) => {
+          const q = qs[sofar.length];
+          const opts = [...q.options, "Not sure"].filter(
+            (o, i, all) => all.findIndex((x) => x.toLowerCase() === o.toLowerCase()) === i
+          );
+          mark("decide ahead", `${opts.length} answers`);
+          for (const o of opts) {
+            const key = text([...sofar, { ask: q.ask, reply: o }]);
+            ahead.set(key, requestDiagnosis(base, fs, t, persp, sound, key, true).catch(() => null));
+          }
+        });
         if (myRun !== runSeq.current) return;
         mark("questions answered", replies.map((r) => r.reply).join(" | "));
         setStatus("Deciding…");
-        data = await requestDiagnosis(
-          base,
-          fs,
-          t,
-          data.perception || perception,
-          heard?.summary || "",
-          replies.map((r) => `${r.ask} ${r.reply}.`).join(" ")
-        );
+        const key = text(replies);
+        const pre = (await ahead.get(key)) as typeof data;
+        const usable = pre && pre.status === "ok";
+        data = usable ? pre : await requestDiagnosis(base, fs, t, persp, sound, key);
+        mark("decided", usable ? "from ahead" : "fresh");
       }
       mark("walkthrough analyze returned", `${data.status} trace=${(data.trace || []).length} calls`);
       for (const c of data.trace || []) {

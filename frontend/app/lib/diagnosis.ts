@@ -13,7 +13,9 @@ export function requestDiagnosis(
   sound = "",
   // The owner's replies to the first pass's questions; the server then
   // decides at higher effort and asks nothing more.
-  answers = ""
+  answers = "",
+  // Started before the owner tapped (one request per possible answer).
+  ahead = false
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): Promise<any> {
   mark("diagnosis sent", `${files.length} stills ${kb(files.reduce((n, f) => n + f.size, 0))}`);
@@ -31,5 +33,6 @@ export function requestDiagnosis(
   // The owner's correction from the confirm card ("no, it's an inverter").
   const owner = (perception as { owner_says?: string } | null)?.owner_says;
   if (owner) fd.append("owner", owner);
+  if (ahead) fd.append("ahead", "1");
   return fetch(`${base}/api/repair/analyze`, { method: "POST", body: fd }).then((r) => r.json());
 }
