@@ -3,9 +3,9 @@
 Spark's diagnose() proposes steps. judge() reads every step (what it
 asks the user to *do*), plus the device and the reported symptoms, and
 decides per step whether an owner may do it. Any forcing rule turns the
-verdict into "call a pro"; steps up to the first blocked one are kept as
-safe checks (they become "checks already done" on the diagnosis card),
-the blocked step and everything after it are dropped.
+verdict into "call a pro";
+blocked steps are dropped and the safe ones (before or after) stay as
+checks the owner can do before the pro arrives.
 
 Every rule carries plain words for the verdict card ("Opening the
 scooter's panel needs a mechanic.") and a short spoken line (< 2s).
@@ -108,7 +108,7 @@ RULES = [
     Rule("danger-symptom",
          "Sparks, smoke, a burning smell or a shock mean it stays off "
          "until a technician sees it.",
-         "Switch it off. This needs a technician.",
+         "Switch it off now.",
          "electrician",
          applies=lambda job: True,
          symptom=_any(_rx(r"spark", r"smok", r"burning smell", r"burnt smell",
@@ -117,7 +117,7 @@ RULES = [
                           r"catching fire"))),
     Rule("swollen-battery",
          "A swollen battery can catch fire; a technician must remove it.",
-         "Swollen battery. Get it replaced by a pro.",
+         "That battery needs a pro.",
          "laptop / phone repair",
          applies=lambda job: True,
          symptom=_any(_rx(r"swollen", r"swelling", r"bulg", r"puff",
@@ -125,7 +125,7 @@ RULES = [
     Rule("gas-fittings",
          "Gas pipes, regulators and burner fittings are for a gas "
          "technician only.",
-         "Gas fittings need a gas technician.",
+         "Call a gas technician.",
          "gas technician",
          applies=lambda job: True,
          step=_hands_on(_rx(r"gas (?:pipe|line|hose|valve|regulator|fitting)",
@@ -134,7 +134,7 @@ RULES = [
     Rule("mains-electricity",
          "Wiring, sockets and the switchboard carry mains power; that is "
          "an electrician's job.",
-         "Mains wiring needs an electrician.",
+         "Call an electrician.",
          "electrician",
          applies=lambda job: True,
          step=_hands_on(_rx(r"wir(?:e|es|ing)\b", r"live wire", r"mains",
@@ -154,7 +154,7 @@ RULES = [
     Rule("battery-terminals",
          "Battery terminals carry high current; anything beyond looking "
          "at them is for a technician.",
-         "Battery terminals need a technician.",
+         "Needs a technician.",
          "battery service",
          applies=lambda job: True,
          step=_hands_on(_rx(r"terminals?", r"battery (?:lead|cable|clamp|post)s?",
@@ -163,7 +163,7 @@ RULES = [
     Rule("sealed-casing",
          "Opening the unit's sealed casing exposes live parts; a "
          "technician must do it.",
-         "Opening the casing needs a technician.",
+         "Needs a technician.",
          "appliance technician",
          applies=lambda job: True,
          step=_hands_on(_rx(r"casing", r"housing", r"enclosure",
@@ -203,13 +203,14 @@ def judge(device: str = "", issue: str = "", steps: list | None = None,
     # causes (which often mention "shock risk" as a warning).
     job = Job(device or "", issue or "", steps)
     fired: list = []
-    blocked_at = None
+    blocked: list = []
+    stop_all = False
 
     for rule in RULES:
         if rule.symptom and rule.applies(job) and rule.symptom(job.issue):
             fired.append(rule)
     if fired:
-        blocked_at = 0  # stop before touching anything
+        stop_all = True  # a danger symptom: nothing hands-on at all
 
     for i, st in enumerate(steps):
         text = _strip_owner_jobs(job, _step_text(st))
@@ -217,16 +218,14 @@ def judge(device: str = "", issue: str = "", steps: list | None = None,
             if rule.step and rule.applies(job) and rule.step(text):
                 if rule not in fired:
                     fired.append(rule)
-                if blocked_at is None:
-                    blocked_at = i
-        if blocked_at is not None and blocked_at <= i:
-            break
+                if i not in blocked:
+                    blocked.append(i)
 
     if not fired:
         return {"verdict": "diy", "rule": None, "title": None,
                 "spoken": None, "trade": None, "fired": [],
                 "allowed_steps": list(range(len(steps))),
-                "blocked_step": None}
+                "blocked_steps": [], "blocked_step": None}
 
     head = min(fired, key=RULES.index)
     trade = head.trade
@@ -239,8 +238,13 @@ def judge(device: str = "", issue: str = "", steps: list | None = None,
     return {"verdict": "pro", "rule": head.id, "title": head.title,
             "spoken": head.spoken, "trade": trade,
             "fired": [r.id for r in sorted(fired, key=RULES.index)],
-            "allowed_steps": list(range(blocked_at or 0)),
-            "blocked_step": blocked_at}
+            # Safe steps stay (before or after a blocked one): they become
+            # the checks the owner can still do before the pro arrives.
+            "allowed_steps": [] if stop_all else
+            [i for i in range(len(steps)) if i not in blocked],
+            "blocked_steps": list(range(len(steps))) if stop_all else blocked,
+            "blocked_step": 0 if stop_all and steps else
+            (blocked[0] if blocked else None)}
 
 
 def assess_risk(device: str = "", issue: str = "") -> dict:

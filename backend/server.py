@@ -80,6 +80,7 @@ async def time_requests(request: Request, call_next):
 class TTSRequest(BaseModel):
     text: str
     lang: str | None = None
+    max_seconds: float | None = None  # spoken verdicts: fit under this
 
 
 @app.get("/api/health")
@@ -147,7 +148,8 @@ def tts(req: TTSRequest):
     checkpoint = f"facebook/mms-tts-{code}"
     try:
         with trace.call(checkpoint + " (local)", "speak", kind="hop"):
-            wav = tts_local.synthesize(req.text, checkpoint)
+            wav = tts_local.synthesize(req.text, checkpoint,
+                                       max_seconds=req.max_seconds)
         return {"audio_b64": base64.b64encode(wav).decode(),
                 "mime": "audio/wav", "model": checkpoint + " (local)",
                 "lang": code}

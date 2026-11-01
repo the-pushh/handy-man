@@ -83,8 +83,11 @@ def test_inverter_terminals_are_pro():
     v = judge("inverter battery", "inverter beeping", [
         step("Float", "Look at the water-level floats"),
         step("Terminals", "Clean the white corrosion off the battery terminals"),
+        step("Top up", "Open the vent cap and top up distilled water to the mark"),
     ])
-    expect(v, "pro", "battery-terminals", allowed=[0])
+    # The terminal step is blocked; the float check and top-up stay as
+    # safe checks before the technician comes.
+    expect(v, "pro", "battery-terminals", allowed=[0, 2])
     assert v["trade"] == "inverter / battery service"
 
 
@@ -122,8 +125,8 @@ SPARK_SCOOTER_STEPS = [
 def test_spark_scooter_proposal_is_overridden():
     v = judge("Honda Activa", "self start dead, kick start works",
               SPARK_SCOOTER_STEPS)
-    expect(v, "pro", "vehicle-body-panel", allowed=[0, 1, 2])
-    assert v["blocked_step"] == 3
+    expect(v, "pro", "vehicle-body-panel", allowed=[0, 1, 2, 4])
+    assert v["blocked_step"] == 3 and v["blocked_steps"] == [3]
     assert "battery-terminals" in v["fired"]
     assert v["title"] == "Opening the scooter's panel needs a mechanic."
 

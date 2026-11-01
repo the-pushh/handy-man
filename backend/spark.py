@@ -351,7 +351,7 @@ def diagnose(appliance: str, device: str | None, labels: list,
         "tools (wood/plastic), parts to never touch, water/heat "
         "warnings where relevant; each step gets its own caution. "
         "headline is the finding as one spoken sentence of at most 5 "
-        "words, starting with \"Looks like\". "
+        "words in total, starting with \"Looks like\". "
         "Emit compact JSON, start with {, keep it under 700 tokens."
     )
     payload = {
@@ -383,7 +383,8 @@ def diagnose(appliance: str, device: str | None, labels: list,
                           "part": None, "caution": None})
     safety = [str(x).strip() for x in parsed.get("safety", [])
               if str(x).strip()][:6]
-    headline = " ".join(str(parsed.get("headline", "")).split()[:7])
+    words = str(parsed.get("headline", "")).split()
+    headline = " ".join(words[:5]).rstrip(".,;") + "." if words else ""
     return {"issue": str(parsed.get("issue", "")).strip(),
             "headline": headline,
             "causes": causes, "relevant": relevant, "steps": steps[:8],
