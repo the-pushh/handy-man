@@ -22,6 +22,10 @@ from contextlib import contextmanager
 
 _current: contextvars.ContextVar = contextvars.ContextVar(
     "handyman_trace", default=None)
+# Set by the server's request middleware: {"path", "client"} (client is
+# a short hash of the IP, never the IP itself).
+request_info: contextvars.ContextVar = contextvars.ContextVar(
+    "handyman_request", default=None)
 
 
 class Trace:
@@ -29,6 +33,7 @@ class Trace:
         self.id = uuid.uuid4().hex[:8]
         self.t0 = time.time()
         self.calls: list = []
+        self.logged = False
         self._lock = threading.Lock()
 
     def add(self, rec: dict) -> None:
@@ -102,4 +107,34 @@ def call(model: str, purpose: str, image: bytes | None = None,
 
 def export() -> list:
     tr = current()
-    return list(tr.calls) if tr else []
+    calls = list(tr.calls) if tr else []
+    if tr and calls and not tr.logged:
+        tr.logged = True
+        log_usage(tr, calls)
+    return calls
+
+
+def log_usage(tr: Trace, calls: list) -> None:
+    """One JSON line per request with model usage, so Cloud Logging can
+    sum what a turn costs (filter: jsonPayload.kind="usage")."""
+    import json
+
+    per_model: dict = {}
+    for c in calls:
+        u = c.get("usage") or {}
+        m = per_model.setdefault(c.get("model", "?"), {
+            "calls": 0, "input_tokens": 0, "output_tokens": 0, "ms": 0})
+        m["calls"] += 1
+        m["input_tokens"] += int(u.get("prompt_tokens") or u.get("input_tokens") or 0)
+        m["output_tokens"] += int(u.get("completion_tokens") or u.get("output_tokens") or 0)
+        m["ms"] += int(c.get("latency_ms") or 0)
+    info = request_info.get() or {}
+    print(json.dumps({
+        "severity": "INFO", "kind": "usage", "trace": tr.id,
+        "path": info.get("path"), "client": info.get("client"),
+        "purposes": [c.get("purpose") for c in calls],
+        "models": per_model,
+        "message": f"usage {info.get('path')} " + ", ".join(
+            f"{k}: {v['calls']} call(s) {v['input_tokens']}->{v['output_tokens']} tok"
+            for k, v in per_model.items()),
+    }), flush=True)
