@@ -6,3 +6,6 @@ __pycache__/
 
 # SAM table overlays and json
 eval/out/
+
+# Real photos from a private home (one shows a phone number); never public
+eval/cases/
