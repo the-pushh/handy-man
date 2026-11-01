@@ -24,7 +24,7 @@
   --error-container: #43292a;
   --info: #a9c6d0;
   --info-container: #2e3d44;
-  --trace-h: 44px;
+  --trace-h: 0px; /* the trace drawer is hidden unless ?trace */
   --mono: "Courier Prime", "Courier New", monospace;
   --sans: "Space Grotesk", system-ui, sans-serif;
 }
@@ -81,7 +81,7 @@ html, body {
 
 .stage {
   position: fixed;
-  /* The bottom strip belongs to the trace drawer's handle. */
+  /* With ?trace, the bottom strip belongs to the trace drawer's handle. */
   inset: 0 0 calc(var(--trace-h) + env(safe-area-inset-bottom)) 0;
   overflow: hidden;
 }
@@ -615,6 +615,8 @@ html, body {
 .verdict-card.pro { border-color: var(--error); }
 .verdict-card.pro .verdict-title { color: var(--error); }
 .verdict-card .btn-primary { margin-top: 12px; width: 100%; }
+
+:root.with-trace { --trace-h: 44px; }
 
 /* Trace drawer: every model call, pull up from the bottom strip.
    Sized to stay readable in a phone screen recording. */

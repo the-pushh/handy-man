@@ -2,7 +2,9 @@
 
 /* Pull-up panel on every screen: each model call this session made,
    newest first: model, purpose, latency, input thumbnail, SAM mask,
-   parsed response. "Export session trace" saves it all as JSON. */
+   parsed response. "Export session trace" saves it all as JSON.
+   Hidden by default; open the app with ?trace in the URL to show it
+   (e.g. to export a trace for a case). */
 
 import { useEffect, useState } from "react";
 import { exportTrace, installFetchTap, subscribe } from "../lib/traceStore";
@@ -90,11 +92,28 @@ function Row({ r }: { r: TraceRecord }) {
 export default function TraceDrawer() {
   const [records, setRecords] = useState<TraceRecord[]>([]);
   const [open, setOpen] = useState(false);
+  const [shown, setShown] = useState(false);
 
   useEffect(() => {
+    let on = false;
+    try {
+      on = new URLSearchParams(window.location.search).has("trace");
+    } catch (_) {
+      on = false;
+    }
+    if (!on) return;
+    setShown(true);
+    // Reserve the bottom strip for the handle only while it's shown.
+    document.documentElement.classList.add("with-trace");
     installFetchTap();
-    return subscribe(setRecords);
+    const off = subscribe(setRecords);
+    return () => {
+      off();
+      document.documentElement.classList.remove("with-trace");
+    };
   }, []);
+
+  if (!shown) return null;
 
   const models = records.filter((r) => r.kind === "model");
   const latest = models[models.length - 1];
