@@ -104,9 +104,9 @@ export default function TraceDrawer() {
     <aside className={`trace-drawer${open ? " open" : ""}`} aria-label="Model call trace">
       <button type="button" className="trace-handle" onClick={() => setOpen(!open)} aria-expanded={open}>
         <span className="trace-grip" aria-hidden="true" />
-        <span>
-          {models.length} model call{models.length === 1 ? "" : "s"}
-          {latest ? ` · last: ${latest.model} ${secs(latest.latency_ms)}` : ""}
+        <span className="trace-handle-text">
+          {models.length} call{models.length === 1 ? "" : "s"}
+          {latest ? ` · ${latest.model} ${secs(latest.latency_ms)}` : " · model trace"}
         </span>
       </button>
       {open && (

@@ -619,6 +619,7 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.trace-handle-text { overflow: hidden; text-overflow: ellipsis; }
 .trace-grip {
   width: 28px;
   height: 4px;
