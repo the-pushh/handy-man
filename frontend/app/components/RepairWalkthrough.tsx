@@ -237,7 +237,13 @@ export default function RepairWalkthrough({
   }
 
   // System-captured stills: analysis starts on its own, no buttons.
+  // Exactly once per mount: StrictMode (dev, which `make phone` serves)
+  // runs mount effects twice, and a second run doubled every model call
+  // and made the user wait for the later, superseding result.
+  const started = useRef<boolean>(false);
   useEffect(() => {
+    if (started.current) return;
+    started.current = true;
     const last = files[files.length - 1];
     fileRef.current = last;
     setImgURL(URL.createObjectURL(last));
