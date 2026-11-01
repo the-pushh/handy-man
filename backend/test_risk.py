@@ -219,6 +219,38 @@ def test_opening_the_front_casing_is_pro():
     expect(v, "pro", "sealed-casing")
 
 
+def test_look_only_questions_pass_the_rules():
+    # Diagnose's questions are screened like steps (server.py): issue
+    # empty, the options as the "how".
+    for ask, opts in [
+        ("Which light is on the front panel?", "MAINS ON; CHARGING; OVERLOAD; LOW BATT"),
+        ("Where do the battery floats sit?", "Red, below the line; Green, at the line"),
+    ]:
+        expect(judge("inverter battery", "", [step(ask, opts)]), "diy")
+
+
+def test_hands_on_question_is_dropped():
+    v = judge("inverter battery", "",
+              [step("Do the battery terminals move when you wiggle them?", "Yes; No")])
+    expect(v, "pro", "battery-terminals")
+
+
+def test_switching_off_mains_is_safety_prep():
+    v = judge("inverter battery", "inverter beeping", [
+        step("Top up", "Disconnect mains and battery then add distilled water "
+             "to low floats using a plastic funnel"),
+        step("Still beeping", "If beeps persist, disconnect mains and battery "
+             "and call a professional"),
+    ])
+    expect(v, "diy", allowed=[0, 1])
+
+
+def test_mains_wiring_is_still_pro():
+    v = judge("inverter battery", "inverter beeping",
+              [step("Wiring", "Disconnect the mains wiring at the socket")])
+    expect(v, "pro", "mains-electricity")
+
+
 def test_no_steps_no_risk():
     expect(judge("", "", []), "diy")
 

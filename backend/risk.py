@@ -107,10 +107,15 @@ def _acts_on(verbs: list, *objects: str):
            r"onto|over|beside|inside|below|above|for|if|after|before|"
            r"until|when|while|or|but|so)\b)[^\s]+)")
     fwd = re.compile(rf"\b{v}{gap}{{0,6}}?\s+{o}", re.I)
+    # The verb acting on a pronoun for an object named earlier in the
+    # same clause: "do the terminals move when you wiggle them?".
+    obj = re.compile(rf"\b{o}", re.I)
+    ana = re.compile(rf"\b{v}\s+(?:it|them|these|those)\b", re.I)
 
     def check(text: str) -> bool:
         text = _FOR_PRO.sub(" ", _NEGATED.sub(" ", text))
-        return any(fwd.search(c) for c in _CLAUSE.split(text) if c.strip())
+        return any(fwd.search(c) or (obj.search(c) and ana.search(c))
+                   for c in _CLAUSE.split(text) if c.strip())
     return check
 
 
@@ -143,7 +148,20 @@ OWNER_JOBS = [
 ]
 
 
+# Safety prep any owner does first: switching off or unplugging at the
+# wall. "Disconnect mains, then top up" is not electrical work; anything
+# naming wiring, cables, leads or terminals still reaches the rules.
+SAFETY_PREP = re.compile(
+    r"\b(?:switch(?:ing)? off|turn(?:ing)? off|unplug(?:ging)?|"
+    r"disconnect(?:ing)?|isolat(?:e|ing)|cut(?:ting)?)"
+    r"(?:\s+(?:the|it|from|at|its))*"
+    r"\s+(?:mains|power|supply|plug|electricity)\b"
+    r"(?!\s+(?:wir|cable|lead|terminal|socket|board))"
+    r"(?:\s+(?:power|supply|switch|at the wall))?", re.I)
+
+
 def _strip_owner_jobs(job: Job, text: str) -> str:
+    text = SAFETY_PREP.sub(" ", text)
     for context, allowed in OWNER_JOBS:
         if context.search(job.context):
             text = allowed.sub(" ", text)
