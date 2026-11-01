@@ -62,6 +62,8 @@ def warm_tts() -> None:
         except Exception:
             pass
     threading.Thread(target=warm, daemon=True).start()
+    from . import sam31
+    threading.Thread(target=sam31.warm, daemon=True).start()
 
 
 @app.middleware("http")

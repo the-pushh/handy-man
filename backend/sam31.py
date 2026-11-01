@@ -18,6 +18,12 @@ model id "sam-3.1" on /responses. Wire format per Meta's SAM 3 protocol
     same pixels) and include_confidence="true" (adds c=).
 
 One phrase per request; several phrases run in parallel (~2s each).
+
+Decoding is pure Python (~0.5s per large mask, and the parser decodes
+to validate). It runs in a worker process so it never holds the API
+server's GIL (it starved the event loop and delayed TTS by ~9s), and
+records under the confidence floor are dropped from the token text
+before anything is decoded.
 """
 
 import base64
@@ -87,6 +93,52 @@ def _output_text(reply: dict) -> str:
         for item in reply.get("output", []) if item.get("type") == "message"
         for part in item.get("content", [])
         if part.get("type") == "output_text")
+
+
+_RECORD = re.compile(r"\d+<\|box;[^|]*\|><\|mask;[^|]*\|>")
+_CONF = re.compile(r"<\|box;[^|]*?;c=([0-9.]+)")
+
+
+def prefilter(text: str) -> str:
+    """Keep only the best MAX_PER_PHRASE records above MIN_CONFIDENCE.
+
+    Works on the token text (box tokens carry c=), so masks we would
+    throw away are never decoded. Records without c are kept.
+    """
+    out = []
+    for line in text.splitlines():
+        head = re.match(r"<\d+f>", line)
+        if not head:
+            continue
+        recs = _RECORD.findall(line)
+        scored = []
+        for r in recs:
+            m = _CONF.search(r)
+            c = float(m.group(1)) if m else 1.0
+            if c >= MIN_CONFIDENCE:
+                scored.append((c, r))
+        scored.sort(key=lambda x: -x[0])
+        if scored:
+            out.append(head.group(0) + ",".join(
+                r for _, r in scored[:MAX_PER_PHRASE]))
+    return "\n".join(out)
+
+
+_POOL = None
+
+
+def _pool():
+    """One worker process for decoding, created on first use."""
+    global _POOL
+    if _POOL is None:
+        from concurrent.futures import ProcessPoolExecutor
+        _POOL = ProcessPoolExecutor(max_workers=2)
+    return _POOL
+
+
+def warm() -> None:
+    """Start the decode workers ahead of the first request."""
+    _pool().submit(prefilter, "").result()
 
 
 def parse_output(text: str, label: str) -> list:
@@ -188,7 +240,9 @@ def segment_one(image_bytes: bytes, label: str) -> list:
         text = _output_text(reply)
         rec["raw_text"] = text[:600]
         rec["request_text"] = phrase
-        instances = parse_output(text, label) if text.strip() else []
+        kept = prefilter(text) if text.strip() else ""
+        instances = (_pool().submit(parse_output, kept, label).result()
+                     if kept else [])
         rec["parsed"] = {
             "matches": len(instances),
             "instances": [{"score": i["score"],
