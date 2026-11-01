@@ -278,8 +278,12 @@ def judge(device: str = "", issue: str = "", steps: list | None = None,
         fired.append(panel)
 
     if not fired:
+        # No rule fired, but if the fix fails the owner still needs the
+        # right kind of pro for this device.
+        trade = next((t for ctx, t in TRADE_BY_DEVICE
+                      if ctx.search(job.context)), "appliance technician")
         return {"verdict": "diy", "rule": None, "title": None,
-                "spoken": None, "trade": None, "fired": [],
+                "spoken": None, "trade": trade, "fired": [],
                 "allowed_steps": list(range(len(steps))),
                 "blocked_steps": [], "blocked_step": None}
 

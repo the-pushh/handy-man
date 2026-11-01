@@ -37,6 +37,7 @@ def test_ac_filter_is_owner_maintenance():
         step("Re-check", "Close the front panel, run cool mode for 10 minutes"),
     ])
     expect(v, "diy", allowed=[0, 1, 2])
+    assert v["trade"] == "AC technician"  # if the fix does not work
 
 
 def test_ac_casing_is_pro():
