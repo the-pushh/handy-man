@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# UNUSED: the backend now deploys to Modal (backend/modal_app.py, see
+# MY_TODO.md). Kept for reference only; nothing runs this script.
+#
 # One-time Google Cloud setup for the Handyman backend.
 #
 # Run it yourself, once, from the repo root, after `gcloud auth login`:

@@ -15,8 +15,8 @@ pros with a ready-to-share brief.
 - Frontend: Next.js + TypeScript in `frontend/`, on Vercel. The browser
   only talks to its own origin; `frontend/middleware.ts` proxies `/api/*`
   to the backend.
-- Backend: FastAPI in `backend/server.py`, a container on Cloud Run
-  (asia-south1). Model calls go to Meta's hosted Model API; the safety
+- Backend: FastAPI in `backend/server.py`, served on Modal by
+  `backend/modal_app.py`. Model calls go to Meta's hosted Model API; the safety
   rules are `backend/risk.py`; speech is local MMS-TTS.
 
 | Role | Model | Where |
@@ -27,36 +27,42 @@ pros with a ready-to-share brief.
 | Illustrative highlight (fallback when SAM finds nothing) | `muse-image-1.0` | `backend/muse_image.py` |
 | Speech | MMS-TTS (English and Hindi voices baked into the image) | `backend/tts_local.py` |
 | Speech-to-text | browser speech recognition | `frontend/app/page.tsx` |
-| Nearby pros | Google Places API (New) | `backend/places.py` |
+| Nearby pros | Google Places API (New); without a key, a Google Maps search link | `backend/places.py`, `frontend/app/components/CallAPro.tsx` |
 
 ## Deploy
 
-Backend on Google Cloud Run with CI/CD from GitHub Actions, frontend on
-Vercel. No tunnels, no login, no database.
+Backend on [Modal](https://modal.com), frontend on Vercel. No tunnels, no
+login, no database. The checklist is `MY_TODO.md`.
 
-- **One-time setup:** follow `MY_TODO.md` in order. It runs
-  `infra/setup.sh` (project, APIs, Artifact Registry, Secret Manager,
-  Workload Identity Federation, budget alert) and walks through the
-  Vercel and GitHub settings.
-- **Every push to `main`:** `.github/workflows/backend.yml` runs the
-  checks (ruff, `backend/test_*.py`, frontend typecheck), builds
-  `backend/Dockerfile`, deploys a Cloud Run revision with no traffic,
-  smoke-tests it (health + one tiny live Spark call), then moves traffic
-  to it. Pull requests run the checks only. GCP auth is Workload Identity
-  Federation; there are no service-account keys.
-- **Configuration:** every variable is documented in
-  `backend/.env.example` and `frontend/.env.example`. The backend refuses
-  to start if a required one is missing. Secrets (Meta key, Places key,
-  proxy secret) live in Secret Manager and Vercel only.
+- **Backend:** `modal deploy backend/modal_app.py`. It builds the image
+  from `backend/requirements.txt` (CPU-only torch, both MMS voices baked in
+  at build time), serves the FastAPI app with `@modal.asgi_app`, and
+  speaks one warm-up line before a container takes traffic. Sizing (cores,
+  memory, warm containers, max containers, request timeout) is one block
+  at the top of that file. Production always runs `muse-spark-1.3`:
+  `modal_app.py` sets `SPARK_MODEL=prod` and `HANDYMAN_ENV=production`
+  itself.
+- **Secrets:** one Modal secret named `handyman` with
+  `MUSE_SPARK_API_URL`, `MUSE_SPARK_API_KEY`, `PROXY_SECRET`,
+  `ALLOWED_ORIGINS` and, optionally, `GOOGLE_PLACES_API_KEY`. The backend
+  refuses to start, naming each missing key. Vercel holds `BACKEND_URL`
+  and the same `PROXY_SECRET`. Every variable is documented in
+  `backend/.env.example` and `frontend/.env.example`.
+- **Frontend:** Vercel builds `frontend/` from the repo. The browser only
+  talks to the Vercel domain; `frontend/middleware.ts` forwards `/api/*`
+  to Modal with the proxy secret, and the backend rejects calls without it.
+- **CI:** `.github/workflows/checks.yml` runs ruff, the backend tests and
+  the frontend typecheck on pull requests and pushes. It deploys nothing.
 - **Protecting the bill:** per-IP limits on fixes and requests, a cap on
-  Places lookups per session and per IP, at most 3 Cloud Run instances,
-  a budget alert, and one JSON usage line per request in Cloud Logging
-  (`jsonPayload.kind="usage"`).
+  Places lookups per session and per IP, at most 3 Modal containers, and
+  one JSON usage line per request in the Modal logs (`"kind": "usage"`).
 - **History:** past jobs stay in the browser (localStorage for the facts,
   IndexedDB for small before/after thumbnails and the sound clip, last 20
   jobs). Nothing is stored on the server.
-
-Run the production container locally: `make container` (uses your `.env`).
+- **Unused:** `infra/setup.sh` (the earlier Google Cloud Run setup) is no
+  longer used and is kept for reference only. `backend/Dockerfile` is for
+  running the backend as a container locally: `make container` (uses your
+  `.env`).
 
 ## Languages
 
@@ -209,7 +215,7 @@ Useful extras:
 make setup      # dependencies only (venv + pip + npm), idempotent
 make backend    # FastAPI alone — HANDYMAN_MODAL=0 for local fallbacks
 make frontend   # Next.js alone
-make deploy     # redeploy Glimmer + mms-tts to Modal after model changes
+make deploy     # deploy the backend to Modal (modal deploy backend/modal_app.py)
 make auth       # authenticate this machine with Modal (opens browser)
 make clean      # remove frontend build output
 ```
