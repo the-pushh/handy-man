@@ -344,3 +344,40 @@ def diagnose(appliance: str, device: str | None, labels: list,
             "causes": causes, "relevant": relevant, "steps": steps[:8],
             "safety": safety,
             "resolution": str(parsed.get("resolution", "")).strip()}
+
+
+def caption(image_bytes: bytes, model: str | None = None) -> str:
+    """One-line "I'm looking at: X" for the live scan, at minimal effort.
+
+    Runs in parallel with full perception so the user sees the model
+    has recognised the object within a few seconds.
+    """
+    url, key, default_model = _config()
+    b64 = base64.b64encode(image_bytes).decode()
+    payload = {
+        "model": model or default_model,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": (
+                    "Name the main object in this photo in at most 6 words, "
+                    "with its brand if a logo is readable. Reply with only "
+                    "the name, no punctuation.")},
+                {"type": "image_url",
+                 "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+            ],
+        }],
+        "max_tokens": 400,
+        "reasoning_effort": "minimal",
+    }
+    reply = _post(url, key, payload, purpose="caption", image=image_bytes)
+    try:
+        text = (reply["choices"][0]["message"].get("content") or "").strip()
+    except (KeyError, IndexError, TypeError):
+        text = ""
+    text = text.splitlines()[0].strip(" .\"'") if text else ""
+    reply["_trace"]["parsed"] = {"caption": text}
+    if not text:
+        raise RuntimeError("caption came back empty "
+                           f"(finish: {reply['_trace'].get('finish')})")
+    return f"I'm looking at: {text}"

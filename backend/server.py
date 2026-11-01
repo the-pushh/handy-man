@@ -35,6 +35,7 @@ load_dotenv()
 from .lang import detect_language, language_name, mms_codes
 from .pipeline import analyze_events
 from . import trace, tts_local
+from .images import normalize_all as images_normalized
 
 app = FastAPI(title="HandyMan backend")
 # Sandbox talkback calls the backend directly (browser -> :8000) so long
@@ -181,6 +182,7 @@ async def repair_analyze(file: UploadFile = File(...),
     images = [await file.read()]
     for extra in stills or []:
         images.append(await extra.read())
+    images = images_normalized(images)
     out = await run_in_threadpool(_repair_analyze, images, text,
                                   components, model)
     out["trace"] = trace.export()
@@ -305,6 +307,21 @@ def _repair_analyze(images, text, components, model):
             "overlay": highlight}
 
 
+@app.post("/api/caption")
+async def caption(file: UploadFile = File(...)):
+    """Fast one-line caption for the live scan (separate tiny call)."""
+    from . import spark
+
+    trace.begin()
+    image = images_normalized([await file.read()])[0]
+    try:
+        text = await run_in_threadpool(spark.caption, image)
+        return {"status": "ok", "caption": text, "trace": trace.export()}
+    except Exception as exc:
+        return {"status": "caption-error", "detail": str(exc),
+                "trace": trace.export()}
+
+
 @app.post("/api/repair/highlight")
 async def repair_highlight(file: UploadFile = File(...),
                             part: str = Form(...),
@@ -317,7 +334,7 @@ async def repair_highlight(file: UploadFile = File(...),
     from . import muse_image
 
     trace.begin()
-    image = await file.read()
+    image = images_normalized([await file.read()])[0]
     try:
         fixed = json.loads(legend) if legend.strip() else []
     except json.JSONDecodeError:

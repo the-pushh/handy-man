@@ -10,6 +10,7 @@ import { getSpeechRecognition } from "./lib/speech";
 import type { SpeechRecognitionLike } from "./lib/speech";
 import { resolveApiBase } from "./lib/apiBase";
 import { kb, mark, turnStart } from "./lib/timeline";
+import { drawStill, shrinkPhoto } from "./lib/still";
 import Orb from "./components/Orb";
 import type { OrbState } from "./components/Orb";
 import RepairWalkthrough from "./components/RepairWalkthrough";
@@ -297,16 +298,7 @@ export default function Home() {
     const video = videoRef.current;
     const grab = grabRef.current;
     if (!video?.videoWidth || !grab) return Promise.resolve(null);
-    grab.width = video.videoWidth;
-    grab.height = video.videoHeight;
-    grab.getContext("2d")?.drawImage(video, 0, 0);
-    return new Promise((resolve) =>
-      grab.toBlob(
-        (b) => resolve(b ? new File([b], "still.jpg", { type: "image/jpeg" }) : null),
-        "image/jpeg",
-        0.85
-      )
-    );
+    return drawStill(video, video.videoWidth, video.videoHeight, "still.jpg", grab);
   }
 
   // Pull one still frame out of an uploaded video file.
@@ -338,15 +330,7 @@ export default function Home() {
           finish(null);
           return;
         }
-        const c = document.createElement("canvas");
-        c.width = v.videoWidth;
-        c.height = v.videoHeight;
-        c.getContext("2d")?.drawImage(v, 0, 0);
-        c.toBlob(
-          (b) => finish(b ? new File([b], "upload.jpg", { type: "image/jpeg" }) : null),
-          "image/jpeg",
-          0.85
-        );
+        void drawStill(v, v.videoWidth, v.videoHeight, "upload.jpg").then(finish);
       };
       v.onerror = () => finish(null);
       setTimeout(() => finish(null), 15000);
@@ -362,7 +346,7 @@ export default function Home() {
     const frame = file.type.startsWith("video")
       ? await videoFrame(file)
       : file.type.startsWith("image")
-        ? file
+        ? await shrinkPhoto(file)
         : null;
     if (!frame) {
       setStatusMsg("Could not read that file — try a photo or video.");
@@ -395,6 +379,20 @@ export default function Home() {
       setOrb("idle");
       return;
     }
+    // Caption: a tiny minimal-effort call in parallel with perception,
+    // shown the moment it lands (target < 4s on prod).
+    let perceived = false;
+    const cfd = new FormData();
+    cfd.append("file", frame, "frame.jpg");
+    void fetch(`${apiBase()}/api/caption`, { method: "POST", body: cfd })
+      .then((cr) => cr.json())
+      .then((cd) => {
+        if (cd.status === "ok" && !perceived) {
+          mark("caption shown", JSON.stringify(cd.caption));
+          setStatusMsg(cd.caption);
+        } else mark("caption skipped", cd.status);
+      })
+      .catch(() => undefined);
     try {
       const fd = new FormData();
       fd.append("file", frame, "frame.jpg");
@@ -404,6 +402,7 @@ export default function Home() {
         body: fd,
       });
       const data = await r.json();
+      perceived = true;
       mark("analyze(1 still, no text) returned", `trace=${(data.trace || []).length} calls`);
       const device: string =
         data.device ||
