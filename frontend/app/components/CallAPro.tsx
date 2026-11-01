@@ -2,7 +2,9 @@
 
 /* Call a pro: what to tell them (ready to copy or share, photo and
    sound attached), then nearby pros for the verdict's trade from the
-   backend's Places API (New) proxy. No manual-entry fallback. */
+   backend's Places API (New) proxy. When that can't answer (no key on
+   the server, Places error, no location, nothing found), a "Find nearby"
+   button opens a Google Maps search for the trade instead. */
 
 import { useEffect, useState } from "react";
 import { sessionId } from "../lib/apiBase";
@@ -44,18 +46,37 @@ export function briefText(b: Brief): string {
     .join("\n");
 }
 
+/* What to type into Maps for each trade the rules layer can name. */
+const MAPS_QUERY: Record<string, string> = {
+  "two-wheeler mechanic": "two-wheeler mechanic",
+  "inverter / battery service": "inverter battery service",
+  "battery service": "battery service",
+  "AC technician": "AC repair technician",
+  "appliance technician": "appliance repair",
+  "laptop / phone repair": "laptop phone repair",
+  "gas technician": "gas stove repair",
+};
+
+/* A Maps search link. Only the trade goes in the URL, never a location:
+   Maps resolves "near me" on the phone itself. */
+export function mapsSearchURL(trade: string): string {
+  const what = MAPS_QUERY[trade] || trade.replace(/\s*\/\s*/g, " ");
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${what} near me`)}`;
+}
+
 type State =
   | { kind: "locating" }
   | { kind: "loading" }
   | { kind: "ok"; pros: Pro[] }
-  | { kind: "message"; text: string };
+  | { kind: "fallback"; text: string };
 
 export default function CallAPro({ api, trade, brief }: { api: string; trade: string; brief: Brief }) {
   const [state, setState] = useState<State>({ kind: "locating" });
 
   useEffect(() => {
+    const fallback = (text: string) => setState({ kind: "fallback", text });
     if (!navigator.geolocation) {
-      setState({ kind: "message", text: "This browser can't share your location, so I can't search nearby." });
+      fallback("Search Google Maps for one near you.");
       return;
     }
     navigator.geolocation.getCurrentPosition(
@@ -69,24 +90,21 @@ export default function CallAPro({ api, trade, brief }: { api: string; trade: st
             body: JSON.stringify({ trade, lat: pos.coords.latitude, lng: pos.coords.longitude }),
           });
           const d = await r.json();
-          if (d.status === "ok") {
-            setState(
-              d.pros.length
-                ? { kind: "ok", pros: d.pros }
-                : { kind: "message", text: `No ${trade} found within 5 km.` }
-            );
+          if (d.status === "ok" && d.pros.length) {
+            setState({ kind: "ok", pros: d.pros });
+          } else if (d.status === "ok") {
+            fallback(`No ${trade} listed within 5 km. Search a wider area on Google Maps.`);
           } else if (d.status === "rate-limited") {
-            setState({ kind: "message", text: d.detail });
-          } else if (d.status === "needs-places-key") {
-            setState({ kind: "message", text: "Nearby search isn't set up on this server yet." });
+            fallback(`${d.detail} Meanwhile, search Google Maps.`);
           } else {
-            setState({ kind: "message", text: "Couldn't reach the places search. Try again in a moment." });
+            // needs-places-key, places-error: same button, no error.
+            fallback("Search Google Maps for one near you.");
           }
         } catch (_) {
-          setState({ kind: "message", text: "Couldn't reach the server. Check the connection and try again." });
+          fallback("Search Google Maps for one near you.");
         }
       },
-      () => setState({ kind: "message", text: "Location is off. Allow location to see pros near you." }),
+      () => fallback("Location is off here, so search Google Maps instead."),
       { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 }
     );
   }, [api, trade]);
@@ -98,7 +116,14 @@ export default function CallAPro({ api, trade, brief }: { api: string; trade: st
       <p className="sheet-label" style={{ marginTop: 16 }}>Nearby {trade}</p>
       {state.kind === "locating" && <p className="evidence-note">Finding where you are…</p>}
       {state.kind === "loading" && <p className="evidence-note">Searching nearby…</p>}
-      {state.kind === "message" && <p className="evidence-note">{state.text}</p>}
+      {state.kind === "fallback" && (
+        <div className="find-nearby">
+          <p className="evidence-note">{state.text}</p>
+          <a className="btn-primary" href={mapsSearchURL(trade)} target="_blank" rel="noreferrer">
+            Find nearby {trade}
+          </a>
+        </div>
+      )}
       {state.kind === "ok" && (
         <ol className="pro-list">
           {state.pros.map((p) => (
@@ -127,7 +152,7 @@ export default function CallAPro({ api, trade, brief }: { api: string; trade: st
           ))}
         </ol>
       )}
-      <p className="evidence-note places-credit">Listings from Google Maps.</p>
+      {state.kind === "ok" && <p className="evidence-note places-credit">Listings from Google Maps.</p>}
     </section>
   );
 }

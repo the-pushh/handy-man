@@ -766,6 +766,8 @@ body {
 .pro-addr { font-size: 13px; margin: 0; color: var(--line-muted); }
 .pro-actions { display: flex; flex-direction: column; gap: 6px; flex: none; }
 .pro-actions a { text-align: center; text-decoration: none; padding: 10px 16px; }
+.find-nearby { display: flex; flex-direction: column; gap: 10px; }
+.find-nearby .btn-primary { text-align: center; text-decoration: none; }
 .places-credit { margin-top: 8px; font-size: 12px; }
 
 /* Quick checks before the verdict: one question, big tap targets,
