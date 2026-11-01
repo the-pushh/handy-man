@@ -26,27 +26,54 @@ import time
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi.responses import JSONResponse
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 load_dotenv()
 
-from .lang import detect_language, language_name, mms_codes
-from . import trace, tts_local
-from .images import normalize_all as images_normalized
+from . import config  # noqa: E402
+config.validate()  # fail fast, naming every missing variable
+
+from .lang import detect_language, language_name, mms_codes  # noqa: E402
+from . import trace, tts_local  # noqa: E402
+from .images import normalize_all as images_normalized  # noqa: E402
 
 app = FastAPI(title="HandyMan backend")
-# Sandbox talkback calls the backend directly (browser -> :8000) so long
-# image-generation requests don't die in the Next dev proxy.
+# Production traffic is same-origin through the Vercel proxy, so CORS is
+# only for direct calls: locked to ALLOWED_ORIGINS there. In development
+# any origin works (phone on the LAN, tunnels). No credentials are used.
 app.add_middleware(
     CORSMiddleware,
-    # Dev only: the page may be opened from a phone on the LAN, so any
-    # local origin is allowed. No credentials are used.
-    allow_origins=["*"],
+    allow_origins=config.ALLOWED_ORIGINS or ([] if config.PRODUCTION else ["*"]),
     allow_methods=["POST", "GET", "OPTIONS"],
-    allow_headers=["Content-Type"],
+    allow_headers=["Content-Type", "x-session"],
 )
+
+from .limits import Window, wait_text  # noqa: E402
+
+_requests = Window(config.RATE_REQUESTS_PER_HOUR, 3600)
+_turns = Window(config.RATE_TURNS_PER_HOUR, 3600)
+_places_session = Window(config.PLACES_PER_SESSION, 86400)
+_places_ip = Window(config.PLACES_PER_IP_PER_DAY, 86400)
+
+
+def _slow_down(wait: int, what: str) -> JSONResponse:
+    return JSONResponse(status_code=429, headers={"Retry-After": str(wait)},
+                        content={"status": "rate-limited", "detail":
+                                 f"You've {what}. Please try again in "
+                                 f"{wait_text(wait)}.", "retry_after": wait})
+
+
+def _client_ip(request: Request) -> str:
+    """The visitor's IP. Behind the Vercel proxy it arrives in
+    x-client-ip, trusted only because the proxy secret matched."""
+    if config.PROXY_SECRET:
+        ip = request.headers.get("x-client-ip", "").split(",")[0].strip()
+        if ip:
+            return ip
+    return request.client.host if request.client else "unknown"
 
 
 @app.on_event("startup")
@@ -67,8 +94,32 @@ def warm_tts() -> None:
 
 @app.middleware("http")
 async def time_requests(request: Request, call_next):
-    """One log line per request: path, upload size, server time."""
+    """Guard and log every request.
+
+    With PROXY_SECRET set (production), /api/* needs the secret the
+    Vercel middleware adds, so the Cloud Run URL can't be called directly
+    to dodge the limits. Then a per-IP request budget, then one log line:
+    path, upload size, server time.
+    """
+    import hashlib
+    import hmac
+
     start = time.time()
+    path = request.url.path
+    guarded = (path.startswith("/api/") and path != "/api/health"
+               and request.method != "OPTIONS")
+    if guarded and config.PROXY_SECRET and not hmac.compare_digest(
+            request.headers.get("x-handyman-proxy", ""), config.PROXY_SECRET):
+        return JSONResponse(status_code=403, content={
+            "status": "forbidden", "detail": "Use the app's own address."})
+    ip = _client_ip(request)
+    request.state.ip = ip
+    trace.request_info.set({"path": path, "client": hashlib.sha256(
+        ip.encode()).hexdigest()[:10]})
+    if guarded:
+        wait = _requests.take(ip)
+        if wait:
+            return _slow_down(wait, "been busy this hour")
     response = await call_next(request)
     size = request.headers.get("content-length", "0")
     print(f"[req] {time.strftime('%H:%M:%S', time.localtime(start))}"
@@ -88,6 +139,22 @@ class TTSRequest(BaseModel):
 @app.get("/api/health")
 def health():
     return {"ok": True, "tts": "local mms-tts", "tts_ready": tts_local.available()}
+
+
+@app.post("/api/smoke")
+async def smoke():
+    """Deploy smoke test: one tiny live Spark call (behind the proxy
+    secret like every other model endpoint)."""
+    from . import spark
+
+    trace.begin()
+    try:
+        out = await run_in_threadpool(spark.ping)
+        return {"status": "ok" if out["ok"] else "bad-reply", **out,
+                "trace": trace.export()}
+    except Exception as exc:
+        return JSONResponse(status_code=502, content={
+            "status": "spark-error", "detail": str(exc)[:200]})
 
 
 @app.get("/api/languages")
@@ -170,7 +237,8 @@ def index():
 
 
 @app.post("/api/repair/analyze")
-async def repair_analyze(file: UploadFile = File(...),
+async def repair_analyze(request: Request,
+                          file: UploadFile = File(...),
                           stills: list[UploadFile] = File(default=[]),
                           text: str = Form(""),
                           components: str = Form(""),
@@ -193,6 +261,13 @@ async def repair_analyze(file: UploadFile = File(...),
     concurrent /api/tts requests wait for the whole analysis). The
     worker inherits this request's trace context.
     """
+    # A first look (photo, nothing said yet) starts a turn: that is what
+    # the per-IP "turns per hour" limit counts.
+    if not text.strip() and not perception.strip() and not answers.strip():
+        wait = _turns.take(request.state.ip)
+        if wait:
+            return _slow_down(wait, f"started {config.RATE_TURNS_PER_HOUR} "
+                              "fixes this hour")
     trace.begin()
     images = [await file.read()]
     for extra in stills or []:
@@ -409,7 +484,6 @@ def _repair_analyze(images, text, components, model, prior=None,
                 "segment_labels": segment_labels,
                 "instances": [], "legend": [],
                 "overlay": None}
-    appliance = notes.replace("The appliance is ", "").rstrip(".").strip()
     return {"status": "ok", "notes": notes,
             "components": inventory,
             "causes": causes, "steps": steps,
@@ -438,11 +512,17 @@ class ProsRequest(BaseModel):
 
 
 @app.post("/api/pros")
-async def pros(req: ProsRequest):
+async def pros(req: ProsRequest, request: Request):
     """Nearby pros for the verdict's trade (Places API New, key stays
-    server-side; location travels in the body, never in a URL)."""
+    server-side; location travels in the body, never in a URL).
+    Capped per browser session and per IP per day (Places is billed)."""
     from . import places
 
+    session = request.headers.get("x-session", "").strip()[:64] or request.state.ip
+    wait = (_places_session.take(session)
+            or _places_ip.take(request.state.ip))
+    if wait:
+        return _slow_down(wait, "looked up nearby pros a few times already")
     trace.begin()
     try:
         found = await run_in_threadpool(places.nearby, req.trade,
