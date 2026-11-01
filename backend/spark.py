@@ -19,7 +19,6 @@ import base64
 import json
 import os
 import re
-import urllib.request
 
 from dotenv import load_dotenv
 
@@ -521,6 +520,20 @@ def recheck(before: bytes, after: bytes, fix: str, part: str | None = None,
     return {"looks_fixed": lf if isinstance(lf, bool) else None,
             "seen": str(parsed.get("seen") or "").strip(),
             "next": None if nxt.lower() in ("", "null", "none") else nxt}
+
+
+def ping(model: str | None = None) -> dict:
+    """Smallest possible live Spark call (deploy smoke test)."""
+    url, key, default_model = _config()
+    payload = {
+        "model": model or default_model,
+        "messages": [{"role": "user", "content": 'Reply with only {"ok": true}'}],
+        "max_tokens": 200,
+        "reasoning_effort": "minimal",
+        "response_format": {"type": "json_object"},
+    }
+    parsed = _complete(url, key, payload, ["ok"], purpose="smoke test")
+    return {"ok": parsed.get("ok") is True, "model": payload["model"]}
 
 
 def caption(image_bytes: bytes, model: str | None = None) -> str:
