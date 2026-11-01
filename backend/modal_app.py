@@ -6,7 +6,7 @@ Deploy (from the repo root):
 The URL it prints (https://<workspace>--handyman-backend.modal.run)
 is Vercel's BACKEND_URL.
 
-Settings come from the Modal secret "handyman" (Modal dashboard >
+Settings come from the Modal secret "handy-man" (Modal dashboard >
 Secrets). Keys, all documented in backend/.env.example:
     MUSE_SPARK_API_URL     required
     MUSE_SPARK_API_KEY     required, secret
@@ -84,7 +84,7 @@ app = modal.App(APP_NAME, image=image)
     max_containers=MAX_CONTAINERS,
     timeout=TIMEOUT_S,
     scaledown_window=SCALEDOWN_S,
-    secrets=[modal.Secret.from_name("handyman")],
+    secrets=[modal.Secret.from_name("handy-man")],
 )
 @modal.concurrent(max_inputs=CONCURRENT_REQUESTS)
 class Web:

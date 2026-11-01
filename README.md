@@ -42,7 +42,7 @@ login, no database.
   at the top of that file. Production always runs `muse-spark-1.3`:
   `modal_app.py` sets `SPARK_MODEL=prod` and `HANDYMAN_ENV=production`
   itself.
-- **Secrets:** one Modal secret named `handyman` with
+- **Secrets:** one Modal secret named `handy-man` with
   `MUSE_SPARK_API_URL`, `MUSE_SPARK_API_KEY`, `PROXY_SECRET`,
   `ALLOWED_ORIGINS` and, optionally, `GOOGLE_PLACES_API_KEY`. The backend
   refuses to start, naming each missing key. Vercel holds `BACKEND_URL`
