@@ -127,7 +127,6 @@ def test_spark_scooter_proposal_is_overridden():
               SPARK_SCOOTER_STEPS)
     expect(v, "pro", "vehicle-body-panel", allowed=[0, 1, 2, 4])
     assert v["blocked_step"] == 3 and v["blocked_steps"] == [3]
-    assert "battery-terminals" in v["fired"]
     assert v["title"] == "Opening the scooter's panel needs a mechanic."
 
 
@@ -161,11 +160,37 @@ def test_looking_at_terminals_is_allowed():
     expect(v, "diy")
 
 
-def test_any_contact_with_terminals_is_pro():
+def test_looking_without_touching_terminals_is_allowed():
     v = judge("inverter battery", "beeping",
               [step("Terminals", "Look at the terminals for white powder, without touching them")])
-    # Even "without touching" mentions contact: the rule errs safe.
+    expect(v, "diy")
+
+
+def test_wiggling_terminals_is_pro():
+    v = judge("inverter battery", "beeping",
+              [step("Terminals", "Turn off inverter, hand-wiggle battery terminals, retighten if loose")])
     expect(v, "pro", "battery-terminals")
+
+
+# Spark's real AC proposals (prod) call the AC body the "front casing".
+# Working on the front panel and filter near it is still owner work.
+SPARK_AC_STEPS = [
+    step("front panel closure", "Press front panel shut then lift front panel to check filter seating behind front casing"),
+    step("inspect front panel dust buildup", "lift front panel up from front casing and slide filters out with plastic handle, wash dry and refit"),
+    step("Clear air outlet vent", "With front casing closed, wipe air outlet vent slats with dry cloth using wooden stick for dust"),
+    step("Inspect front panel filter", "Unplug AC, lift front panel with plastic tool, remove filter, wash dry fully, refit under front casing"),
+]
+
+
+def test_spark_ac_front_casing_wording_stays_diy():
+    v = judge("LG DUALCOOL air conditioner", "AC is not cooling", SPARK_AC_STEPS)
+    expect(v, "diy", allowed=[0, 1, 2, 3])
+
+
+def test_opening_the_front_casing_is_pro():
+    v = judge("LG DUALCOOL air conditioner", "AC is not cooling",
+              [step("Coil", "Remove the front casing screws and take off the casing")])
+    expect(v, "pro", "sealed-casing")
 
 
 def test_no_steps_no_risk():

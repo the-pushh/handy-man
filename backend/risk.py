@@ -24,13 +24,18 @@ def _rx(*words: str) -> re.Pattern:
     return re.compile(r"\b(?:" + "|".join(words) + r")", re.IGNORECASE)
 
 
-# Hands-on verbs: a step that only says "look at" is visual inspection.
-TOUCH = _rx(r"touch", r"tighten", r"loosen", r"remov", r"disconnect",
-            r"reconnect", r"connect", r"clean", r"scrub", r"wipe", r"brush",
-            r"unscrew", r"unbolt", r"multimeter", r"probe", r"clamp",
-            r"spanner", r"wrench", r"jump", r"bridge", r"short", r"pry",
-            r"prise", r"open", r"lift", r"pull", r"detach", r"replace",
-            r"swap", r"apply", r"spray", r"grease")
+# Verbs that open something up.
+OPEN = [r"open", r"unscrew", r"unbolt", r"remov", r"pry", r"prise",
+        r"take (?:off|apart|out)", r"detach", r"dismantl", r"unclip",
+        r"split", r"lift off", r"pull off", r"undo"]
+# Hands-on verbs (contact of any kind). A step that only says "look at"
+# is visual inspection and never matches.
+TOUCH = OPEN + [r"touch", r"tighten", r"loosen", r"disconnect",
+                r"reconnect", r"connect", r"clean", r"scrub", r"wipe",
+                r"brush", r"multimeter", r"probe", r"clamp", r"jump",
+                r"bridge", r"short", r"reseat", r"wiggle", r"jiggle",
+                r"grease", r"apply", r"spray", r"replace", r"swap", r"pull",
+                r"rewir", r"solder", r"twist", r"hand-wiggle"]
 
 VEHICLE = _rx(r"scooter", r"motorcycle", r"motorbike", r"\bbike\b",
               r"two[- ]wheeler", r"moped", r"activa", r"jupiter", r"access 125",
@@ -70,9 +75,39 @@ def _any(*patterns):
     return lambda text: any(r.search(text) for r in rx)
 
 
+# Clauses that are negated ("without touching them", "do not open")
+# describe what NOT to do and never count as an action.
+_NEGATED = re.compile(r"\b(?:without|never|don'?t|do not|avoid|no need to)"
+                      r"\b[^,;.:]*", re.I)
+_CLAUSE = re.compile(r"[,;.:\n]|\bthen\b|\band\b", re.I)
+
+
+def _acts_on(verbs: list, *objects: str):
+    """True when a step's clause applies one of `verbs` to an object.
+
+    The verb and the object must sit in the same clause, at most four
+    words apart (either order). "Lift the front panel up from the front
+    casing" does not open the casing; "unscrew the indoor unit casing"
+    does.
+    """
+    v = "(?:" + "|".join(verbs) + r")\w*"
+    o = "(?:" + "|".join(objects) + ")"
+    fwd = re.compile(rf"\b{v}(?:\s+[^\s]+){{0,4}}?\s+{o}", re.I)
+    back = re.compile(rf"\b{o}\w*(?:\s+[^\s]+){{0,3}}?\s+{v}", re.I)
+
+    def check(text: str) -> bool:
+        text = _NEGATED.sub(" ", text)
+        return any(fwd.search(c) or back.search(c)
+                   for c in _CLAUSE.split(text) if c.strip())
+    return check
+
+
 def _hands_on(*objects):
-    obj = _any(*objects)
-    return lambda text: bool(obj(text) and TOUCH.search(text))
+    return _acts_on(TOUCH, *objects)
+
+
+def _opens(*objects):
+    return _acts_on(OPEN, *objects)
 
 
 # --- Owner jobs, allowed before forcing rules look at the step ---------
@@ -128,50 +163,49 @@ RULES = [
          "Call a gas technician.",
          "gas technician",
          applies=lambda job: True,
-         step=_hands_on(_rx(r"gas (?:pipe|line|hose|valve|regulator|fitting)",
-                            r"regulator", r"lpg", r"cylinder valve",
-                            r"burner (?:pipe|fitting|nozzle)"))),
+         step=_hands_on(r"gas (?:pipe|line|hose|valve|regulator|fitting)",
+                        r"regulator", r"lpg", r"cylinder valve",
+                        r"burner (?:pipe|fitting|nozzle)")),
     Rule("mains-electricity",
          "Wiring, sockets and the switchboard carry mains power; that is "
          "an electrician's job.",
          "Call an electrician.",
          "electrician",
          applies=lambda job: True,
-         step=_hands_on(_rx(r"wir(?:e|es|ing)\b", r"live wire", r"mains",
-                            r"switchboard", r"switch board", r"\bmcb\b",
-                            r"fuse box", r"distribution box", r"socket",
-                            r"plug point", r"capacitor", r"pcb",
-                            r"circuit board", r"control board"))),
+         step=_hands_on(r"(?:loose |live |\w+ )?wir(?:e|es|ing)\b", r"mains",
+                        r"switchboard", r"switch board", r"mcb\b",
+                        r"fuse box", r"distribution box", r"socket",
+                        r"plug point", r"capacitor", r"pcb",
+                        r"circuit board", r"control board")),
     Rule("vehicle-body-panel",
          "Opening the scooter's panel needs a mechanic.",
          "This one needs a mechanic.",
          "two-wheeler mechanic",
          applies=lambda job: bool(VEHICLE.search(job.context)),
-         step=_hands_on(_rx(r"side panel", r"body panel", r"panel",
-                            r"cowl", r"fairing", r"floor (?:board|panel|mat)",
-                            r"battery (?:cover|box|compartment|lid)",
-                            r"seat (?:lock|base)", r"cover"))),
+         step=_opens(r"(?:\w+ )?panel", r"cowl", r"fairing",
+                     r"floor ?(?:board|panel|mat)",
+                     r"battery (?:cover|box|compartment|lid)",
+                     r"(?:\w+ )?cover")),
     Rule("battery-terminals",
          "Battery terminals carry high current; anything beyond looking "
          "at them is for a technician.",
          "Needs a technician.",
          "battery service",
          applies=lambda job: True,
-         step=_hands_on(_rx(r"terminals?", r"battery (?:lead|cable|clamp|post)s?",
-                            r"\+ ?ve", r"- ?ve lead", r"negative lead",
-                            r"positive lead"))),
+         step=_hands_on(r"(?:battery |\w+ )?terminals?",
+                        r"battery (?:lead|cable|clamp|post|wire)s?",
+                        r"negative lead", r"positive lead")),
     Rule("sealed-casing",
          "Opening the unit's sealed casing exposes live parts; a "
          "technician must do it.",
          "Needs a technician.",
          "appliance technician",
          applies=lambda job: True,
-         step=_hands_on(_rx(r"casing", r"housing", r"enclosure",
-                            r"back (?:panel|cover)", r"rear (?:panel|cover)",
-                            r"cover screws", r"\bcabinet\b", r"sealed",
-                            r"outdoor unit", r"compressor", r"refrigerant",
-                            r"gas charg", r"coil", r"blower motor",
-                            r"panel"))),
+         step=_opens(r"(?:\w+ )?(?:\w+ )?casing", r"(?:\w+ )?housing",
+                     r"enclosure", r"(?:back|rear) (?:panel|cover)",
+                     r"cover screws", r"cabinet", r"(?:\w+ )?outdoor unit",
+                     r"compressor", r"(?:\w+ )?coil", r"blower",
+                     r"(?:\w+ )?panel", r"(?:\w+ )?cover")),
 ]
 
 TRADE_BY_DEVICE = [
