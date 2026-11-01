@@ -145,6 +145,14 @@ def test_scooter_kill_switch_finding_stays_diy():
     expect(v, "diy")
 
 
+def test_calling_a_pro_is_not_an_owner_action():
+    v = judge("LG air conditioner", "beeping", [
+        step("Expert", "if beeps continue after detector battery swap try calling a professional for AC control board test"),
+        step("Expert", "Call a technician to open the casing and check the compressor"),
+    ])
+    expect(v, "diy")
+
+
 # --- Other forcing rules -------------------------------------------------
 
 def test_danger_symptom_stops_everything():

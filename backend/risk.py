@@ -83,6 +83,10 @@ def _any(*patterns):
 _NEGATED = re.compile(r"\b(?:without|never|don'?t|do not|avoid|no need to)"
                       r"\b[^,;.:]*", re.I)
 _CLAUSE = re.compile(r"[,;.:\n]|\bthen\b|\band\b", re.I)
+# A clause about calling a pro describes the pro's work, not the owner's.
+_FOR_PRO = re.compile(r"\b(?:call|calling|contact|ask|book|get)\b[^,;.:]*\b"
+                      r"(?:professional|technician|mechanic|electrician|pro|"
+                      r"service centre|service center|dealer)\b[^,;.:]*", re.I)
 
 
 def _acts_on(verbs: list, *objects: str):
@@ -99,11 +103,13 @@ def _acts_on(verbs: list, *objects: str):
     # Between verb and object: up to six words, none a preposition, so
     # "swing the louver fully open on the front casing" (open as a
     # state, casing as a location) does not read as opening the casing.
-    gap = r"(?:\s+(?!(?:on|in|at|from|under|behind|near|with|by|into|onto|over|beside|inside|below|above)\b)[^\s]+)"
+    gap = (r"(?:\s+(?!(?:on|in|at|from|under|behind|near|with|by|into|"
+           r"onto|over|beside|inside|below|above|for|if|after|before|"
+           r"until|when|while|or|but|so)\b)[^\s]+)")
     fwd = re.compile(rf"\b{v}{gap}{{0,6}}?\s+{o}", re.I)
 
     def check(text: str) -> bool:
-        text = _NEGATED.sub(" ", text)
+        text = _FOR_PRO.sub(" ", _NEGATED.sub(" ", text))
         return any(fwd.search(c) for c in _CLAUSE.split(text) if c.strip())
     return check
 
