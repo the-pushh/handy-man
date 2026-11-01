@@ -52,9 +52,6 @@ type State =
 
 export default function CallAPro({ api, trade, brief }: { api: string; trade: string; brief: Brief }) {
   const [state, setState] = useState<State>({ kind: "locating" });
-  const [copied, setCopied] = useState(false);
-  const [photoURL] = useState(() => (brief.photo ? URL.createObjectURL(brief.photo) : ""));
-  const [clipURL] = useState(() => (brief.clip ? URL.createObjectURL(brief.clip) : ""));
 
   useEffect(() => {
     if (!navigator.geolocation) {
@@ -94,67 +91,9 @@ export default function CallAPro({ api, trade, brief }: { api: string; trade: st
     );
   }, [api, trade]);
 
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(briefText(brief));
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (_) {
-      setCopied(false);
-    }
-  }
-
-  async function share() {
-    const files = [brief.photo, brief.clip].filter(Boolean) as File[];
-    const data: ShareData = { title: `${brief.device}: ${brief.finding}`, text: briefText(brief) };
-    try {
-      if (files.length && navigator.canShare?.({ files })) {
-        await navigator.share({ ...data, files });
-      } else {
-        await navigator.share(data);
-      }
-    } catch (_) {
-      await copy();
-    }
-  }
-
   return (
     <section className="call-pro">
-      <div className="brief-card">
-        <p className="sheet-label">What to tell them</p>
-        <table>
-          <tbody>
-            <tr><td>Item</td><td>{brief.device || "not identified"}</td></tr>
-            <tr><td>Problem</td><td>{brief.issue}</td></tr>
-            <tr><td>Finding</td><td>{brief.finding}</td></tr>
-            {brief.rule && <tr><td>Why a pro</td><td>{brief.rule}</td></tr>}
-            {brief.checks.length > 0 && (
-              <tr>
-                <td>Checked</td>
-                <td>
-                  <ul>{brief.checks.map((c, i) => <li key={i}>{c}</li>)}</ul>
-                </td>
-              </tr>
-            )}
-            {brief.sound && <tr><td>Sound</td><td>{brief.sound}</td></tr>}
-          </tbody>
-        </table>
-        <div className="brief-attach">
-          {photoURL && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={photoURL} alt="photo of the item" />
-          )}
-          {clipURL && <audio controls src={clipURL} />}
-        </div>
-        <div className="brief-actions">
-          <button type="button" className="btn-outline" onClick={() => void copy()}>
-            {copied ? "Copied" : "Copy"}
-          </button>
-          <button type="button" className="btn-primary" onClick={() => void share()}>
-            Share
-          </button>
-        </div>
-      </div>
+      <BriefCard brief={brief} />
 
       <p className="sheet-label" style={{ marginTop: 16 }}>Nearby {trade}</p>
       {state.kind === "locating" && <p className="evidence-note">Finding where you are…</p>}
@@ -190,5 +129,75 @@ export default function CallAPro({ api, trade, brief }: { api: string; trade: st
       )}
       <p className="evidence-note places-credit">Listings from Google Maps.</p>
     </section>
+  );
+}
+
+/* The "what to tell them" card: plain facts, photo and sound attached,
+   Copy and Share. Used by call-a-pro and by History. */
+export function BriefCard({ brief }: { brief: Brief }) {
+  const [copied, setCopied] = useState(false);
+  const [photoURL] = useState(() => (brief.photo ? URL.createObjectURL(brief.photo) : ""));
+  const [clipURL] = useState(() => (brief.clip ? URL.createObjectURL(brief.clip) : ""));
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(briefText(brief));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (_) {
+      setCopied(false);
+    }
+  }
+
+  async function share() {
+    const files = [brief.photo, brief.clip].filter(Boolean) as File[];
+    const data: ShareData = { title: `${brief.device}: ${brief.finding}`, text: briefText(brief) };
+    try {
+      if (files.length && navigator.canShare?.({ files })) {
+        await navigator.share({ ...data, files });
+      } else {
+        await navigator.share(data);
+      }
+    } catch (_) {
+      await copy();
+    }
+  }
+
+  return (
+      <div className="brief-card">
+        <p className="sheet-label">What to tell them</p>
+        <table>
+          <tbody>
+            <tr><td>Item</td><td>{brief.device || "not identified"}</td></tr>
+            <tr><td>Problem</td><td>{brief.issue}</td></tr>
+            <tr><td>Finding</td><td>{brief.finding}</td></tr>
+            {brief.rule && <tr><td>Why a pro</td><td>{brief.rule}</td></tr>}
+            {brief.checks.length > 0 && (
+              <tr>
+                <td>Checked</td>
+                <td>
+                  <ul>{brief.checks.map((c, i) => <li key={i}>{c}</li>)}</ul>
+                </td>
+              </tr>
+            )}
+            {brief.sound && <tr><td>Sound</td><td>{brief.sound}</td></tr>}
+          </tbody>
+        </table>
+        <div className="brief-attach">
+          {photoURL && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={photoURL} alt="photo of the item" />
+          )}
+          {clipURL && <audio controls src={clipURL} />}
+        </div>
+        <div className="brief-actions">
+          <button type="button" className="btn-outline" onClick={() => void copy()}>
+            {copied ? "Copied" : "Copy"}
+          </button>
+          <button type="button" className="btn-primary" onClick={() => void share()}>
+            Share
+          </button>
+        </div>
+      </div>
   );
 }
