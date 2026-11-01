@@ -196,9 +196,15 @@ export default function RepairWalkthrough({
   // queued, and plays when the previous line finishes. So step 1 is
   // ready to play as soon as the verdict renders, never waiting on a
   // synthesis round-trip after the line before it.
+  // Synthesis runs in queue order (one at a time, ahead of playback):
+  // parallel requests competed for the CPU and the first line finished
+  // last.
+  const synthQueue = useRef<Promise<unknown>>(Promise.resolve());
+
   function say(line: string): Promise<void> {
     setSaid((prev) => [...prev, line]);
-    const audio = fetchSpeech(line);
+    const audio = synthQueue.current.then(() => fetchSpeech(line));
+    synthQueue.current = audio.catch(() => null);
     speechQueue.current = speechQueue.current
       .then(() => audio)
       .then((url) => playSpeech(url, line))
