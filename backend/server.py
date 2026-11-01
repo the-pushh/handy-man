@@ -268,20 +268,28 @@ def _repair_analyze(images, text, components, model):
         else:
             relevant = []
     highlight = None
-    try:
-        instances = sam31.segment(image, wanted)
-    except Exception:
-        instances = []
     from .muse_image import assign_legend
     canonical = assign_legend(relevant or wanted[:4])
-    first_part = (steps[0].get("part") if steps
-                  and isinstance(steps[0], dict) else None)
-    to_mark = ([first_part] if first_part else relevant) or wanted[:4]
+    # SAM 3.1 segments short noun phrases: the parts the steps name (in
+    # step order) plus the diagnosis' relevant parts, or the appliance
+    # itself on the first look when there is no issue text yet.
+    step_parts = [st.get("part") for st in steps
+                  if isinstance(st, dict) and st.get("part")]
+    appliance_name = notes.replace("The appliance is ", "").rstrip(".")
+    seg_labels = list(dict.fromkeys(step_parts + relevant)) or (
+        [appliance_name] if appliance_name and not text.strip()
+        else wanted[:2])
+    try:
+        instances = sam31.segment(image, seg_labels)
+    except Exception:
+        instances = []
+    found = {i["label"].lower() for i in instances}
     has_intent = bool(text.strip() or components.strip() or steps)
-    # muse-image takes 10-20s, so it is not run here: the client asks
-    # /api/repair/highlight for these parts after showing the result.
-    highlight_parts = (to_mark if (not instances and to_mark and has_intent)
-                       else [])
+    # Parts SAM did not find fall back to a muse-image illustration,
+    # which the UI labels "illustrative", never "SAM".
+    first = step_parts[0] if step_parts else (seg_labels or [None])[0]
+    highlight_parts = ([first] if has_intent and first
+                       and first.lower() not in found else [])
     has_text = bool(text.strip() or components.strip())
     if not has_text:
         return {"status": "ok", "notes": notes,
@@ -289,7 +297,7 @@ def _repair_analyze(images, text, components, model):
                 "causes": [], "steps": [],
                 "issue": "", "resolution": resolution,
                 "device": device, "details": details, "ask": ask,
-                "instances": [], "legend": [],
+                "instances": instances, "legend": [],
                 "overlay": None}
     appliance = notes.replace("The appliance is ", "").rstrip(".").strip()
     from .risk import assess_risk
