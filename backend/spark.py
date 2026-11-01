@@ -3,8 +3,10 @@
 Config (environment):
   MUSE_SPARK_API_URL   base URL of the completions endpoint
   MUSE_SPARK_API_KEY   bearer key (paste yours; never commit it)
-  MUSE_SPARK_MODEL     default: muse-spark-1.3 (full model; set to e.g.
-                       muse-spark-1.3-contributor for cheap testing)
+  SPARK_MODEL          local (default) -> muse-spark-1.3-contributor, cheap
+                       prod            -> muse-spark-1.3, used for latency
+                                          targets, eval and the demo
+                       any other value is used as a raw model id
 
 WIRE-FORMAT ASSUMPTION (unverified until the key lands): an
 OpenAI-compatible POST {url}/chat/completions with
@@ -23,13 +25,20 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-MODEL_DEFAULT = "muse-spark-1.3"
+SPARK_MODELS = {"local": "muse-spark-1.3-contributor",
+                "prod": "muse-spark-1.3"}
+
+
+def active_model() -> str:
+    """Resolve SPARK_MODEL (local|prod|raw id) to a gateway model id."""
+    choice = (os.environ.get("SPARK_MODEL") or "local").strip()
+    return SPARK_MODELS.get(choice, choice)
 
 
 def _config() -> tuple:
     url = os.environ.get("MUSE_SPARK_API_URL", "").rstrip("/")
     key = os.environ.get("MUSE_SPARK_API_KEY", "")
-    model = os.environ.get("MUSE_SPARK_MODEL") or MODEL_DEFAULT
+    model = active_model()
     if not url or not key:
         raise RuntimeError(
             "Muse Spark is not configured: set MUSE_SPARK_API_URL and "
