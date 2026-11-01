@@ -251,6 +251,22 @@ def test_mains_wiring_is_still_pro():
     expect(v, "pro", "mains-electricity")
 
 
+def test_ac_low_refrigerant_finding_is_pro():
+    # Spark's steps were owner checks, but the finding is the sealed system.
+    v = judge("Panasonic split air conditioner", "AC is not cooling",
+              [step("Mode", "Check the remote is set to COOL at 24")],
+              ["wrong mode setting"], finding="Looks like low refrigerant.")
+    expect(v, "pro", "ac-sealed-system", allowed=[0])
+    assert v["trade"] == "AC technician"
+
+
+def test_ac_clogged_filter_finding_stays_diy():
+    v = judge("Panasonic split air conditioner", "AC is not cooling",
+              [step("Filter", "Lift the front panel and slide out the filters")],
+              ["clogged filter behind front panel"], finding="Looks like a clogged filter.")
+    expect(v, "diy")
+
+
 def test_no_steps_no_risk():
     expect(judge("", "", []), "diy")
 

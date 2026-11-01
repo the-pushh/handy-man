@@ -45,6 +45,11 @@ AC = _rx(r"air ?condition", r"\bac\b", r"split ac", r"window ac",
 INVERTER = _rx(r"inverter", r"\bups\b", r"tubular battery",
                r"lead[- ]acid", r"battery bank")
 LAPTOP = _rx(r"laptop", r"notebook", r"macbook", r"thinkpad", r"chromebook")
+# AC findings only a technician can fix: the sealed refrigerant circuit,
+# the compressor and its electrics.
+AC_SEALED = _rx(r"refrigerant", r"gas (?:leak|charg|refill|top)", r"low gas",
+                r"compressor", r"capacitor", r"outdoor unit", r"pcb",
+                r"control board", r"condenser fan")
 # What sits behind a two-wheeler's body panels.
 BEHIND_PANEL = _rx(r"batter", r"starter (?:relay|motor|solenoid)", r"relay",
                    r"fuse", r"wiring", r"regulator rectifier", r"\becu\b")
@@ -216,6 +221,12 @@ RULES = [
                      r"floor ?(?:board|panel|mat)",
                      r"battery (?:cover|box|compartment|lid)",
                      r"cover")),
+    Rule("ac-sealed-system",
+         "Refrigerant and the compressor are a sealed system; an AC "
+         "technician has to test and recharge it.",
+         "Needs an AC technician.",
+         "AC technician",
+         applies=lambda job: bool(AC.search(job.context))),
     Rule("battery-terminals",
          "Battery terminals carry high current; anything beyond looking "
          "at them is for a technician.",
@@ -254,7 +265,7 @@ def _step_text(step) -> str:
 
 
 def judge(device: str = "", issue: str = "", steps: list | None = None,
-          causes: list | None = None) -> dict:
+          causes: list | None = None, finding: str = "") -> dict:
     """Decide the verdict for a proposed fix.
 
     Returns {"verdict": "diy" | "pro", "rule": id | None, "title": plain
@@ -289,11 +300,19 @@ def judge(device: str = "", issue: str = "", steps: list | None = None,
     # proposed outside checks: on a two-wheeler the battery, starter
     # relay, fuses and wiring all sit behind body panels, so a most-
     # likely cause there means the fix needs the panel off.
-    top_cause = str((causes or [""])[0] or "")
+    # The top cause and the spoken finding (headline) both count: the
+    # finding is what the owner hears.
+    top_cause = f"{(causes or [''])[0] or ''} {finding or ''}"
     panel = next(r for r in RULES if r.id == "vehicle-body-panel")
     if (VEHICLE.search(job.context) and BEHIND_PANEL.search(top_cause)
             and panel not in fired):
         fired.append(panel)
+    # Same for an AC whose finding is the sealed system (refrigerant,
+    # compressor): owner checks cannot fix it.
+    sealed = next(r for r in RULES if r.id == "ac-sealed-system")
+    if (AC.search(job.context) and AC_SEALED.search(top_cause)
+            and sealed not in fired):
+        fired.append(sealed)
 
     if not fired:
         # No rule fired, but if the fix fails the owner still needs the
