@@ -21,9 +21,11 @@ Model routing (all local-first; Modal is parked, not functional):
 import base64
 import json
 import os
+import time
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -32,7 +34,7 @@ load_dotenv()
 
 from .lang import detect_language, language_name, mms_codes
 from .pipeline import analyze_events
-from . import tts_local
+from . import trace, tts_local
 
 app = FastAPI(title="HandyMan backend")
 # Sandbox talkback calls the backend directly (browser -> :8000) so long
@@ -45,6 +47,19 @@ app.add_middleware(
     allow_methods=["POST", "GET", "OPTIONS"],
     allow_headers=["Content-Type"],
 )
+
+
+@app.middleware("http")
+async def time_requests(request: Request, call_next):
+    """One log line per request: path, upload size, server time."""
+    start = time.time()
+    response = await call_next(request)
+    size = request.headers.get("content-length", "0")
+    print(f"[req] {time.strftime('%H:%M:%S')} {request.method} "
+          f"{request.url.path} in={int(size) // 1024}KB "
+          f"{(time.time() - start) * 1000:.0f}ms -> {response.status_code}",
+          flush=True)
+    return response
 
 
 class TTSRequest(BaseModel):
@@ -116,7 +131,8 @@ def tts(req: TTSRequest):
         code = detected["code"] or "eng"
     checkpoint = f"facebook/mms-tts-{code}"
     try:
-        wav = tts_local.synthesize(req.text, checkpoint)
+        with trace.call(checkpoint + " (local)", "speak", kind="hop"):
+            wav = tts_local.synthesize(req.text, checkpoint)
         return {"audio_b64": base64.b64encode(wav).decode(),
                 "mime": "audio/wav", "model": checkpoint + " (local)",
                 "lang": code}
@@ -154,6 +170,24 @@ async def repair_analyze(file: UploadFile = File(...),
                           text: str = Form(""),
                           components: str = Form(""),
                           model: str | None = Form(None)):
+    """Analyze, then attach every model call's trace record.
+
+    Uploads are read here; the blocking model calls run in a worker
+    thread so they never stall the event loop (a stalled loop made
+    concurrent /api/tts requests wait for the whole analysis). The
+    worker inherits this request's trace context.
+    """
+    trace.begin()
+    images = [await file.read()]
+    for extra in stills or []:
+        images.append(await extra.read())
+    out = await run_in_threadpool(_repair_analyze, images, text,
+                                  components, model)
+    out["trace"] = trace.export()
+    return out
+
+
+def _repair_analyze(images, text, components, model):
     """Repair flow: image in -> Muse Spark analysis + overlay highlights.
 
     One hosted gateway (MUSE_SPARK_API_URL/KEY): Spark
@@ -165,9 +199,6 @@ async def repair_analyze(file: UploadFile = File(...),
 
     from . import sam31, spark, muse_image
 
-    images = [await file.read()]
-    for extra in stills or []:
-        images.append(await extra.read())
     image = images[-1]  # highlight/SAM work on the latest framing
     wanted = [c.strip() for c in (components or "").split(",") if c.strip()]
     notes = ""
@@ -187,8 +218,8 @@ async def repair_analyze(file: UploadFile = File(...),
             analyses = []
             first_error: Exception | None = None
             with ThreadPoolExecutor(max_workers=3) as pool:
-                futures = [pool.submit(spark.analyze_image, b,
-                                       user_text=text, model=model)
+                futures = [trace.run_in(pool, spark.analyze_image, b,
+                                        user_text=text, model=model)
                            for b in images]
                 for fut in as_completed(futures):
                     try:
@@ -329,14 +360,17 @@ async def repair_highlight(file: UploadFile = File(...),
     """
     from . import muse_image
 
+    trace.begin()
     image = await file.read()
     try:
         fixed = json.loads(legend) if legend.strip() else []
     except json.JSONDecodeError:
         fixed = []
     try:
-        return {"status": "ok",
-                "overlay": muse_image.highlight(image, [part.strip()],
-                                                fixed=fixed)}
+        overlay = await run_in_threadpool(
+            muse_image.highlight, image, [part.strip()], fixed=fixed)
+        return {"status": "ok", "overlay": overlay,
+                "trace": trace.export()}
     except Exception as exc:
-        return {"status": "highlight-error", "detail": str(exc)}
+        return {"status": "highlight-error", "detail": str(exc),
+                "trace": trace.export()}
