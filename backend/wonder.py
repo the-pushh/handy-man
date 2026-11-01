@@ -22,8 +22,36 @@ PROMPT = ('Listen to this clip. Reply with only JSON: {"beeps": <number of '
           '"<what the sound most likely is, max 8 words>"}')
 
 
+HEDGE_AFTER_S = 7.0  # usual 4-5s; a gateway tail once took 10.9s
+
+
 def listen(wav: bytes) -> dict:
-    """{"beeps": int | None, "clicks": int | None, "sound": str}."""
+    """{"beeps": int | None, "clicks": int | None, "sound": str}.
+
+    Hedged: if the first request has not answered in HEDGE_AFTER_S, a
+    second identical one starts and the first answer wins.
+    """
+    from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+
+    pool = ThreadPoolExecutor(max_workers=2)
+    try:
+        first = trace.run_in(pool, _listen_once, wav, "")
+        done, _ = wait([first], timeout=HEDGE_AFTER_S)
+        if done:
+            return first.result()
+        second = trace.run_in(pool, _listen_once, wav, " (hedge)")
+        pending = {first, second}
+        while pending:
+            done, pending = wait(pending, return_when=FIRST_COMPLETED)
+            for fut in done:
+                if fut.exception() is None:
+                    return fut.result()
+        return first.result()
+    finally:
+        pool.shutdown(wait=False)
+
+
+def _listen_once(wav: bytes, tag: str) -> dict:
     url = os.environ.get("MUSE_SPARK_API_URL", "").rstrip("/")
     key = os.environ.get("MUSE_SPARK_API_KEY", "")
     if not url or not key:
@@ -41,7 +69,7 @@ def listen(wav: bytes) -> dict:
         url + "/responses", data=json.dumps(payload).encode(),
         headers={"Content-Type": "application/json",
                  "Authorization": f"Bearer {key}"})
-    with trace.call(MODEL_ID, "listen: count beeps and clicks") as rec:
+    with trace.call(MODEL_ID, "listen: count beeps and clicks" + tag) as rec:
         rec["effort"] = "minimal"
         try:
             with urllib.request.urlopen(req, timeout=60) as resp:

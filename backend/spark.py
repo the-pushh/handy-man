@@ -53,7 +53,7 @@ def _config() -> tuple:
 # 5-8s but occasionally 20s+. If a call has not returned by its normal
 # worst case, one identical "hedge" request is sent and whichever
 # finishes first wins. Both show in the trace.
-HEDGE_AFTER_S = {"perceive": 7.0, "diagnose": 8.0}
+HEDGE_AFTER_S = {"perceive": 7.0, "diagnose": 8.0, "decide": 12.0}
 
 
 def _post(url: str, key: str, payload: dict, timeout: int = 120,
