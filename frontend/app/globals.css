@@ -67,6 +67,69 @@ body {
 /* Photographic feed, desaturated while a part is active. */
 .live.working { filter: grayscale(1); }
 
+/* Camera plate: title bar, centre cutout, transcript, control bar.
+   The precision-mat grid lives on the app around the cutout — side
+   margins, title bar and control bar all carry it. */
+.stage-camera { display: flex; flex-direction: column; }
+.gridbars {
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px),
+    linear-gradient(var(--grid-major) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-major) 1px, transparent 1px);
+  background-size: 16px 16px, 16px 16px, 80px 80px, 80px 80px;
+}
+/* Title bar: HANDYMAN centred, grid behind. */
+.titleframe {
+  position: relative;
+  min-height: 52px;
+  background-color: var(--paper-deep);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 5;
+  font-family: var(--mono);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+/* Centre cutout: the live stream in a bezel with a paper-deep mat. */
+.cutout {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  margin: 12px 16px;
+  border: 1px solid var(--line);
+  box-shadow: inset 0 0 0 8px var(--paper-deep);
+  overflow: hidden;
+}
+.cutout video.live { position: absolute; inset: 0; }
+/* Crop marks: open L-corners at the cutout corners. */
+.crop {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+  z-index: 4;
+}
+.crop.tl { top: -4px; left: -4px; border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
+.crop.tr { top: -4px; right: -4px; border-top: 1px solid var(--line); border-right: 1px solid var(--line); }
+.crop.bl { bottom: -4px; left: -4px; border-bottom: 1px solid var(--line); border-left: 1px solid var(--line); }
+.crop.br { bottom: -4px; right: -4px; border-bottom: 1px solid var(--line); border-right: 1px solid var(--line); }
+/* Instruction: translucent black bar flush in the cutout, no padding. */
+.cutout-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(8, 8, 8, 0.55);
+  border-top: 1px solid var(--line-faint);
+  padding: 0;
+  font-size: 14px;
+  color: var(--line);
+  z-index: 5;
+}
+
 .still, .boxes {
   position: absolute;
   inset: 0;
@@ -106,15 +169,12 @@ body {
   margin: 16px 0 8px;
 }
 
-/* Bottom panels: opaque paper, 1px cream hairline. */
+/* Transcript strip between cutout and control bar. */
 .panel {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  position: relative;
   background: var(--paper);
   border-top: 1px solid var(--line);
-  padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
+  padding: 12px;
   display: grid;
   gap: 8px;
   max-height: 52%;
@@ -123,6 +183,24 @@ body {
 
 .panel p { margin: 0; }
 .transcript { font-size: 17px; }
+/* Backend picker: slim mono row, input only while editing. */
+.backendrow { display: grid; gap: 8px; }
+.backendlink {
+  justify-self: start;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--line-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
 
 /* Stamped square buttons. */
 .controls { display: flex; gap: 8px; }
@@ -189,7 +267,7 @@ body {
 
 .status {
   position: absolute;
-  top: 10px;
+  top: 52px;
   left: 50%;
   transform: translateX(-50%);
   background: var(--paper-deep);
@@ -347,6 +425,128 @@ body {
   outline: none;
   box-shadow: inset 0 0 0 1px var(--line);
 }
+
+/* The orb: fan disc, centred in the bottom control bar. */
+.orb {
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  display: block;
+}
+.orb-casing, .orb-ring, .orb-blade, .orb-cross, .orb-hub {
+  fill: none;
+  stroke: var(--line-muted);
+  stroke-width: 1.5;
+}
+/* Voice layers: outer cream blades = human, inner orange blades = AI. */
+.orb-blade-human { stroke: var(--line); }
+.orb-blade-ai { stroke: var(--primary); stroke-width: 2; }
+.orb-casing { stroke-width: 2.5; }
+.orb-hub { fill: var(--paper-deep); }
+.orb-glyph {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 700;
+  fill: var(--line);
+}
+.orb-listening .orb-casing, .orb-listening .orb-blade { stroke: var(--line); }
+.orb-listening .orb-ring {
+  stroke: var(--line);
+  transform-origin: 32px 32px;
+  animation: orb-breathe 2s ease-in-out infinite;
+}
+.orb-thinking .orb-blade {
+  stroke: var(--line);
+  transform-origin: 32px 32px;
+  animation: orb-spin 6s linear infinite;
+}
+.orb-speaking .orb-casing { stroke: var(--primary); }
+.orb-speaking .orb-blade { stroke: var(--primary); }
+.orb-asking .orb-casing, .orb-asking .orb-glyph { stroke: var(--warning); }
+.orb-asking .orb-glyph { fill: var(--warning); stroke: none; }
+.orb-success .orb-casing, .orb-success .orb-glyph { stroke: var(--success); }
+.orb-success .orb-glyph { fill: var(--success); stroke: none; }
+.orb-error .orb-casing, .orb-error .orb-glyph { stroke: var(--error); }
+.orb-error .orb-glyph { fill: var(--error); stroke: none; }
+@keyframes orb-breathe {
+  0%, 100% { transform: scale(1); opacity: 0.7; }
+  50% { transform: scale(1.08); opacity: 1; }
+}
+@keyframes orb-spin { to { transform: rotate(360deg); } }
+
+/* Bottom control bar: upload | orb | type, each labelled, grid behind. */
+.controlbar {
+  position: relative;
+  background-color: var(--paper-deep);
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  align-items: end;
+  gap: 8px;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  z-index: 6;
+}
+.controlbar.typing { grid-template-columns: auto 1fr; }
+.cb-left {
+  display: flex;
+  gap: 16px;
+  align-items: flex-end;
+}
+.cb-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.cb-type { align-items: stretch; justify-content: flex-end; }
+.cb-btn {
+  width: 56px;
+  height: 56px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  color: var(--line);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.cb-btn:active { background: var(--paper-raised); }
+.cb-btn svg { width: 26px; height: 26px; }
+.cb-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--line-muted);
+}
+.controlbar .orb { width: 64px; height: 64px; }
+/* Typing mode: text takes ~70% of the bar, voice + photo shrink left,
+   subtexts hide. Tapping the left cluster restores the bar. */
+.controlbar.typing .cb-label { display: none; }
+.controlbar.typing .cb-btn { width: 44px; height: 44px; }
+.controlbar.typing .cb-btn svg { width: 20px; height: 20px; }
+.controlbar.typing .orb { width: 48px; height: 48px; }
+.controlbar.typing .orb svg { width: 48px; height: 48px; }
+.controlbar.typing .cb-left { cursor: pointer; }
+.typeinline { display: flex; gap: 8px; flex: 1; min-width: 0; }
+.typeinline input { min-height: 52px; min-width: 0; flex: 1; }
+.typeinline button { flex: none; }
+
+/* Device-confirm card inside the cutout. */
+.confirm-card {
+  position: absolute;
+  inset: 9px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  padding: 12px;
+  z-index: 6;
+  overflow-y: auto;
+}
+.confirm-card img { width: 100%; display: block; border: 1px solid var(--line); }
 
 /* Check items: square box, cream tick when done. */
 .check-item { display: flex; gap: 12px; align-items: center; min-height: 48px; }

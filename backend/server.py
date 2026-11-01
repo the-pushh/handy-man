@@ -66,6 +66,16 @@ def languages():
                            for c in sorted(mms_codes())]}
 
 
+class DetectRequest(BaseModel):
+    text: str
+
+
+@app.post("/api/detect-language")
+def detect(req: DetectRequest):
+    """Detect the transcript language -> MMS voice + STT locale hint."""
+    return detect_language(req.text)
+
+
 @app.post("/api/analyze")
 async def analyze(file: UploadFile = File(...), transcript: str = Form(""),
                   lang_override: str = Form("")):
@@ -293,12 +303,15 @@ async def repair_analyze(file: UploadFile = File(...),
                 "url": repair_aids.youtube_search_url(f"{query} {check}"),
                 "videos": [],
             })
+    from .risk import assess_risk
+    risk = assess_risk(device or appliance, text)
     return {"status": "ok", "notes": notes,
             "components": inventory,
             "causes": causes, "steps": steps,
             "issue": understood, "resolution": resolution,
             "device": device, "details": details, "ask": ask,
             "safety": safety,
+            "risk": risk,
             "aids": aids,
             "instances": instances,
             "legend": canonical,

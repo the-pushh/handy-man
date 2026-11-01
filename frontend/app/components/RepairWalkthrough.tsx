@@ -43,6 +43,9 @@ export default function RepairWalkthrough({
   const [device, setDevice] = useState<string>("");
   const [ask, setAsk] = useState<string>("");
   const [safety, setSafety] = useState<string[]>([]);
+  const [risk, setRisk] = useState<{ level: string; hazard: string; reason: string } | null>(null);
+  // riskOk: the user explicitly accepted responsibility for a high-risk job.
+  const [riskOk, setRiskOk] = useState<boolean>(false);
   const [inventory, setInventory] = useState<
     { label: string; color?: string | null; condition?: string | null; position?: string | null }[]
   >([]);
@@ -158,6 +161,9 @@ export default function RepairWalkthrough({
   // Serial speech: every line waits for the previous audio to finish,
   // so lines never overlap.
   const speechQueue = useRef<Promise<void>>(Promise.resolve());
+  // Latest-run-wins: a stale analysis response (e.g. StrictMode's double
+  // effect in dev) must not clobber fresh state like the risk decision.
+  const runSeq = useRef<number>(0);
 
   function say(line: string): Promise<void> {
     setSaid((prev) => [...prev, line]);
@@ -235,6 +241,7 @@ export default function RepairWalkthrough({
   }, []);
 
   async function run(fs: File[], t: string, base: string) {
+    const myRun = ++runSeq.current;
     setStatus("Analyzing…");
     setInstances([]);
     setNotes("");
@@ -251,6 +258,8 @@ export default function RepairWalkthrough({
     setAsk("");
     setInventory([]);
     setSafety([]);
+    setRisk(null);
+    setRiskOk(false);
     setFixed(false);
     setBooking(false);
     setPermit(false);
@@ -269,6 +278,7 @@ export default function RepairWalkthrough({
       fd.append("text", t);
       const r = await fetch(`${base}/api/repair/analyze`, { method: "POST", body: fd });
       const data = await r.json();
+      if (myRun !== runSeq.current) return; // superseded by a newer run
       if (data.status !== "ok") {
         const notes: string = data.notes || "";
         setStatus(data.detail);
@@ -324,6 +334,16 @@ export default function RepairWalkthrough({
       setSafety(foundSafety);
       if (foundSafety.length) {
         await say(`Before you touch anything: ${foundSafety.join(". ")}`);
+      }
+      const foundRisk = data.risk && typeof data.risk === "object" ? data.risk : null;
+      setRisk(foundRisk);
+      setRiskOk(false);
+      if (foundRisk && foundRisk.level === "high") {
+        await say(
+          `Safety warning. ${foundRisk.reason} This could be dangerous. ` +
+            "I can pull in a handyman for you, or you can proceed at your " +
+            "own risk. Tap your choice on the screen."
+        );
       }
       if (data.ask && !(data.steps || []).length) {
         setAsk(data.ask);
@@ -455,6 +475,15 @@ export default function RepairWalkthrough({
       setStepLoading(false);
     }
     await speakStep(st, i, steps.length);
+  }
+
+  async function acceptRisk(): Promise<void> {
+    setRiskOk(true);
+    await say(
+      "Understood — you are proceeding at your own risk. Follow each step " +
+        "exactly, and stop straight away if anything sparks, smokes or " +
+        "smells burnt."
+    );
   }
 
   async function confirmFixed(yes: boolean): Promise<void> {
@@ -688,7 +717,25 @@ export default function RepairWalkthrough({
           </ul>
         </div>
       )}
-      {steps.length > 0 && (
+      {risk?.level === "high" && !riskOk && !booking && !ticket && (
+        <div className="consent-sheet">
+          <p className="sheet-label">Risky job — your call</p>
+          <div className="callout callout-dont-touch">
+            <p className="sheet-label">Warning</p>
+            <p>{risk.reason}</p>
+          </div>
+          <p>Want me to pull in people who can help, or proceed at your own risk?</p>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button type="button" className="btn-primary" onClick={() => setBooking(true)}>
+              Get help
+            </button>
+            <button type="button" className="btn-outline" onClick={() => void acceptRisk()}>
+              I proceed at my own risk
+            </button>
+          </div>
+        </div>
+      )}
+      {steps.length > 0 && !(risk?.level === "high" && !riskOk) && (
         <div style={{ marginTop: 8 }}>
           <p className="step-count">{String(stepIdx + 1).padStart(2, "0")}/{String(steps.length).padStart(2, "0")}</p>
           <div className="ticks">
