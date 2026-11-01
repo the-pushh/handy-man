@@ -195,6 +195,7 @@ async def repair_analyze(file: UploadFile = File(...),
                           text: str = Form(""),
                           components: str = Form(""),
                           perception: str = Form(""),
+                          sound: str = Form(""),
                           model: str | None = Form(None)):
     """Analyze, then attach every model call's trace record.
 
@@ -217,12 +218,13 @@ async def repair_analyze(file: UploadFile = File(...),
     except json.JSONDecodeError:
         prior = None
     out = await run_in_threadpool(_repair_analyze, images, text,
-                                  components, model, prior)
+                                  components, model, prior, sound)
     out["trace"] = trace.export()
     return out
 
 
-def _repair_analyze(images, text, components, model, prior=None):
+def _repair_analyze(images, text, components, model, prior=None,
+                    sound=""):
     """Repair flow: image in -> Muse Spark analysis + overlay highlights.
 
     One hosted gateway (MUSE_SPARK_API_URL/KEY): Spark
@@ -292,7 +294,8 @@ def _repair_analyze(images, text, components, model, prior=None):
             try:
                 diag = spark.diagnose(
                     notes.replace("The appliance is ", "").rstrip("."),
-                    device or None, wanted, text, model=model)
+                    device or None, wanted, text, model=model,
+                    sound=sound)
             except Exception as exc:
                 return {"status": "diagnose-error", "detail": str(exc),
                         "notes": notes,
@@ -363,6 +366,54 @@ def _repair_analyze(images, text, components, model, prior=None):
 
 class _Reuse(Exception):
     """Internal: skip perception, the client sent the first look's."""
+
+
+@app.post("/api/listen")
+async def listen(file: UploadFile = File(...)):
+    """A 3-5s WAV -> measured features + Muse Wonder's hearing.
+
+    The numbers (audiofeat) are the source of truth; Wonder is the
+    cross-check. If they disagree on the beep count, the client asks
+    the user to record again.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    from . import audiofeat, wonder
+
+    trace.begin()
+    wav = await file.read()
+
+    def work():
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            heard = trace.run_in(pool, wonder.listen, wav)
+            with trace.call("audiofeat (deterministic)", "measure beeps, "
+                            "clicks, loudness", kind="hop") as rec:
+                feats = audiofeat.from_wav(wav)
+                rec["parsed"] = {k: v for k, v in feats.items()
+                                 if k != "events"}
+            try:
+                ear = heard.result()
+                ear_error = None
+            except Exception as exc:
+                ear, ear_error = None, str(exc)[:200]
+        agree = (ear is not None and ear.get("beeps") is not None
+                 and ear["beeps"] == feats["beeps"])
+        return feats, ear, ear_error, agree
+
+    try:
+        feats, ear, ear_error, agree = await run_in_threadpool(work)
+    except Exception as exc:
+        return {"status": "listen-error", "detail": str(exc)[:300],
+                "trace": trace.export()}
+    from .audiofeat import summary
+    return {"status": "ok", "features": feats, "wonder": ear,
+            "wonder_error": ear_error, "agree": agree,
+            # Disagreement on the count, or Wonder unavailable: ask the
+            # user to record again rather than diagnose from doubt.
+            "rerecord": not agree,
+            "summary": summary(feats)
+            + (f" Muse Wonder heard: {ear['sound']}." if ear and ear.get("sound") else ""),
+            "trace": trace.export()}
 
 
 @app.post("/api/segment")

@@ -317,7 +317,8 @@ def merge_analyses(analyses: list) -> dict:
 
 
 def diagnose(appliance: str, device: str | None, labels: list,
-             user_text: str, model: str | None = None) -> dict:
+             user_text: str, model: str | None = None,
+             sound: str = "") -> dict:
     """Call 2 (text-only): causes, relevant parts, steps, safety, fix check.
 
     Split from perception so neither reply hits the token ceiling.
@@ -342,6 +343,8 @@ def diagnose(appliance: str, device: str | None, labels: list,
         f"Exact device: {device or 'unknown'}. "
         f"Visible parts: {', '.join(labels) or 'none listed'}. "
         f"The user wants: {user_text.strip()} "
+        + (f"Measured sound evidence (deterministic, trust these "
+           f"numbers): {sound.strip()} " if sound.strip() else "") +
         "If it is a setup or assembly task, steps are the build/install "
         "order with parts and tools needed; if a repair, steps diagnose "
         "and fix. Each step must name WHAT and exactly HOW, referencing "
