@@ -21,8 +21,12 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         />
       </head>
       <body>
-        {children}
-        <TraceDrawer />
+        {/* The app is built for phones. On a wider screen it runs inside a
+            phone-shaped frame, so it looks the same everywhere. */}
+        <div className="phone">
+          {children}
+          <TraceDrawer />
+        </div>
       </body>
     </html>
   );
