@@ -2,12 +2,10 @@
 
 Checkpoints (downloaded once from Hugging Face on first use):
   eng      -> facebook/mms-tts-eng
-  hi/hinglish -> facebook/mms-tts-hin (Hinglish templates are authored in
-                 Devanagari, so the Hindi acoustic model speaks them right)
+  hi/hinglish -> facebook/mms-tts-hin
 
-Glimmer has no public local weights, so on-device reasoning stays a
-heuristic (see voice_lines) until they exist — "glimmer locally" means the
-same fallback logic, running here instead of on Modal.
+Every line it speaks comes from a live model reply (the verdict headline,
+the steps) or a short fixed UI prompt; nothing is a canned diagnosis.
 """
 
 import io

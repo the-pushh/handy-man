@@ -6,10 +6,11 @@ Run from the project root:
 
 The Next.js frontend (frontend/) proxies /api/* here during dev.
 
-Model routing (all local-first; Modal is parked, not functional):
-  - analyze -> staged SSE pipeline (backend/pipeline.py): language detect,
-    device/logo/component proposals (SAM 3.1 hook points), evidence crops,
-    localized causes + repair steps (Glimmer heuristic until weights exist).
+Model routing (Meta's hosted Model API, one gateway):
+  - repair/analyze -> muse-spark perception, diagnose, decide; the rules
+    layer (backend/risk.py) judges every proposed fix.
+  - segment -> sam-3.1 masks; listen -> muse-wonder-1.0 + measured audio;
+    recheck -> muse-spark before/after; pros -> Google Places (New).
   - tts -> local MMS-TTS WAV (backend/tts_local.py) in the transcript's
     own language; {"fallback": true} only when synthesis itself fails, in
     which case the frontend speaks with the browser voice.
@@ -27,13 +28,11 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 load_dotenv()
 
 from .lang import detect_language, language_name, mms_codes
-from .pipeline import analyze_events
 from . import trace, tts_local
 from .images import normalize_all as images_normalized
 
@@ -108,25 +107,6 @@ class DetectRequest(BaseModel):
 def detect(req: DetectRequest):
     """Detect the transcript language -> MMS voice + STT locale hint."""
     return detect_language(req.text)
-
-
-@app.post("/api/analyze")
-async def analyze(file: UploadFile = File(...), transcript: str = Form(""),
-                  lang_override: str = Form("")):
-    """One voice turn, streamed as it is gathered (SSE, one JSON per event).
-
-    The frontend POSTs the transcript with a system-captured still and reads
-    events incrementally: it speaks every "thinking" line while rendering
-    that stage's boxes + evidence crops, so narration and SAM overlays run
-    simultaneously. See backend/pipeline.py for the stage order.
-    """
-    still = await file.read()
-
-    def gen():
-        for event in analyze_events(still, transcript, override=lang_override):
-            yield "data: " + json.dumps(event, ensure_ascii=False) + "\n\n"
-
-    return StreamingResponse(gen(), media_type="text/event-stream")
 
 
 @app.post("/api/tts")

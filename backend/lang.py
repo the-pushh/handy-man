@@ -40,7 +40,7 @@ chahiye samajh dekho dikhao bolo suno theek sahi galat abhi phir wapas
 andar bahar upar neeche samne peeche paas door kitna kaun kisko kisme
 """.split())
 
-# Authored narration lives in voice_lines for these three only.
+# Languages the app speaks natively (English, Hindi, Hinglish).
 AUTHORED = ("en", "hi", "hinglish")
 
 # Function-word lexicons: langdetect is confidently wrong on short Latin
