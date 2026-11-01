@@ -14,6 +14,7 @@ import { drawStill, shrinkPhoto } from "./lib/still";
 import { composeMasks } from "./lib/masks";
 import type { SamInstance } from "./lib/masks";
 import { requestDiagnosis } from "./lib/diagnosis";
+import { correctionFrom } from "./lib/correction";
 import { SOUND_WORDS, recordClip } from "./lib/recorder";
 import type { Heard } from "./lib/recorder";
 import Waveform from "./components/Waveform";
@@ -125,6 +126,9 @@ export default function Home() {
   // Final camera re-check: the walkthrough stays mounted (its state
   // survives) but is hidden so the camera shows while the owner aims.
   const [peek, setPeek] = useState<string>("");
+  // "No" on the confirm card: name the device instead of re-pointing.
+  const [fixing, setFixing] = useState<boolean>(false);
+  const [fixText, setFixText] = useState<string>("");
   const [orb, setOrb] = useState<OrbState>("idle");
   const [listening, setListening] = useState<boolean>(false);
   const [statusMsg, setStatusMsg] = useState<string>("");
@@ -509,10 +513,24 @@ export default function Home() {
     }
   }
 
-  async function confirmYes() {
-    const c = confirmRef.current;
-    if (!c) return;
-    mark("user said yes");
+  // `correction`: the owner said what it really is ("no, it's an
+  // inverter"). It replaces the perceived appliance for diagnose,
+  // decide and the rules, and the prefetched diagnosis is redone.
+  async function confirmYes(correction?: string) {
+    const c0 = confirmRef.current;
+    if (!c0) return;
+    const c = correction
+      ? {
+          ...c0,
+          perception: { ...((c0.perception as object) || {}), owner_says: correction },
+          diagnosis: null,
+        }
+      : c0;
+    mark(correction ? "owner corrected" : "user said yes", correction || "");
+    setFixing(false);
+    if (correction && !SOUND_WORDS.test(issueRef.current)) {
+      c.diagnosis = requestDiagnosis(apiBase(), [c.frame], issueRef.current, c.perception).catch(() => null);
+    }
     stopListeningInner();
     confirmRef.current = null;
     setConfirm(null);
@@ -617,7 +635,10 @@ export default function Home() {
       files: still ? [...prev.files, still] : prev.files,
       text: prev.text,
       key: turnRef.current,
-      perception: null,
+      // Extra views are perceived afresh; the owner's correction stays.
+      perception: (prev.perception as { owner_says?: string } | null)?.owner_says
+        ? { owner_says: (prev.perception as { owner_says: string }).owner_says }
+        : null,
       prefetched: null,
       heard: prev.heard,
     });
@@ -638,6 +659,7 @@ export default function Home() {
   }
 
   async function confirmNo() {
+    setFixing(false);
     stopListeningInner();
     confirmRef.current = null;
     setConfirm(null);
@@ -685,9 +707,12 @@ export default function Home() {
       const heard = e.results[0][0].transcript as string;
       if (confirmRef.current) {
         const low = heard.toLowerCase();
-        if (/\byes\b|\byep\b|\byeah\b|\bcorrect\b|\bright\b/.test(low)) {
+        const fix = correctionFrom(heard);
+        if (/\byes\b|\byep\b|\byeah\b|\bcorrect\b|\bright\b|\bhaan\b|\bha\b/.test(low)) {
           void confirmCb.current.yes();
-        } else if (/\bno\b|\bnot\b|\bwrong\b/.test(low)) {
+        } else if (fix) {
+          void confirmCb.current.yes(fix);
+        } else if (/\bno\b|\bnot\b|\bwrong\b|\bnahi/.test(low)) {
           void confirmCb.current.no();
         } else {
           void say("Say yes if that is your device, or no to point again.");
@@ -796,10 +821,39 @@ export default function Home() {
               <button type="button" className="btn-success" onClick={() => void confirmYes()}>
                 Yes
               </button>
-              <button type="button" className="btn-outline" onClick={() => void confirmNo()}>
+              <button type="button" className="btn-outline" onClick={() => setFixing(true)}>
                 No
               </button>
             </div>
+            {fixing && (
+              <form
+                className="typeinline"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const name = fixText.trim();
+                  if (name) void confirmYes(name.split(/\s+/).slice(0, 4).join(" "));
+                  else void confirmNo();
+                  setFixText("");
+                }}
+              >
+                <label className="sheet-label" htmlFor="fix-device">What is it?</label>
+                <input
+                  id="fix-device"
+                  value={fixText}
+                  onChange={(e) => setFixText(e.target.value)}
+                  placeholder="e.g. inverter"
+                  className="text-input"
+                  autoComplete="off"
+                  autoFocus
+                />
+                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                  <button type="submit" className="btn-primary">Use this</button>
+                  <button type="button" className="btn-outline" onClick={() => void confirmNo()}>
+                    Point again
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         )}
       </div>

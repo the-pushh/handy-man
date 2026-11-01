@@ -28,5 +28,8 @@ export function requestDiagnosis(
   }
   if (sound) fd.append("sound", sound);
   if (answers) fd.append("answers", answers);
+  // The owner's correction from the confirm card ("no, it's an inverter").
+  const owner = (perception as { owner_says?: string } | null)?.owner_says;
+  if (owner) fd.append("owner", owner);
   return fetch(`${base}/api/repair/analyze`, { method: "POST", body: fd }).then((r) => r.json());
 }
