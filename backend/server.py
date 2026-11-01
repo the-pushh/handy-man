@@ -197,6 +197,7 @@ async def repair_analyze(file: UploadFile = File(...),
                           perception: str = Form(""),
                           sound: str = Form(""),
                           answers: str = Form(""),
+                          owner: str = Form(""),
                           model: str | None = Form(None)):
     """Analyze, then attach every model call's trace record.
 
@@ -220,6 +221,10 @@ async def repair_analyze(file: UploadFile = File(...),
         prior = json.loads(perception) if perception.strip() else None
     except json.JSONDecodeError:
         prior = None
+    if owner.strip():
+        # What the owner says the device is; kept even when extra views
+        # are perceived afresh (no prior perception to carry it).
+        prior = {**(prior or {}), "owner_says": owner.strip()}
     out = await run_in_threadpool(_repair_analyze, images, text,
                                   components, model, prior, sound,
                                   answers)
@@ -287,6 +292,13 @@ def _repair_analyze(images, text, components, model, prior=None,
             return {"status": "unexpected-error",
                     "detail": f"{type(exc).__name__}: {exc}"}
         analysis = spark.merge_analyses(analyses)
+        # The owner corrected the confirm card ("no, it's an inverter"):
+        # their word beats the photo for diagnose, decide and the rules.
+        owner = str((prior or {}).get("owner_says") or "").strip()
+        if owner:
+            analysis["owner_says"] = owner
+            analysis["appliance"] = owner
+            analysis["notes"] = f"The appliance is {owner}."
         wanted = [c["label"] for c in analysis["components"]]
         inventory = [{k: c.get(k) for k in
                       ("label", "color", "condition", "position")}
