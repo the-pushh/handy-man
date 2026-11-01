@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import { resolveApiBase } from "../lib/apiBase";
 import { mark } from "../lib/timeline";
 import { requestDiagnosis } from "../lib/diagnosis";
+import type { Heard } from "../lib/recorder";
 
 /* The rules layer's decision (backend/risk.py): the model proposes
    steps, the rules decide which an owner may do. */
@@ -38,6 +39,8 @@ export default function RepairWalkthrough({
   issue,
   perception,
   prefetched,
+  heard,
+  onListen,
   onMoreViews,
   onClose,
 }: {
@@ -46,6 +49,9 @@ export default function RepairWalkthrough({
   perception?: unknown;
   // Diagnosis already started during the device confirmation.
   prefetched?: Promise<unknown> | null;
+  // What the mic caught: measured features + Muse Wonder's hearing.
+  heard?: Heard | null;
+  onListen?: () => void;
   onMoreViews?: () => void;
   onClose: () => void;
 }) {
@@ -638,6 +644,11 @@ export default function RepairWalkthrough({
       )}
       <p>
         You said: <em>&ldquo;{issue}&rdquo;</em>{" "}
+        {onListen && (
+          <button type="button" className="btn-outline" onClick={onListen}>
+            {heard ? "Listen again" : "Let me listen"}
+          </button>
+        )}
         {onMoreViews && (
           <button type="button" className="btn-outline" onClick={onMoreViews}>
             Add a closer view
@@ -776,6 +787,36 @@ export default function RepairWalkthrough({
           <ul>
             {causes.map((c, i) => <li key={i}>{c}</li>)}
           </ul>
+        </div>
+      )}
+      {heard && (
+        <div className={`heard-card${heard.agree ? "" : " doubt"}`}>
+          <p className="sheet-label">What I heard</p>
+          <table>
+            <tbody>
+              <tr>
+                <td>Measured</td>
+                <td>
+                  {heard.features.beeps} beep{heard.features.beeps === 1 ? "" : "s"}
+                  {heard.features.beep_ms ? ` · ${heard.features.beep_ms} ms` : ""}
+                  {heard.features.beep_interval_ms ? ` · every ${(heard.features.beep_interval_ms / 1000).toFixed(1)} s` : ""}
+                  {heard.features.beep_hz ? ` · ${heard.features.beep_hz} Hz` : ""}
+                  {` · ${heard.features.clicks} click${heard.features.clicks === 1 ? "" : "s"}`}
+                </td>
+              </tr>
+              <tr>
+                <td>Muse Wonder</td>
+                <td>
+                  {heard.wonder
+                    ? `${heard.wonder.beeps ?? "?"} beeps · ${heard.wonder.sound || "—"}`
+                    : "unavailable"}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          {!heard.agree && (
+            <p className="evidence-note">They disagree on the count, so the diagnosis leans on the measured numbers.</p>
+          )}
         </div>
       )}
       {verdict && (

@@ -14,6 +14,9 @@ import { drawStill, shrinkPhoto } from "./lib/still";
 import { composeMasks } from "./lib/masks";
 import type { SamInstance } from "./lib/masks";
 import { requestDiagnosis } from "./lib/diagnosis";
+import { SOUND_WORDS, recordClip } from "./lib/recorder";
+import type { Heard } from "./lib/recorder";
+import Waveform from "./components/Waveform";
 import Orb from "./components/Orb";
 import type { OrbState } from "./components/Orb";
 import RepairWalkthrough from "./components/RepairWalkthrough";
@@ -26,7 +29,10 @@ interface Overlay {
   // walkthrough goes straight to diagnosis. Null once views are added.
   perception: unknown;
   prefetched: Promise<unknown> | null;
+  heard: Heard | null;
 }
+
+const LISTEN_SECONDS = 4;
 
 interface Confirm {
   device: string;
@@ -124,6 +130,7 @@ export default function Home() {
   const [typeOpen, setTypeOpen] = useState<boolean>(false);
   const [beEdit, setBeEdit] = useState<boolean>(false);
   const [beHost, setBeHost] = useState<string>("");
+  const [mic, setMic] = useState<AnalyserNode | null>(null);
 
   useEffect(() => {
     let stream: MediaStream | undefined;
@@ -430,10 +437,12 @@ export default function Home() {
         frame,
         perception: data.perception || null,
         // Start diagnosing now: by the time the user says yes, the
-        // verdict is mostly done. Dropped if they say no.
-        diagnosis: data.perception
-          ? requestDiagnosis(apiBase(), [frame], said, data.perception).catch(() => null)
-          : null,
+        // verdict is mostly done. Dropped if they say no. Not when the
+        // sound is the evidence: then we listen first (confirmYes).
+        diagnosis:
+          data.perception && !SOUND_WORDS.test(said)
+            ? requestDiagnosis(apiBase(), [frame], said, data.perception).catch(() => null)
+            : null,
         highlight: "none",
       };
       // SAM 3.1 masks for the appliance arrive ~2s later in their own
@@ -506,16 +515,84 @@ export default function Home() {
     setConfirm(null);
     setOrb("idle");
     setStatusMsg("");
+    // Beeps, clicks, noises: record the sound before diagnosing.
+    let heard: Heard | null = null;
+    let prefetched = c.diagnosis;
+    if (SOUND_WORDS.test(issueRef.current)) {
+      heard = await listenForSound();
+      prefetched = requestDiagnosis(
+        apiBase(),
+        [c.frame],
+        issueRef.current,
+        c.perception,
+        heard?.summary || ""
+      ).catch(() => null);
+    } else {
+      void say("Got it.");
+    }
     // One still by default: the frame the user just confirmed, with its
     // perception. More views only on demand (addView).
-    void say("Got it.");
     turnRef.current += 1;
     setOverlay({
       files: [c.frame],
       text: issueRef.current,
       key: turnRef.current,
       perception: c.perception,
-      prefetched: c.diagnosis,
+      prefetched,
+      heard,
+    });
+  }
+
+  // Record a few seconds only while nothing is being spoken (say()
+  // resolves when playback ends), measure it and cross-check with Muse
+  // Wonder. If they disagree on the beep count, record once more.
+  async function listenForSound(): Promise<Heard | null> {
+    let last: Heard | null = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await say(attempt ? "Couldn't hear it clearly. Once more." : "Quiet please, listening.");
+      setOrb("listening");
+      setStatusMsg("");
+      try {
+        const live = await recordClip(LISTEN_SECONDS);
+        setMic(live.analyser);
+        mark("listening", `${LISTEN_SECONDS}s`);
+        const clip = await live.done;
+        setMic(null);
+        mark("clip recorded", `${clip.seconds.toFixed(1)}s ${kb(clip.file.size)}`);
+        setOrb("thinking");
+        setStatusMsg("Checking the sound…");
+        const fd = new FormData();
+        fd.append("file", clip.file, "clip.wav");
+        last = (await (await fetch(`${apiBase()}/api/listen`, { method: "POST", body: fd })).json()) as Heard;
+        mark("sound checked", `${last?.features?.beeps} beeps, wonder ${last?.wonder?.beeps}, agree ${last?.agree}`);
+        if (last && !last.rerecord) break;
+      } catch (_) {
+        setMic(null);
+        setStatusMsg("Microphone unavailable; going on without the sound.");
+        break;
+      }
+    }
+    setStatusMsg("");
+    setOrb("idle");
+    return last;
+  }
+
+  // On demand from the walkthrough: listen again and re-diagnose.
+  async function listenAgain(prev: Overlay) {
+    setOverlay(null);
+    const heard = await listenForSound();
+    turnRef.current += 1;
+    setOverlay({
+      ...prev,
+      key: turnRef.current,
+      heard,
+      prefetched: requestDiagnosis(
+        apiBase(),
+        prev.files,
+        prev.text,
+        prev.perception,
+        heard?.summary || ""
+      ).catch(() => null),
     });
   }
 
@@ -538,6 +615,7 @@ export default function Home() {
       key: turnRef.current,
       perception: null,
       prefetched: null,
+      heard: prev.heard,
     });
   }
 
@@ -676,11 +754,12 @@ export default function Home() {
         <span className="crop bl" />
         <span className="crop br" />
 
-        {!confirm && (
+        {!confirm && !mic && (
           <div className="cutout-bar" role="status">
             {cutoutLine}
           </div>
         )}
+        {mic && <Waveform analyser={mic} seconds={LISTEN_SECONDS} />}
 
         {confirm && (
           <div className="confirm-card">
@@ -860,6 +939,8 @@ export default function Home() {
             issue={overlay.text}
             perception={overlay.perception}
             prefetched={overlay.prefetched}
+            heard={overlay.heard}
+            onListen={() => void listenAgain(overlay)}
             onMoreViews={() => void addView(overlay)}
             onClose={() => setOverlay(null)}
           />
