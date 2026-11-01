@@ -119,7 +119,6 @@ class MMSTTS:
     @modal.method()
     def synthesize(self, payload: dict) -> bytes:
         """payload: {"text": str, "lang": "eng"}. Returns WAV bytes."""
-        text = payload.get("text", "")
         if self.tts is not None:
             # TODO: real mms-tts synthesis -> wav bytes.
             raise NotImplementedError("wire mms-tts synthesis to self.tts")

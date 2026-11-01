@@ -26,7 +26,7 @@ def nllb_target(mms_code: str) -> str | None:
     base = mms_code.split("-script_")[0]
     if base in OVERRIDES:
         return OVERRIDES[base]
-    cands = sorted(l for l in nllb_codes() if l.split("_")[0] == base)
+    cands = sorted(c for c in nllb_codes() if c.split("_")[0] == base)
     return cands[0] if cands else None
 
 
@@ -44,5 +44,5 @@ def src_nllb_for_iso1(iso1: str) -> str:
         return ""
     if not iso3:
         return ""
-    cands = sorted(l for l in nllb_codes() if l.split("_")[0] == iso3)
+    cands = sorted(c for c in nllb_codes() if c.split("_")[0] == iso3)
     return cands[0] if cands else ""
