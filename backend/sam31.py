@@ -230,12 +230,9 @@ def mask_preview(image_bytes: bytes, instances: list,
         return None
 
 
-def segment_one(image_bytes: bytes, label: str) -> list:
-    """One noun phrase -> its instances (possibly none)."""
+def _query(image_bytes: bytes, phrase: str, label: str) -> list:
+    """One SAM request for `phrase`; instances carry the part `label`."""
     endpoint, key = _config()
-    phrase = concept(label)
-    if not phrase:
-        return []
     payload = {
         "model": MODEL_ID,
         "input": [{"role": "user", "content": [
@@ -245,7 +242,9 @@ def segment_one(image_bytes: bytes, label: str) -> list:
         ]}],
         "metadata": METADATA,
     }
-    with trace.call(MODEL_ID, f"segment: {phrase}", image_bytes) as rec:
+    purpose = (f"segment: {phrase}" if phrase == concept(label)
+               else f"segment: {phrase} (for {label})")
+    with trace.call(MODEL_ID, purpose, image_bytes) as rec:
         reply = _request(endpoint, key, payload)
         text = _output_text(reply)
         rec["raw_text"] = text[:600]
@@ -264,20 +263,60 @@ def segment_one(image_bytes: bytes, label: str) -> list:
     return instances
 
 
+def segment_one(image_bytes: bytes, label: str,
+                look: str | list | None = None) -> list:
+    """One part -> its instances (possibly none).
+
+    SAM 3.1 finds plain visual nouns ("black panel", "green light",
+    "round vent") far more often than trade names ("display", "LED",
+    "fan"): on the real inverter photos 0 of 6 trade names matched and
+    the visual phrases did. So the part's `look` (from Spark's
+    perception) goes first and the part name is the fallback. Never a
+    single word cut from a longer phrase: "wall" from "wall switch"
+    matched the wall. `look` may be a list of phrases to try in order.
+    """
+    looks = look if isinstance(look, list) else [look or ""]
+    phrases = [p for p in dict.fromkeys(
+        [concept(x) for x in looks] + [concept(label)]) if p]
+    for phrase in phrases:
+        instances = _query(image_bytes, phrase, label)
+        if instances:
+            return instances
+    return []
+
+
+def _part(item) -> tuple:
+    """A label string or {"label", "look"} -> (label, look)."""
+    if isinstance(item, dict):
+        label = str(item.get("label") or "").strip()
+        look = item.get("look")
+        if isinstance(look, list):
+            look = [str(x).strip() for x in look if str(x).strip()] or None
+            return label or (look[0] if look else ""), look
+        look = str(look or "").strip() or None
+        return label or (look or ""), look
+    return str(item or "").strip(), None
+
+
 def segment(image_bytes: bytes, labels: list, max_parts: int = 4) -> list:
-    """Segment up to `max_parts` labels in parallel; flat instance list."""
+    """Segment up to `max_parts` parts in parallel; flat instance list.
+
+    Each item is a part label, or {"label", "look"} where `look` is the
+    plain visual phrase SAM is asked first.
+    """
     seen, todo = set(), []
-    for label in labels:
+    for item in labels:
+        label, look = _part(item)
         phrase = concept(label)
         if phrase and phrase not in seen:
             seen.add(phrase)
-            todo.append(label)
+            todo.append((label, look))
     todo = todo[:max_parts]
     if not todo:
         return []
     with ThreadPoolExecutor(max_workers=len(todo)) as pool:
-        futures = [trace.run_in(pool, segment_one, image_bytes, label)
-                   for label in todo]
+        futures = [trace.run_in(pool, segment_one, image_bytes, label, look)
+                   for label, look in todo]
         out = []
         for fut in futures:
             try:

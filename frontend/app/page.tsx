@@ -455,7 +455,7 @@ export default function Home() {
         confirmRef.current = next;
         setConfirm(next);
       };
-      const segLabels: string[] = data.segment_labels || [];
+      const segLabels: unknown[] = data.segment_labels || [];
       void (async () => {
         let sam: SamInstance[] = [];
         if (segLabels.length) {

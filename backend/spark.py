@@ -196,10 +196,12 @@ def analyze_image(image_bytes: bytes, user_text: str = "",
     prompt = (
         "You are inspecting a household appliance. Respond with "
         "a single JSON object and nothing else, with exactly these keys: "
-        '{"components": [{"label": "inlet hose", "hint": "bottom left", '
+        '{"components": [{"label": "inlet hose", "look": "black hose", '
+        '"hint": "bottom left", '
         '"color": "black", "condition": "worn", '
         '"position": "bottom-left rear"}], '
         '"appliance": "water heater geyser", '
+        '"appliance_look": "white cylinder", '
         '"brand": "LG or null", "model": "XQB70 or null", '
         '"details": {"serial": "abc123 or null", '
         '"color": "white", "markings": ["energy sticker top right"], '
@@ -216,6 +218,15 @@ def analyze_image(image_bytes: bytes, user_text: str = "",
         "List every visible physical component with short, concrete, "
         "segmentable part names. Empty components "
         "array only if truly nothing is visible. "
+        "For each component give `look`, and for the appliance "
+        "`appliance_look`: "
+        "1-3 plain words describing what it looks like, colour or "
+        "shape plus an everyday noun, the way someone who has never "
+        "seen this device would point at it. Never a trade name: "
+        "'black panel' not 'display', 'green light' not 'LED', "
+        "'round vent' not 'fan', 'red switch' not 'MCB', "
+        "'white device' not 'inverter' (that one goes in "
+        "appliance_look). "
         "Never diagnose or suggest fixes in this call. "
         "Emit compact JSON with no extra whitespace. "
         "Start your reply with { and keep it under 600 tokens."
@@ -243,6 +254,7 @@ def analyze_image(image_bytes: bytes, user_text: str = "",
     raw_components = parsed.get("components", [])
     components = [{"label": str(c.get("label", "")).strip(),
                    "hint": str(c.get("hint", "")).strip(),
+                   "look": str(c.get("look") or "").strip() or None,
                    "color": str(c.get("color") or "").strip() or None,
                    "condition": str(c.get("condition") or "").strip() or None,
                    "position": str(c.get("position") or "").strip() or None}
@@ -268,6 +280,8 @@ def analyze_image(image_bytes: bytes, user_text: str = "",
         "serial": None, "color": None, "condition": None,
         "markings": [], "other": []}
     return {"notes": notes, "appliance": appliance or None,
+            "appliance_look": str(parsed.get("appliance_look") or "").strip()
+            or None,
             "components": components,
             "brand": brand, "device_model": device_model, "device": device,
             "details": details, "ask": ask,
@@ -281,7 +295,8 @@ def merge_analyses(analyses: list) -> dict:
     components merge by label with missing color/condition/position
     filled in from later stills.
     """
-    merged: dict = {"notes": "", "appliance": None, "components": [],
+    merged: dict = {"notes": "", "appliance": None,
+                    "appliance_look": None, "components": [],
                     "brand": None,
                     "device_model": None, "device": None, "details": {},
                     "ask": ""}
@@ -289,7 +304,8 @@ def merge_analyses(analyses: list) -> dict:
     for a in analyses:
         if not merged["notes"] and a.get("notes"):
             merged["notes"] = a["notes"]
-        for key in ("appliance", "brand", "device_model", "device", "ask"):
+        for key in ("appliance", "appliance_look", "brand",
+                    "device_model", "device", "ask"):
             if not merged[key] and a.get(key):
                 merged[key] = a[key]
         det, mdet = a.get("details", {}), merged["details"]
@@ -309,7 +325,7 @@ def merge_analyses(analyses: list) -> dict:
                 slot = {"label": label}
                 seen[label.lower()] = slot
                 merged["components"].append(slot)
-            for key in ("hint", "color", "condition", "position"):
+            for key in ("hint", "look", "color", "condition", "position"):
                 if not slot.get(key) and c.get(key):
                     slot[key] = c[key]
     merged["model"] = analyses[0].get("model") if analyses else None

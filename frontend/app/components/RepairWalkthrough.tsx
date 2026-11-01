@@ -375,7 +375,7 @@ export default function RepairWalkthrough({
       // SAM 3.1 masks arrive in their own request (~2-3s) after the
       // verdict; muse-image (labelled illustrative) only for a step-1
       // part SAM could not find.
-      const segLabels: string[] = data.segment_labels || [];
+      const segLabels: unknown[] = data.segment_labels || [];
       const still = fileRef.current;
       if (segLabels.length && still) {
         void (async () => {

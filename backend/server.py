@@ -338,6 +338,17 @@ def _repair_analyze(images, text, components, model, prior=None,
         [appliance_name or (wanted[0] if wanted else "")]
         if not text.strip() else wanted[:2])
     segment_labels = [lbl for lbl in segment_labels if lbl][:4]
+    # Each part goes to SAM with Spark's plain visual phrase ("black
+    # panel" for a display), which SAM finds far more often than the
+    # trade name; masks keep the part label.
+    looks = {str(c.get("label", "")).lower(): c.get("look")
+             for c in analysis.get("components", []) if c.get("look")}
+    if appliance_name:
+        # "white box" missed the real inverter; "device" found it.
+        looks[appliance_name.lower()] = [
+            x for x in (analysis.get("appliance_look"), "device") if x]
+    segment_labels = [{"label": lbl, "look": looks.get(lbl.lower())}
+                      for lbl in segment_labels]
     has_text = bool(text.strip() or components.strip())
     if not has_text:
         return {"status": "ok", "notes": notes,
@@ -444,7 +455,8 @@ async def listen(file: UploadFile = File(...)):
 
 @app.post("/api/segment")
 async def segment(file: UploadFile = File(...), labels: str = Form(...)):
-    """SAM 3.1 masks for up to 4 noun phrases (JSON list or comma list)."""
+    """SAM 3.1 masks for up to 4 parts: JSON list of labels or
+    {label, look} objects, or a comma list."""
     from . import sam31
 
     trace.begin()
@@ -455,7 +467,9 @@ async def segment(file: UploadFile = File(...), labels: str = Form(...)):
             raise ValueError
     except (json.JSONDecodeError, ValueError):
         wanted = [w for w in labels.split(",")]
-    wanted = [str(w).strip() for w in wanted if str(w).strip()]
+    wanted = [w if isinstance(w, dict) else str(w).strip() for w in wanted
+              if (w.get("label") or w.get("look") if isinstance(w, dict)
+                  else str(w).strip())]
     try:
         instances = await run_in_threadpool(sam31.segment, image, wanted)
         return {"status": "ok", "instances": instances,
