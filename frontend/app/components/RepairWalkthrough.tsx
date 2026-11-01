@@ -10,14 +10,14 @@ import { kb, mark } from "../lib/timeline";
 
 interface Instance {
   label: string;
-  score: number;
+  score: number | null;
   box: { x: number; y: number; w: number; h: number };
   mask_png_b64: string;
   mask_w: number;
   mask_h: number;
 }
 
-const COLORS = ["#ffc53d", "#4cc38a", "#5aa9e6", "#ef6461", "#b388eb"];
+const ORANGE = "#e86a17";
 
 export default function RepairWalkthrough({
   files,
@@ -78,6 +78,25 @@ export default function RepairWalkthrough({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileRef = useRef<File | null>(null);
 
+  /* Indices of SAM instances that belong to a step's part. */
+  function masksFor(part: string | null | undefined, list: Instance[]): number[] {
+    if (!part) return [];
+    const want = part.toLowerCase();
+    return list.flatMap((inst, i) => (inst.label.toLowerCase() === want ? [i] : []));
+  }
+
+  /* Show only the current step's SAM masks (all of them when the step
+     names no part). Returns whether SAM covered this part. */
+  function showStepMasks(part: string | null | undefined, list: Instance[]): boolean {
+    const mine = masksFor(part, list);
+    const hide = new Set<number>(
+      part ? list.map((_, i) => i).filter((i) => !mine.includes(i)) : []
+    );
+    setHidden(hide);
+    void drawMasks(list, hide);
+    return mine.length > 0;
+  }
+
   async function drawMasks(list: Instance[], hide: Set<number>) {
     const canvas = canvasRef.current;
     const img = imgRef.current;
@@ -93,7 +112,7 @@ export default function RepairWalkthrough({
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     for (const [i, inst] of list.entries()) {
       if (hide.has(i)) continue;
-      const color = COLORS[i % COLORS.length];
+      const color = ORANGE;
       const m = new Image();
       await new Promise<void>((res) => {
         m.onload = () => res();
@@ -127,7 +146,7 @@ export default function RepairWalkthrough({
       ctx.fillStyle = color;
       ctx.font = `${Math.max(14, canvas.width / 40)}px sans-serif`;
       ctx.fillText(
-        `${inst.label} ${Math.round(inst.score * 100)}%`,
+        inst.score != null ? `${inst.label} ${Math.round(inst.score * 100)}%` : inst.label,
         b.x * canvas.width + 4,
         Math.max(14, b.y * canvas.height - 6)
       );
@@ -324,7 +343,11 @@ export default function RepairWalkthrough({
       setSteps(foundSteps);
       const list: Instance[] = data.instances || [];
       setInstances(list);
-      setHidden(new Set());
+      // SAM masks for step 1's part go up immediately, before narration.
+      if (list.length) {
+        const covered = showStepMasks(foundSteps[0]?.part, list);
+        mark("sam masks shown", `${list.length} masks, step 1 ${covered ? "covered" : "not covered"}`);
+      }
       const overlay = data.overlay as
         | { image_b64: string; mime: string; legend: { label: string; color: string; tag?: string }[] }
         | null
@@ -360,7 +383,7 @@ export default function RepairWalkthrough({
       }
       setStatus(
         list.length
-          ? `${list.length} masks`
+          ? `SAM 3.1: ${list.length} masks`
           : overlay?.image_b64
             ? "Highlighted image"
             : "No masks came back."
@@ -415,7 +438,6 @@ export default function RepairWalkthrough({
           data.legend || overlay?.legend || []
         );
       }
-      await drawMasks(list, new Set());
     } catch (e) {
       const msg = "Failed: " + (e as Error).message;
       setStatus(msg);
@@ -457,7 +479,10 @@ export default function RepairWalkthrough({
     if (i < 0 || i >= steps.length || !fileRef.current) return;
     setStepIdx(i);
     const st = steps[i];
-    if (st.part) {
+    // SAM already outlined this part: show its mask, skip muse-image.
+    if (showStepMasks(st.part, instances)) {
+      setOverlayURL("");
+    } else if (st.part) {
       setStepLoading(true);
       try {
         const fd = new FormData();
@@ -708,7 +733,7 @@ export default function RepairWalkthrough({
       )}
       {overlayURL && (
         <div style={{ marginTop: 8 }}>
-          <p>Highlighted by Muse Image:</p>
+          <p className="evidence-note">Illustrative highlight (muse-image), not a measured outline</p>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={overlayURL} alt="highlighted" style={{ width: "100%", display: "block" }} />
         </div>
@@ -909,8 +934,8 @@ export default function RepairWalkthrough({
       {instances.map((inst, i) => (
         <label key={i} style={{ display: "block", marginTop: 4 }}>
           <input type="checkbox" checked={!hidden.has(i)} onChange={() => toggle(i)} />{" "}
-          <span style={{ color: COLORS[i % COLORS.length] }}>■</span> {inst.label}{" "}
-          ({Math.round(inst.score * 100)}%)
+          <span style={{ color: ORANGE }}>■</span> {inst.label}
+          {inst.score != null ? ` (SAM ${Math.round(inst.score * 100)}%)` : " (SAM)"}
         </label>
       ))}
     </section>

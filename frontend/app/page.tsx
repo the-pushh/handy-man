@@ -11,6 +11,8 @@ import type { SpeechRecognitionLike } from "./lib/speech";
 import { resolveApiBase } from "./lib/apiBase";
 import { kb, mark, turnStart } from "./lib/timeline";
 import { drawStill, shrinkPhoto } from "./lib/still";
+import { composeMasks } from "./lib/masks";
+import type { SamInstance } from "./lib/masks";
 import Orb from "./components/Orb";
 import type { OrbState } from "./components/Orb";
 import RepairWalkthrough from "./components/RepairWalkthrough";
@@ -25,6 +27,9 @@ interface Confirm {
   device: string;
   overlayURL: string;
   frameURL: string;
+  // Who drew the highlight: SAM 3.1 masks, a muse-image illustration,
+  // or nothing yet (plain photo).
+  highlight: "sam" | "illustrative" | "none";
 }
 
 const INTAKE_STILLS = 3;
@@ -409,32 +414,39 @@ export default function Home() {
         (data.notes || "").replace("The appliance is ", "").replace(/\.$/, "") ||
         "this appliance";
       const label = (data.components || [])[0]?.label || device;
+      const frameURL = URL.createObjectURL(frame);
+      const sam: SamInstance[] = data.instances || [];
       const curl: Confirm = {
         device,
-        overlayURL: URL.createObjectURL(frame),
-        frameURL: URL.createObjectURL(frame),
+        overlayURL: sam.length ? await composeMasks(frameURL, sam) : frameURL,
+        frameURL,
+        highlight: sam.length ? "sam" : "none",
       };
-      // muse-image highlight (10-20s) swaps in when it lands; the card
-      // and the question don't wait for it.
-      const hfd = new FormData();
-      hfd.append("file", frame, "frame.jpg");
-      hfd.append("part", label);
-      mark("highlight requested", label);
-      void fetch(`${apiBase()}/api/repair/highlight`, { method: "POST", body: hfd })
-        .then((hr) => hr.json())
-        .then((hdata) => {
-          mark("highlight returned", hdata.status);
-          const cur = confirmRef.current;
-          if (cur === curl && hdata.overlay?.image_b64) {
-            const next = {
-              ...cur,
-              overlayURL: `data:${hdata.overlay.mime || "image/webp"};base64,${hdata.overlay.image_b64}`,
-            };
-            confirmRef.current = next;
-            setConfirm(next);
-          }
-        })
-        .catch(() => undefined);
+      if (sam.length) mark("sam masks shown", `${sam.length} masks`);
+      // No SAM match: fall back to a muse-image illustration (10-20s),
+      // swapped in when it lands and labelled illustrative.
+      if (!sam.length) {
+        const hfd = new FormData();
+        hfd.append("file", frame, "frame.jpg");
+        hfd.append("part", label);
+        mark("highlight requested", label);
+        void fetch(`${apiBase()}/api/repair/highlight`, { method: "POST", body: hfd })
+          .then((hr) => hr.json())
+          .then((hdata) => {
+            mark("highlight returned", hdata.status);
+            const cur = confirmRef.current;
+            if (cur === curl && hdata.overlay?.image_b64) {
+              const next: Confirm = {
+                ...cur,
+                overlayURL: `data:${hdata.overlay.mime || "image/webp"};base64,${hdata.overlay.image_b64}`,
+                highlight: "illustrative",
+              };
+              confirmRef.current = next;
+              setConfirm(next);
+            }
+          })
+          .catch(() => undefined);
+      }
       confirmRef.current = curl;
       setConfirm(curl);
       setStatusMsg("");
@@ -630,6 +642,13 @@ export default function Home() {
             <p className="sheet-label">Is this your device?</p>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={confirm.overlayURL} alt={`highlighted ${confirm.device}`} />
+            {confirm.highlight !== "none" && (
+              <p className="evidence-note">
+                {confirm.highlight === "sam"
+                  ? "Outlined by SAM 3.1 segmentation"
+                  : "Illustrative highlight (muse-image), not a measured outline"}
+              </p>
+            )}
             <p className="instruction">{confirm.device}</p>
             <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
               <button type="button" className="btn-success" onClick={() => void confirmYes()}>
