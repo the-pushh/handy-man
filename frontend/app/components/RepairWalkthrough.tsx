@@ -33,6 +33,12 @@ interface Instance {
   mask_h: number;
 }
 
+interface Question {
+  ask: string;
+  part: string | null;
+  options: string[];
+}
+
 const ORANGE = "#e86a17";
 
 export default function RepairWalkthrough({
@@ -87,6 +93,11 @@ export default function RepairWalkthrough({
   const [fixed, setFixed] = useState<boolean>(false);
   const [booking, setBooking] = useState<boolean>(false);
   const [hidden, setHidden] = useState<Set<number>>(new Set());
+  // Look-only questions whose answer can flip the verdict, asked one at
+  // a time before it; answered ones stay as a ticked checklist.
+  const [questions, setQuestions] = useState<Question[]>([]);
+  const [answered, setAnswered] = useState<{ ask: string; reply: string }[]>([]);
+  const answerResolve = useRef<((a: { ask: string; reply: string }[]) => void) | null>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileRef = useRef<File | null>(null);
@@ -297,6 +308,25 @@ export default function RepairWalkthrough({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /* Show the questions one at a time; resolves with every reply. */
+  function askAll(qs: Question[]): Promise<{ ask: string; reply: string }[]> {
+    setAnswered([]);
+    setQuestions(qs);
+    return new Promise((resolve) => {
+      answerResolve.current = resolve;
+    });
+  }
+
+  function reply(q: Question, text: string) {
+    const next = [...answered, { ask: q.ask, reply: text }];
+    setAnswered(next);
+    if (next.length >= questions.length) {
+      setQuestions([]);
+      answerResolve.current?.(next);
+      answerResolve.current = null;
+    }
+  }
+
   async function run(fs: File[], t: string, base: string) {
     const myRun = ++runSeq.current;
     setStatus("Analyzing…");
@@ -315,15 +345,36 @@ export default function RepairWalkthrough({
     setInventory([]);
     setSafety([]);
     setVerdict(null);
+    setQuestions([]);
+    setAnswered([]);
     setFixed(false);
     setBooking(false);
     // Spoken while the analysis runs, not before it starts.
     void say("Working out what's wrong.");
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const data: any =
+      let data: any =
         (prefetched ? await prefetched : null) ||
-        (await requestDiagnosis(base, fs, t, perception));
+        (await requestDiagnosis(base, fs, t, perception, heard?.summary || ""));
+      // Questions first: the owner looks, taps an answer, and the server
+      // decides with those answers (one more diagnose, no re-perceive).
+      const qs: Question[] = data.status === "ok" ? data.questions || [] : [];
+      if (qs.length && myRun === runSeq.current) {
+        mark("questions shown", `${qs.length}`);
+        setStatus("");
+        const replies = await askAll(qs);
+        if (myRun !== runSeq.current) return;
+        mark("questions answered", replies.map((r) => r.reply).join(" | "));
+        setStatus("Deciding…");
+        data = await requestDiagnosis(
+          base,
+          fs,
+          t,
+          data.perception || perception,
+          heard?.summary || "",
+          replies.map((r) => `${r.ask} ${r.reply}.`).join(" ")
+        );
+      }
       mark("walkthrough analyze returned", `${data.status} trace=${(data.trace || []).length} calls`);
       for (const c of data.trace || []) {
         mark(`  server: ${c.model} ${c.purpose}`, `+${c.start_s}s took ${(c.latency_ms / 1000).toFixed(1)}s ${c.status}`);
@@ -586,6 +637,37 @@ export default function RepairWalkthrough({
         </button>
       </p>
       {status && <p role="status">{status}</p>}
+      {(questions.length > 0 || answered.length > 0) && (
+        <section className="question-card" aria-live="polite">
+          {answered.length > 0 && (
+            <ul className="checklist">
+              {answered.map((a, i) => (
+                <li key={i} className="done">
+                  <span aria-hidden="true">✓</span> {a.ask} <strong>{a.reply}</strong>
+                </li>
+              ))}
+            </ul>
+          )}
+          {questions[answered.length] && (
+            <>
+              <p className="sheet-label">
+                Quick check {answered.length + 1} of {questions.length}
+              </p>
+              <p className="question">{questions[answered.length].ask}</p>
+              <div className="chips">
+                {[...questions[answered.length].options, "Not sure"]
+                  .filter((o, i, all) => all.findIndex((x) => x.toLowerCase() === o.toLowerCase()) === i)
+                  .map((o) => (
+                    <button key={o} type="button" className="chip" onClick={() => reply(questions[answered.length], o)}>
+                      {o}
+                    </button>
+                  ))}
+              </div>
+              <p className="evidence-note">Just look. No need to touch or open anything.</p>
+            </>
+          )}
+        </section>
+      )}
       {needBase && (
         <div style={{ marginTop: 8 }}>
           <p>

@@ -10,7 +10,10 @@ export function requestDiagnosis(
   text: string,
   perception: unknown,
   // Measured sound evidence (audiofeat summary), when the user recorded.
-  sound = ""
+  sound = "",
+  // The owner's replies to the first pass's questions; the server then
+  // decides at higher effort and asks nothing more.
+  answers = ""
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): Promise<any> {
   mark("diagnosis sent", `${files.length} stills ${kb(files.reduce((n, f) => n + f.size, 0))}`);
@@ -24,5 +27,6 @@ export function requestDiagnosis(
     fd.append("perception", JSON.stringify(perception));
   }
   if (sound) fd.append("sound", sound);
+  if (answers) fd.append("answers", answers);
   return fetch(`${base}/api/repair/analyze`, { method: "POST", body: fd }).then((r) => r.json());
 }
