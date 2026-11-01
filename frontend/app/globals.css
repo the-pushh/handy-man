@@ -841,3 +841,58 @@ body {
 .done-stats div { border-top: 1px solid var(--line-faint); padding-top: 8px; }
 .done-stats strong { display: block; font-family: var(--mono); font-size: 22px; color: var(--line); }
 .done-stats span { font-size: 13px; color: var(--line-muted); }
+
+/* Walkthrough layout (step 8): photo, then one card at a time, details
+   folded away. Sized for a screen recording on a phone. */
+.walk { max-width: 720px; margin: 0 auto; }
+.walk-head { margin-bottom: 8px; }
+.walk-head .sheet-label { margin: 0; color: var(--line-muted); }
+.walk-said { font-size: 20px; font-style: italic; margin: 4px 0 0; color: var(--line); }
+.status-chip {
+  display: inline-flex; align-items: center; gap: 8px;
+  margin: 8px 0 0; padding: 6px 12px;
+  font-family: var(--mono); font-size: 15px; font-weight: 700;
+  border: 1px solid var(--line-muted); color: var(--line);
+}
+.status-chip .dot {
+  width: 10px; height: 10px; border-radius: 50%; background: var(--primary);
+  animation: pulse 1s ease-in-out infinite;
+}
+@keyframes pulse { 50% { opacity: 0.25; } }
+@media (prefers-reduced-motion: reduce) { .status-chip .dot { animation: none; } }
+.walk-photo { margin: 8px 0 0; }
+.walk-photo img { width: 100%; display: block; }
+.mask-layer { position: absolute; inset: 0; width: 100%; height: 100%; }
+.walk-photo figcaption { font-size: 13px; color: var(--line-muted); margin-top: 6px; line-height: 2; }
+.mask-chip {
+  font: 700 13px var(--mono); padding: 2px 8px; margin: 0 4px 4px 0;
+  border: 1px solid var(--primary); background: var(--primary-container);
+  color: var(--line); border-radius: 0; cursor: pointer;
+}
+.mask-chip.off { border-color: var(--line-faint); background: none; color: var(--line-faint); }
+.views { display: flex; gap: 6px; margin-top: 6px; }
+.views img { width: 64px; height: 48px; object-fit: cover; border: 1px solid var(--line-faint); }
+.verdict-card .verdict-title { margin-bottom: 4px; }
+.verdict-finding { font-size: 20px; font-weight: 700; margin: 0 0 12px; color: var(--line); }
+.verdict-meta { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 0 0 12px; }
+.verdict-meta div { border-top: 1px solid var(--line-faint); padding-top: 6px; }
+.verdict-meta dt { font-size: 12px; color: var(--line-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.verdict-meta dd { margin: 2px 0 0; font-family: var(--mono); font-size: 16px; font-weight: 700; color: var(--line); }
+.verdict-basis ul { margin: 4px 0 0; padding-left: 18px; color: var(--line-muted); font-size: 15px; }
+.verdict-basis .sheet-label { margin: 0; }
+.step-card { margin-top: 12px; padding: 16px; border: 2px solid var(--line); background: var(--paper-raised); }
+.step-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.step-top .sheet-label { margin: 0; }
+.step-card .instruction { font-size: 22px; font-weight: 700; margin: 8px 0; }
+.step-how { font-size: 18px; line-height: 1.4; margin: 0 0 8px; }
+.step-part { font-family: var(--mono); font-size: 14px; color: var(--line-muted); margin: 0 0 8px; }
+.tick.done { background: var(--success); }
+.row { display: flex; gap: 8px; margin-top: 12px; }
+.fail-card { margin-top: 12px; padding: 16px; border: 2px solid var(--warning); background: var(--warning-container); }
+.fail-title { font-size: 20px; font-weight: 700; margin: 0 0 4px; color: var(--line); }
+.walk-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.walk-actions .btn-outline { flex: 1 1 auto; min-height: 44px; padding: 8px 12px; font-size: 14px; }
+.workings { margin-top: 16px; border-top: 1px solid var(--line-faint); padding-top: 8px; color: var(--line-muted); }
+.workings summary { font-family: var(--mono); font-weight: 700; cursor: pointer; padding: 8px 0; color: var(--line); }
+.workings ul, .workings ol { padding-left: 18px; }
+.workings strong { color: var(--line); }

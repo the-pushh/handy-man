@@ -22,6 +22,22 @@ interface Verdict {
   fired: string[];
   blocked_steps: number[];
   proposed_steps: number;
+  difficulty?: "easy" | "medium" | "hard" | null;
+  minutes?: number | null;
+  tools?: string[];
+  confidence?: "high" | "medium" | "low" | null;
+  based_on?: string[];
+}
+
+/* What went wrong, in words for the owner (never the raw error). */
+function failureFor(status: string): { title: string; hint: string } {
+  if (status === "needs-api-key")
+    return { title: "The model isn't set up on this server.", hint: "Add the API key to .env and restart the backend." };
+  if (status === "timeout")
+    return { title: "That took too long.", hint: "The model is slow right now. Try again." };
+  if (status === "network")
+    return { title: "Couldn't reach the server.", hint: "Check the connection, then try again." };
+  return { title: "The model didn't answer that time.", hint: "Nothing is wrong with your device. Try again." };
 }
 
 interface Instance {
@@ -83,6 +99,8 @@ export default function RepairWalkthrough({
   const [ask, setAsk] = useState<string>("");
   const [safety, setSafety] = useState<string[]>([]);
   const [verdict, setVerdict] = useState<Verdict | null>(null);
+  const [failure, setFailure] = useState<{ title: string; hint: string } | null>(null);
+  const [appliance, setAppliance] = useState<string>("");
   const [focus, setFocus] = useState<string | null>(null);
   const [inventory, setInventory] = useState<
     { label: string; color?: string | null; condition?: string | null; position?: string | null }[]
@@ -368,7 +386,7 @@ export default function RepairWalkthrough({
 
   async function run(fs: File[], t: string, base: string) {
     const myRun = ++runSeq.current;
-    setStatus("Analyzing…");
+    setStatus("Working it out…");
     setInstances([]);
     setNotes("");
     setOverlayURL("");
@@ -384,6 +402,7 @@ export default function RepairWalkthrough({
     setInventory([]);
     setSafety([]);
     setVerdict(null);
+    setFailure(null);
     setQuestions([]);
     setAnswered([]);
     setFixed(false);
@@ -436,17 +455,14 @@ export default function RepairWalkthrough({
       }
       if (myRun !== runSeq.current) return; // superseded by a newer run
       if (data.status !== "ok") {
-        const notes: string = data.notes || "";
-        setStatus(data.detail);
-        setNotes(notes);
+        mark("analysis failed", `${data.status}: ${data.detail || ""}`);
+        setStatus("");
+        setNotes(data.notes || "");
         setInventory(data.components || []);
-        await say(
-          notes
-            ? `${notes} But I hit a problem cutting out the parts: ${data.detail}`
-            : `I hit a problem: ${data.detail}`
-        );
+        setFailure(failureFor(data.status));
         return;
       }
+      setAppliance(data.perception?.appliance || "");
       setNotes(data.notes || "");
       setStatus("");
       const foundCauses: string[] = data.causes || [];
@@ -501,7 +517,7 @@ export default function RepairWalkthrough({
           const part = foundSteps[0]?.part;
           const covered = sam.length ? showStepMasks(part, sam) : false;
           mark("sam masks shown", `${sam.length} masks, step 1 ${covered ? "covered" : "not covered"}`);
-          setStatus(sam.length ? `SAM 3.1: ${sam.length} masks` : "");
+          setStatus("");
           if (covered || !part) return;
           const hfd = new FormData();
           hfd.append("file", still);
@@ -557,13 +573,14 @@ export default function RepairWalkthrough({
         );
       }
     } catch (e) {
-      const msg = "Failed: " + (e as Error).message;
-      setStatus(msg);
-      setNeedBase(true);
-      await say(
-        "I could not reach the server. If you are on a phone, make sure " +
-          "it is on the same Wi-Fi as the computer running the app, then try again."
-      );
+      const err = e as Error;
+      mark("analysis failed", `${err.name}: ${err.message}`);
+      setStatus("");
+      const timedOut = err.name === "TimeoutError" || err.name === "AbortError";
+      setFailure(failureFor(timedOut ? "timeout" : "network"));
+      // Still on the same-host fallback (no env, nothing saved): the
+      // backend is probably behind a tunnel, so offer to paste it.
+      if (!timedOut && API === `http://${window.location.hostname}:8000`) setNeedBase(true);
     }
   }
 
@@ -692,79 +709,41 @@ export default function RepairWalkthrough({
     void drawMasks(instances, next);
   }
 
+  const busy = status && !failure ? status : "";
+  const name = appliance || device || "your device";
+  const removed = verdict?.blocked_steps.length || 0;
+
   return (
-    <section style={{ padding: 16, maxWidth: 720, margin: "0 auto" }}>
-      <h1>Repairing what I captured</h1>
-      <p style={{ color: "#b9c0c6" }}>
-        {files.length} view{files.length === 1 ? "" : "s"} captured from
-        your camera. Naming the parts, highlighting them step by step,
-        talking you through the fix.
-      </p>
-      {stillURLs.length > 1 && (
-        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-          {stillURLs.map((u, i) => (
-            <figure key={i} className="ref-thumb" style={{ margin: 0 }}>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={u} alt={`view ${i + 1}`} />
-              <figcaption>view {i + 1}</figcaption>
-            </figure>
-          ))}
-        </div>
-      )}
-      <p>
-        You said: <em>&ldquo;{issue}&rdquo;</em>{" "}
-        {onListen && (
-          <button type="button" className="btn-outline" onClick={onListen}>
-            {heard ? "Listen again" : "Let me listen"}
-          </button>
+    <section className="walk">
+      <header className="walk-head">
+        <p className="sheet-label">{name}</p>
+        <p className="walk-said">&ldquo;{issue}&rdquo;</p>
+        {busy && (
+          <p className="status-chip" role="status">
+            <span className="dot" aria-hidden="true" /> {busy}
+          </p>
         )}
-        {onMoreViews && (
-          <button type="button" className="btn-outline" onClick={onMoreViews}>
-            Add a closer view
-          </button>
-        )}
-        <button type="button" className="btn-outline" onClick={onClose}>
-          Close and point the camera again
-        </button>
-      </p>
-      {status && <p role="status">{status}</p>}
-      {(questions.length > 0 || answered.length > 0) && (
-        <section className="question-card" aria-live="polite">
-          {answered.length > 0 && (
-            <ul className="checklist">
-              {answered.map((a, i) => (
-                <li key={i} className="done">
-                  <span aria-hidden="true">✓</span> {a.ask} <strong>{a.reply}</strong>
-                </li>
-              ))}
-            </ul>
-          )}
-          {questions[answered.length] && (
-            <>
-              <p className="sheet-label">
-                Quick check {answered.length + 1} of {questions.length}
-              </p>
-              <p className="question">{questions[answered.length].ask}</p>
-              <div className="chips">
-                {[...questions[answered.length].options, "Not sure"]
-                  .filter((o, i, all) => all.findIndex((x) => x.toLowerCase() === o.toLowerCase()) === i)
-                  .map((o) => (
-                    <button key={o} type="button" className="chip" onClick={() => reply(questions[answered.length], o)}>
-                      {o}
-                    </button>
-                  ))}
-              </div>
-              <p className="evidence-note">Just look. No need to touch or open anything.</p>
-            </>
-          )}
+      </header>
+
+      {failure && (
+        <section className="fail-card" role="alert">
+          <p className="fail-title">{failure.title}</p>
+          <p>{failure.hint}</p>
+          <div className="row">
+            <button type="button" className="btn-primary" onClick={() => void run(files, issue, API)}>
+              Try again
+            </button>
+            <button type="button" className="btn-outline" onClick={onClose}>
+              Point the camera again
+            </button>
+          </div>
         </section>
       )}
+
       {needBase && (
-        <div style={{ marginTop: 8 }}>
+        <div className="fail-card">
           <p>
-            The backend is not reachable at <code>{API}</code>. If it is
-            behind a tunnel, paste its URL (it changes every run — this is
-            remembered in this browser only):
+            Paste the backend address (it changes every run; remembered in this browser only):
           </p>
           <input
             value={baseInput}
@@ -795,100 +774,129 @@ export default function RepairWalkthrough({
           </button>
         </div>
       )}
-      {notes && <p className="instruction">{notes}</p>}
-      {device && <p className="step-count">{device}</p>}
-      {(device || (details.markings || []).length > 0) && (
-        <div style={{ marginTop: 8 }}>
-          <p className="sheet-label">Evidence for the call</p>
-          <div>
-            {device && <span className="evidence-note">badge → {device}</span>}
-            {(details.markings || []).map((m, i) => (
-              <span key={i} className="evidence-note">{m}</span>
-            ))}
+
+      {imgURL && (
+        <figure className="walk-photo">
+          <div style={{ position: "relative" }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img ref={imgRef} src={overlayURL || imgURL} alt={name} />
+            <canvas ref={canvasRef} className="mask-layer" hidden={!!overlayURL} />
           </div>
-        </div>
+          {overlayURL ? (
+            <figcaption>Illustrative highlight (muse-image), not a measured outline</figcaption>
+          ) : instances.length > 0 ? (
+            <figcaption>
+              Outlined by SAM 3.1:{" "}
+              {instances.map((inst, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  className={`mask-chip${hidden.has(i) ? " off" : ""}`}
+                  onClick={() => toggle(i)}
+                  aria-pressed={!hidden.has(i)}
+                >
+                  {inst.label}
+                  {inst.score != null ? ` ${Math.round(inst.score * 100)}%` : ""}
+                </button>
+              ))}
+            </figcaption>
+          ) : null}
+        </figure>
       )}
-      {ask && (
-        <p style={{ fontWeight: "bold" }}>
-          {ask} (Close this and describe the problem, then I will dig in.)
-        </p>
-      )}
-      {inventory.length > 0 && (
-        <div style={{ marginTop: 8 }}>
-          <p className="sheet-label">Parts list</p>
-          {inventory.map((c, i) => (
-            <div key={i} className="parts-row">
-              <span>
-                <strong>{c.label}</strong>
-                {[c.color, c.condition, c.position].filter(Boolean).join(" · ")}
-              </span>
-            </div>
+      {stillURLs.length > 1 && (
+        <div className="views">
+          {stillURLs.map((u, i) => (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img key={i} src={u} alt={`view ${i + 1}`} />
           ))}
         </div>
       )}
-      {(details.serial || details.color || details.condition ||
-        (details.markings || []).length > 0 || (details.other || []).length > 0) && (
-        <div style={{ marginTop: 8 }}>
-          <p className="sheet-label">Every little detail</p>
-          {details.serial && <div><strong>Serial:</strong> {details.serial}</div>}
-          {details.color && <div><strong>Color:</strong> {details.color}</div>}
-          {details.condition && <div><strong>Condition:</strong> {details.condition}</div>}
-          {(details.markings || []).length > 0 && (
-            <div>
-              <strong>Markings:</strong>
-              <ul>
-                {details.markings!.map((m, i) => <li key={i}>{m}</li>)}
-              </ul>
+
+      {(questions.length > 0 || answered.length > 0) && !verdict && (
+        <section className="question-card" aria-live="polite">
+          {answered.length > 0 && (
+            <ul className="checklist">
+              {answered.map((a, i) => (
+                <li key={i} className="done">
+                  <span aria-hidden="true">✓</span> {a.ask} <strong>{a.reply}</strong>
+                </li>
+              ))}
+            </ul>
+          )}
+          {questions[answered.length] && (
+            <>
+              <p className="sheet-label">
+                Quick check{questions.length > 1 ? ` ${answered.length + 1} of ${questions.length}` : ""}
+              </p>
+              <p className="question">{questions[answered.length].ask}</p>
+              <div className="chips">
+                {[...questions[answered.length].options, "Not sure"]
+                  .filter((o, i, all) => all.findIndex((x) => x.toLowerCase() === o.toLowerCase()) === i)
+                  .map((o) => (
+                    <button key={o} type="button" className="chip" onClick={() => reply(questions[answered.length], o)}>
+                      {o}
+                    </button>
+                  ))}
+              </div>
+              <p className="evidence-note">Just look. No need to touch or open anything.</p>
+            </>
+          )}
+        </section>
+      )}
+
+      {verdict && (
+        <section className={`verdict-card ${verdict.verdict}`}>
+          <p className="verdict-title">
+            {verdict.verdict === "diy" ? "You can fix this" : "Call a pro"}
+          </p>
+          {verdict.verdict === "diy" && verdict.headline && (
+            <p className="verdict-finding">{verdict.headline}</p>
+          )}
+          {verdict.verdict === "pro" && (
+            <p className="verdict-finding">{verdict.title}</p>
+          )}
+          {verdict.verdict === "diy" && (verdict.difficulty || verdict.minutes || (verdict.tools || []).length > 0) && (
+            <dl className="verdict-meta">
+              {verdict.difficulty && (
+                <div><dt>Difficulty</dt><dd>{cap(verdict.difficulty)}</dd></div>
+              )}
+              {verdict.minutes && (
+                <div><dt>Time</dt><dd>~{verdict.minutes} min</dd></div>
+              )}
+              <div>
+                <dt>Tools</dt>
+                <dd>{(verdict.tools || []).length ? verdict.tools!.join(", ") : "None"}</dd>
+              </div>
+            </dl>
+          )}
+          {(verdict.confidence || (verdict.based_on || []).length > 0) && (
+            <div className="verdict-basis">
+              {verdict.confidence && (
+                <p className="sheet-label">Confidence: {verdict.confidence}</p>
+              )}
+              {(verdict.based_on || []).length > 0 && (
+                <ul>
+                  {verdict.based_on!.map((b, i) => <li key={i}>{b}</li>)}
+                  {verdict.verdict === "pro" && verdict.rule && (
+                    <li>safety rule: {verdict.rule}</li>
+                  )}
+                </ul>
+              )}
             </div>
           )}
-          {(details.other || []).length > 0 && (
-            <div>
-              <strong>Also noticed:</strong>
-              <ul>
-                {details.other!.map((m, i) => <li key={i}>{m}</li>)}
-              </ul>
-            </div>
+          {removed > 0 && (
+            <p className="evidence-note">
+              The safety rules removed {removed} of the {verdict.proposed_steps} steps the model suggested.
+            </p>
           )}
-        </div>
+          {verdict.verdict === "pro" && !booking && (
+            <button type="button" className="btn-primary" onClick={() => setBooking(true)}>
+              Find a {verdict.trade || "pro"}
+            </button>
+          )}
+        </section>
       )}
-      {said.length > 0 && (
-        <div style={{ marginTop: 8 }} className="transcript">
-          <p className="sheet-label">Thinking aloud</p>
-          <ol>
-            {said.map((line, i) => <li key={i}>{line}</li>)}
-          </ol>
-        </div>
-      )}
-      {imgURL && (
-        <div style={{ position: "relative", marginTop: 8 }}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img ref={imgRef} src={imgURL} alt="upload" style={{ width: "100%", display: "block" }} />
-          <canvas ref={canvasRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }} />
-        </div>
-      )}
-      {overlayURL && (
-        <div style={{ marginTop: 8 }}>
-          <p className="evidence-note">Illustrative highlight (muse-image), not a measured outline</p>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={overlayURL} alt="highlighted" style={{ width: "100%", display: "block" }} />
-        </div>
-      )}
-      {safety.length > 0 && (
-        <div className="callout callout-caution">
-          <p className="sheet-label">Handle with care</p>
-          <ul>
-            {safety.map((w, i) => <li key={i}>{w}</li>)}
-          </ul>
-        </div>
-      )}
-      {causes.length > 0 && (
-        <div style={{ marginTop: 8 }}>
-          <p className="sheet-label">Likely causes</p>
-          <ul>
-            {causes.map((c, i) => <li key={i}>{c}</li>)}
-          </ul>
-        </div>
-      )}
+
       {heard && (
         <div className={`heard-card${heard.agree ? "" : " doubt"}`}>
           <p className="sheet-label">What I heard</p>
@@ -919,43 +927,18 @@ export default function RepairWalkthrough({
           )}
         </div>
       )}
-      {verdict && (
-        <div className={`verdict-card ${verdict.verdict}`}>
-          <p className="sheet-label">Verdict</p>
-          <p className="verdict-title">
-            {verdict.verdict === "diy" ? "You can fix this" : "Call a pro"}
-          </p>
-          {verdict.verdict === "pro" && (
-            <>
-              <div className="callout callout-dont-touch">
-                <p className="sheet-label">Safety rule</p>
-                <p>{verdict.title}</p>
-              </div>
-              {verdict.blocked_steps.length > 0 && (
-                <p className="evidence-note">
-                  The rules removed {verdict.blocked_steps.length} of the{" "}
-                  {verdict.proposed_steps} steps the model suggested.
-                </p>
-              )}
-              {!booking && (
-                <button type="button" className="btn-primary" onClick={() => setBooking(true)}>
-                  Find a {verdict.trade || "pro"}
-                </button>
-              )}
-            </>
-          )}
-        </div>
-      )}
-      {steps.length > 0 && (
-        <div style={{ marginTop: 8 }}>
-          {verdict?.verdict === "pro" && (
-            <p className="sheet-label">Safe checks before you call</p>
-          )}
-          <p className="step-count">{String(stepIdx + 1).padStart(2, "0")}/{String(steps.length).padStart(2, "0")}</p>
-          <div className="ticks">
-            {steps.map((_, i) => (
-              <span key={i} className={i === stepIdx ? "tick active" : "tick"} />
-            ))}
+
+      {steps.length > 0 && !done && (
+        <section className="step-card">
+          <div className="step-top">
+            <p className="sheet-label">
+              {verdict?.verdict === "pro" ? "Safe check" : "Step"} {stepIdx + 1} of {steps.length}
+            </p>
+            <div className="ticks">
+              {steps.map((_, i) => (
+                <span key={i} className={i < stepIdx ? "tick done" : i === stepIdx ? "tick active" : "tick"} />
+              ))}
+            </div>
           </div>
           {(() => {
             const s = steps[stepIdx];
@@ -964,26 +947,24 @@ export default function RepairWalkthrough({
               (e) => s.part && e.label.toLowerCase() === s.part.toLowerCase()
             )?.tag;
             return (
-              <div>
-                <p className="sheet-label">What to check</p>
+              <>
                 <p className="instruction">{s.check}</p>
-                {s.how && <p>{s.how}</p>}
+                {s.how && <p className="step-how">{s.how}</p>}
+                {s.part && (
+                  <p className="step-part">
+                    {tag && <span className="tag-letter active">{tag}</span>} {s.part}
+                  </p>
+                )}
                 {s.caution && (
                   <div className="callout callout-dont-touch">
-                    <p className="sheet-label">Don&apos;t touch</p>
+                    <p className="sheet-label">Careful</p>
                     <p>{s.caution}</p>
                   </div>
                 )}
-                {s.part && (
-                  <div>
-                    {tag && <span className="tag-letter active">{tag}</span>}
-                    <span className="evidence-note">{s.part}</span>
-                  </div>
-                )}
-              </div>
+              </>
             );
           })()}
-          <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+          <div className="row">
             <button
               type="button"
               className="btn-outline"
@@ -1002,7 +983,7 @@ export default function RepairWalkthrough({
                     ? setBooking(true)
                     : void finishFix()
               }
-              disabled={stepLoading || (done?.state === "checking")}
+              disabled={stepLoading}
             >
               {stepLoading
                 ? "Highlighting…"
@@ -1013,19 +994,9 @@ export default function RepairWalkthrough({
                     : "Done, check it"}
             </button>
           </div>
-        </div>
+        </section>
       )}
-      {legend.length > 0 && (
-        <div style={{ marginTop: 8 }}>
-          <p className="sheet-label">Legend</p>
-          {legend.map((e, i) => (
-            <div key={i} className="parts-row">
-              <span className="tag-letter active">{e.tag || String.fromCharCode(65 + i)}</span>
-              <span>{e.label}</span>
-            </div>
-          ))}
-        </div>
-      )}
+
       {done && (
         <section className={`done-card ${done.looksFixed === true ? "ok" : done.looksFixed === false ? "bad" : ""}`}>
           <p className="sheet-label">Final check</p>
@@ -1048,7 +1019,7 @@ export default function RepairWalkthrough({
           <p className="done-result" role="status">
             {done.state === "checking" && "Checking the after photo…"}
             {done.state === "error" && "Couldn't run the check. Try again, or just tell me below."}
-            {done.state === "ok" && done.looksFixed === true && <>✓ {done.seen}</>}
+            {done.state === "ok" && done.looksFixed === true && <>✓ {cap(done.seen)}</>}
             {done.state === "ok" && done.looksFixed === false && <>✗ {cap(done.next || done.seen)}</>}
             {done.state === "ok" && done.looksFixed === null && <>Couldn&apos;t see it clearly. {cap(done.next || "")}</>}
           </p>
@@ -1063,7 +1034,7 @@ export default function RepairWalkthrough({
             <div><strong>{steps.length}</strong><span>steps done</span></div>
           </div>
           {!fixed && !booking && done.state !== "checking" && (
-            <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+            <div className="row" style={{ marginTop: 12 }}>
               <button type="button" className="btn-success" onClick={() => void confirmFixed(true)}>
                 It works now
               </button>
@@ -1075,53 +1046,100 @@ export default function RepairWalkthrough({
           {fixed && <p className="done-result">Fixed. Close this and point the camera at the next thing.</p>}
         </section>
       )}
-      {resolution && !done && (
-        <div style={{ marginTop: 8 }}>
-          <p className="sheet-label">Did it work?</p>
-          <p>{resolution}</p>
-          <button
-            type="button"
-            className="btn-outline"
-            onClick={() => void say(`Resolution check: ${resolution}`)}
-          >
-            Read the resolution check aloud
-          </button>
-          {!fixed && !booking && (
-            <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-              <button type="button" className="btn-success" onClick={() => void confirmFixed(true)}>
-                Yes, it is fixed
-              </button>
-              <button type="button" className="btn-outline" onClick={() => void confirmFixed(false)}>
-                No, still broken
-              </button>
-            </div>
-          )}
-          {fixed && <p>Fixed — nice work. Close this and point the camera at the next thing.</p>}
-        </div>
-      )}
+
+      {ask && <p className="instruction">{ask}</p>}
+
       {booking && (
         <CallAPro
           api={API}
           trade={verdict?.trade || "repair service"}
           brief={{
-            device: device || "",
+            device: [device, appliance].filter(Boolean).join(" ") || "",
             issue,
             finding: verdict?.headline || causes[0] || "needs a closer look",
             rule: verdict?.verdict === "pro" ? verdict.title : null,
-            checks: steps.slice(0, Math.max(stepIdx + 1, 1)).map((st) => st.check),
+            checks: [
+              ...answered.map((a) => `${a.ask} ${a.reply}`),
+              ...steps.slice(0, Math.max(stepIdx + 1, 1)).map((st) => st.check),
+            ],
             sound: heard ? heard.summary : null,
             photo: fileRef.current || null,
             clip: heard?.clip || null,
           }}
         />
       )}
-      {instances.map((inst, i) => (
-        <label key={i} style={{ display: "block", marginTop: 4 }}>
-          <input type="checkbox" checked={!hidden.has(i)} onChange={() => toggle(i)} />{" "}
-          <span style={{ color: ORANGE }}>■</span> {inst.label}
-          {inst.score != null ? ` (SAM ${Math.round(inst.score * 100)}%)` : " (SAM)"}
-        </label>
-      ))}
+
+      <div className="walk-actions">
+        {onListen && (
+          <button type="button" className="btn-outline" onClick={onListen}>
+            {heard ? "Listen again" : "Let me listen"}
+          </button>
+        )}
+        {onMoreViews && (
+          <button type="button" className="btn-outline" onClick={onMoreViews}>
+            Add a closer view
+          </button>
+        )}
+        <button type="button" className="btn-outline" onClick={onClose}>
+          Close
+        </button>
+      </div>
+
+      {(causes.length > 0 || inventory.length > 0 || said.length > 0) && (
+        <details className="workings">
+          <summary>How I worked this out</summary>
+          {notes && <p>{notes}</p>}
+          {causes.length > 0 && (
+            <>
+              <p className="sheet-label">Likely causes</p>
+              <ul>{causes.map((c, i) => <li key={i}>{c}</li>)}</ul>
+            </>
+          )}
+          {safety.length > 0 && (
+            <>
+              <p className="sheet-label">Handle with care</p>
+              <ul>{safety.map((w, i) => <li key={i}>{w}</li>)}</ul>
+            </>
+          )}
+          {resolution && (
+            <>
+              <p className="sheet-label">How to tell it worked</p>
+              <p>{resolution}</p>
+            </>
+          )}
+          {(device || (details.markings || []).length > 0) && (
+            <>
+              <p className="sheet-label">Read off the device</p>
+              <ul>
+                {device && <li>badge: {device}</li>}
+                {details.serial && <li>serial: {details.serial}</li>}
+                {(details.markings || []).map((m, i) => <li key={i}>{m}</li>)}
+                {(details.other || []).map((m, i) => <li key={`o${i}`}>{m}</li>)}
+              </ul>
+            </>
+          )}
+          {inventory.length > 0 && (
+            <>
+              <p className="sheet-label">Parts seen</p>
+              <ul>
+                {inventory.map((c, i) => (
+                  <li key={i}>
+                    <strong>{c.label}</strong>
+                    {[c.color, c.condition, c.position].filter(Boolean).length > 0 &&
+                      ` — ${[c.color, c.condition, c.position].filter(Boolean).join(" · ")}`}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          {said.length > 0 && (
+            <>
+              <p className="sheet-label">Said aloud</p>
+              <ol>{said.map((line, i) => <li key={i}>{line}</li>)}</ol>
+            </>
+          )}
+        </details>
+      )}
     </section>
   );
 }

@@ -34,5 +34,11 @@ export function requestDiagnosis(
   const owner = (perception as { owner_says?: string } | null)?.owner_says;
   if (owner) fd.append("owner", owner);
   if (ahead) fd.append("ahead", "1");
-  return fetch(`${base}/api/repair/analyze`, { method: "POST", body: fd }).then((r) => r.json());
+  // Never a frozen screen: give up after 60s and let the owner retry
+  // (the server hedges slow calls well before this).
+  return fetch(`${base}/api/repair/analyze`, {
+    method: "POST",
+    body: fd,
+    signal: AbortSignal.timeout(60000),
+  }).then((r) => r.json());
 }
