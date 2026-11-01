@@ -447,9 +447,20 @@ export default function Home() {
       const r = await fetch(`${apiBase()}/api/repair/analyze`, {
         method: "POST",
         body: fd,
+        signal: AbortSignal.timeout(30000),
       });
       const data = await r.json();
       perceived = true;
+      if (data.status !== "ok") {
+        mark("first look failed", `${data.status}: ${data.detail || ""}`);
+        setStatusMsg(
+          data.status === "needs-api-key"
+            ? "The model isn't set up on this server."
+            : "Couldn't make it out that time. Tap the button to try again."
+        );
+        setOrb("idle");
+        return;
+      }
       mark("analyze(1 still, no text) returned", `trace=${(data.trace || []).length} calls`);
       // "Panasonic air conditioner": brand plus what it is, so the owner
       // can catch a misread ("voltage stabilizer") and correct it.
@@ -530,9 +541,13 @@ export default function Home() {
       await say(`Is this your ${device}?`);
       listenForConfirm();
     } catch (e) {
-      setStatusMsg("Failed: " + (e as Error).message);
-      setOrb("error");
-      await say("Something went wrong looking at the device. Try again.");
+      const err = e as Error;
+      mark("first look failed", `${err.name}: ${err.message}`);
+      setStatusMsg(
+        err.name === "TimeoutError" || err.name === "AbortError"
+          ? "That took too long. Tap the button to try again."
+          : "Couldn't reach the server. Check the connection and tap again."
+      );
       setOrb("idle");
     }
   }
