@@ -23,6 +23,8 @@ import urllib.request
 
 from dotenv import load_dotenv
 
+from . import trace
+
 load_dotenv()
 
 SPARK_MODELS = {"local": "muse-spark-1.3-contributor",
@@ -47,7 +49,24 @@ def _config() -> tuple:
     return url, key, model
 
 
-def _post(url: str, key: str, payload: dict, timeout: int = 120) -> dict:
+def _post(url: str, key: str, payload: dict, timeout: int = 120,
+          purpose: str = "spark", image: bytes | None = None) -> dict:
+    with trace.call(payload.get("model", "?"), purpose, image) as rec:
+        reply = _post_raw(url, key, payload, timeout)
+        rec["usage"] = reply.get("usage")
+        rec["effort"] = payload.get("reasoning_effort")
+        rec["max_tokens"] = payload.get("max_tokens")
+        try:
+            rec["finish"] = reply["choices"][0].get("finish_reason")
+            rec["raw_text"] = (reply["choices"][0]["message"]
+                               .get("content") or "")[:2000]
+        except (KeyError, IndexError, TypeError):
+            pass
+        reply["_trace"] = rec
+        return reply
+
+
+def _post_raw(url: str, key: str, payload: dict, timeout: int) -> dict:
     import urllib.error
     req = urllib.request.Request(
         url + "/chat/completions",
@@ -96,14 +115,17 @@ def _extract_json(reply: dict) -> dict:
 
 
 def _complete(url: str, key: str, payload: dict,
-              required: list) -> dict:
+              required: list, purpose: str = "spark",
+              image: bytes | None = None) -> dict:
     """POST once; retry once when the reply is cut off or drops keys.
 
     The contributor model sometimes truncates (finish: length) or
     returns partial JSON. The retry nudges it to complete/repair.
     """
     try:
-        parsed = _extract_json(_post(url, key, payload))
+        reply = _post(url, key, payload, purpose=purpose, image=image)
+        parsed = _extract_json(reply)
+        reply["_trace"]["parsed"] = parsed
         if all(parsed.get(k) for k in required):
             return parsed
     except RuntimeError:
@@ -119,7 +141,9 @@ def _complete(url: str, key: str, payload: dict,
         else:
             msgs = [reminder] + msgs
         fix["messages"] = msgs
-    parsed = _extract_json(_post(url, key, fix))
+    reply = _post(url, key, fix, purpose=purpose + " (retry)", image=image)
+    parsed = _extract_json(reply)
+    reply["_trace"]["parsed"] = parsed
     return parsed
 
 
@@ -176,7 +200,8 @@ def analyze_image(image_bytes: bytes, user_text: str = "",
         "reasoning_effort": "low",
         "response_format": {"type": "json_object"},
     }
-    parsed = _complete(url, key, payload, ["components", "appliance"])
+    parsed = _complete(url, key, payload, ["components", "appliance"],
+                       purpose="perceive", image=image_bytes)
     raw_components = parsed.get("components", [])
     components = [{"label": str(c.get("label", "")).strip(),
                    "hint": str(c.get("hint", "")).strip(),
@@ -293,7 +318,8 @@ def diagnose(appliance: str, device: str | None, labels: list,
         "reasoning_effort": "low",
         "response_format": {"type": "json_object"},
     }
-    parsed = _complete(url, key, payload, ["causes", "steps"])
+    parsed = _complete(url, key, payload, ["causes", "steps"],
+                       purpose="diagnose")
     causes = [str(c).strip() for c in parsed.get("causes", [])
               if str(c).strip()][:5]
     relevant = [str(r).strip() for r in parsed.get("relevant", [])

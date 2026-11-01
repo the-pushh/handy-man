@@ -15,6 +15,8 @@ import re
 import urllib.parse
 import urllib.request
 
+from . import trace
+
 _YT = "https://www.youtube.com/results?search_query="
 
 
@@ -35,8 +37,10 @@ def fetch_video_ids(query: str, n: int = 3, timeout: int = 15) -> list:
                  "Accept-Language": "en-US,en;q=0.9"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            html = resp.read().decode("utf-8", errors="replace")
+        with trace.call("youtube.com (scrape)", "reference videos",
+                        kind="hop"):
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                html = resp.read().decode("utf-8", errors="replace")
     except Exception:
         return []
     ids, seen, out = [], set(), []

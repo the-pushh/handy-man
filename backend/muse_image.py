@@ -18,6 +18,8 @@ import os
 import urllib.request
 import urllib.error
 
+from . import trace
+
 MODEL_ID = "muse-image-1.0"
 
 # Evidence treatment is monochrome + orange: every part gets the same
@@ -106,19 +108,27 @@ def highlight(image_bytes: bytes, labels: list,
         headers={"Content-Type": "application/json",
                  "Authorization": f"Bearer {key}"},
     )
-    try:
-        with urllib.request.urlopen(req, timeout=300) as resp:
-            reply = json.loads(resp.read().decode())
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode(errors="replace")[:300]
-        raise RuntimeError(f"Muse Image API error {exc.code}: {body}") from exc
-    for item in reply.get("output", []):
-        if (item.get("type") == "image_generation_call"
-                and item.get("status") == "completed"
-                and item.get("result")):
-            return {"image_b64": item["result"], "mime": "image/webp",
-                    "legend": legend}
-    raise RuntimeError(
+    with trace.call(MODEL_ID, "highlight: " + ", ".join(
+            e["label"] for e in legend), image_bytes) as rec:
+        try:
+            with urllib.request.urlopen(req, timeout=300) as resp:
+                reply = json.loads(resp.read().decode())
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode(errors="replace")[:300]
+            raise RuntimeError(
+                f"Muse Image API error {exc.code}: {body}") from exc
+        rec["usage"] = reply.get("usage")
+        for item in reply.get("output", []):
+            if (item.get("type") == "image_generation_call"
+                    and item.get("status") == "completed"
+                    and item.get("result")):
+                rec["output_thumb"] = trace.thumbnail(
+                    base64.b64decode(item["result"]))
+                rec["parsed"] = {"legend": legend,
+                                 "image": "edited image returned"}
+                return {"image_b64": item["result"], "mime": "image/webp",
+                        "legend": legend}
+        raise RuntimeError(
         "Muse Image returned no edited image "
         f"({json.dumps(reply.get('output', []))[:200]})"
     )

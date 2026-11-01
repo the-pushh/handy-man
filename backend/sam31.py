@@ -26,6 +26,8 @@ import urllib.error
 
 from PIL import Image
 
+from . import trace
+
 MODEL_ID = "sam-3.1"
 DEFAULT_PATH = "/responses"
 
@@ -91,7 +93,11 @@ def segment(image_bytes: bytes, labels: list, threshold: float = 0.3) -> list:
             ],
         }],
     }
-    reply = _request(endpoint, key, payload)
+    with trace.call(MODEL_ID, "segment: " + ", ".join(labels),
+                    image_bytes) as rec:
+        reply = _request(endpoint, key, payload)
+        rec["usage"] = reply.get("usage")
+        rec["raw_text"] = json.dumps(reply)[:2000]
     text = _extract_text(reply)
     if not text.strip():
         raise RuntimeError(
