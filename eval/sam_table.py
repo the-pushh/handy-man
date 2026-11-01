@@ -39,7 +39,10 @@ OUT = ROOT / "eval" / "out"
 # Phrases per device, picked by the photo's filename prefix.
 PHRASES = {
     "ac_front": ["air conditioner", "front panel", "vent", "display"],
-    "ac_panel": ["air filter", "filter", "mesh filter", "front panel"],
+    "ac_panel": ["white mesh", "grey mesh", "dusty filter", "air filter",
+                 "mesh filter", "filter", "front panel", "coil"],
+    "ac_filter": ["white mesh", "grey mesh", "dusty filter", "air filter",
+                  "mesh filter", "filter", "front panel", "coil"],
     "inverter_front": ["inverter", "display", "LED", "switch", "socket",
                        "power cable"],
     "inverter_back": ["inverter", "display", "LED", "switch", "socket",
