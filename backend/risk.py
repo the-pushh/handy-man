@@ -85,24 +85,23 @@ _CLAUSE = re.compile(r"[,;.:\n]|\bthen\b|\band\b", re.I)
 def _acts_on(verbs: list, *objects: str):
     """True when a step's clause applies one of `verbs` to an object.
 
-    The verb and the object must sit in the same clause, at most four
-    words apart (either order). "Lift the front panel up from the front
+    The verb must come first and the object follow in the same clause,
+    at most six words later. Object-then-verb is a description of state
+    ("the louver on the casing is fully open"), not an action. "Lift the front panel up from the front
     casing" does not open the casing; "unscrew the indoor unit casing"
     does.
     """
     v = "(?:" + "|".join(verbs) + r")\w*"
     o = "(?:" + "|".join(objects) + ")"
-    # Between verb and object: up to four words, none a preposition, so
+    # Between verb and object: up to six words, none a preposition, so
     # "swing the louver fully open on the front casing" (open as a
     # state, casing as a location) does not read as opening the casing.
     gap = r"(?:\s+(?!(?:on|in|at|from|under|behind|near|with|by|into|onto|over|beside|inside|below|above)\b)[^\s]+)"
-    fwd = re.compile(rf"\b{v}{gap}{{0,4}}?\s+{o}", re.I)
-    back = re.compile(rf"\b{o}\w*(?:\s+[^\s]+){{0,3}}?\s+{v}", re.I)
+    fwd = re.compile(rf"\b{v}{gap}{{0,6}}?\s+{o}", re.I)
 
     def check(text: str) -> bool:
         text = _NEGATED.sub(" ", text)
-        return any(fwd.search(c) or back.search(c)
-                   for c in _CLAUSE.split(text) if c.strip())
+        return any(fwd.search(c) for c in _CLAUSE.split(text) if c.strip())
     return check
 
 
