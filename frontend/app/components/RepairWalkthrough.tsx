@@ -6,6 +6,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { resolveApiBase } from "../lib/apiBase";
+import { kb, mark } from "../lib/timeline";
 
 interface Instance {
   label: string;
@@ -187,6 +188,7 @@ export default function RepairWalkthrough({
   }
 
   async function speakOnce(line: string): Promise<void> {
+    mark("tts request", JSON.stringify(line.slice(0, 40)));
     try {
       const r = await fetch(`${API}/api/tts`, {
         method: "POST",
@@ -194,6 +196,7 @@ export default function RepairWalkthrough({
         body: JSON.stringify({ text: line, lang: "en" }),
       });
       const data = await r.json();
+      mark("tts audio received", data.audio_b64 ? "" : "fallback");
       if (data.audio_b64) {
         const bytes = Uint8Array.from(atob(data.audio_b64), (c) =>
           c.charCodeAt(0)
@@ -202,7 +205,10 @@ export default function RepairWalkthrough({
           new Blob([bytes], { type: data.mime || "audio/wav" })
         );
         await new Promise<void>((res) => {
-          const done = () => res();
+          const done = () => {
+            mark("tts playback ended");
+            res();
+          };
           const a = new Audio(url);
           a.onended = done;
           a.onerror = done;
@@ -272,12 +278,17 @@ export default function RepairWalkthrough({
         "Figuring out the appliance and its parts."
     );
     try {
+      mark("walkthrough analyze sent", `${fs.length} stills ${kb(fs.reduce((n, f) => n + f.size, 0))}`);
       const fd = new FormData();
       fd.append("file", fs[0], "still-0.jpg");
       fs.slice(1).forEach((s, i) => fd.append("stills", s, `still-${i + 1}.jpg`));
       fd.append("text", t);
       const r = await fetch(`${base}/api/repair/analyze`, { method: "POST", body: fd });
       const data = await r.json();
+      mark("walkthrough analyze returned", `${data.status} trace=${(data.trace || []).length} calls`);
+      for (const c of data.trace || []) {
+        mark(`  server: ${c.model} ${c.purpose}`, `+${c.start_s}s took ${(c.latency_ms / 1000).toFixed(1)}s ${c.status}`);
+      }
       if (myRun !== runSeq.current) return; // superseded by a newer run
       if (data.status !== "ok") {
         const notes: string = data.notes || "";

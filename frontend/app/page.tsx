@@ -9,6 +9,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getSpeechRecognition } from "./lib/speech";
 import type { SpeechRecognitionLike } from "./lib/speech";
 import { resolveApiBase } from "./lib/apiBase";
+import { kb, mark, turnStart } from "./lib/timeline";
 import Orb from "./components/Orb";
 import type { OrbState } from "./components/Orb";
 import RepairWalkthrough from "./components/RepairWalkthrough";
@@ -214,6 +215,7 @@ export default function Home() {
   }, []);
 
   async function say(line: string): Promise<void> {
+    mark("tts request", JSON.stringify(line.slice(0, 40)));
     try {
       const r = await fetch(`${apiBase()}/api/tts`, {
         method: "POST",
@@ -221,6 +223,7 @@ export default function Home() {
         body: JSON.stringify({ text: line, lang: langRef.current.tts }),
       });
       const data = await r.json();
+      mark("tts audio received", data.audio_b64 ? kb(data.audio_b64.length * 0.75) : "fallback");
       if (data.audio_b64) {
         const bytes = Uint8Array.from(atob(data.audio_b64), (c) =>
           c.charCodeAt(0)
@@ -249,6 +252,7 @@ export default function Home() {
           }
           a.onended = () => {
             aiOscRef.current = false;
+            mark("tts playback ended");
             finish();
           };
           a.onerror = () => {
@@ -378,11 +382,14 @@ export default function Home() {
     stopListeningInner();
     setTranscript(said);
     issueRef.current = said;
+    turnStart("turn start (issue heard)");
     await detectIssueLang(said);
+    mark("detect-language done");
     setOrb("thinking");
     setStatusMsg("Looking at what I can see…");
     const frame = provided || pendingFrameRef.current || (await captureStillAsync());
     pendingFrameRef.current = null;
+    mark("frame captured", frame ? kb(frame.size) : "none");
     if (!frame) {
       setStatusMsg("Camera not ready yet — try again.");
       setOrb("idle");
@@ -397,6 +404,7 @@ export default function Home() {
         body: fd,
       });
       const data = await r.json();
+      mark("analyze(1 still, no text) returned", `trace=${(data.trace || []).length} calls`);
       const device: string =
         data.device ||
         (data.notes || "").replace("The appliance is ", "").replace(/\.$/, "") ||
@@ -410,6 +418,7 @@ export default function Home() {
         body: hfd,
       });
       const hdata = await hr.json();
+      mark("highlight returned", hdata.status);
       const curl: Confirm = {
         device,
         overlayURL: hdata.overlay?.image_b64
@@ -421,6 +430,7 @@ export default function Home() {
       setConfirm(curl);
       setStatusMsg("");
       setOrb("asking");
+      mark("confirm card rendered");
       await say(`Is this the ${device} you need help with? Say yes or no.`);
       listenForConfirm();
     } catch (e) {
@@ -434,6 +444,7 @@ export default function Home() {
   async function confirmYes() {
     const c = confirmRef.current;
     if (!c) return;
+    mark("user said yes");
     stopListeningInner();
     confirmRef.current = null;
     setConfirm(null);
@@ -450,6 +461,7 @@ export default function Home() {
       setStatusMsg(`Capturing view ${i + 1} of ${INTAKE_STILLS}…`);
       void say(prompts[i]);
       const still = await captureStillAsync();
+      mark(`intake still ${i + 1}`, still ? kb(still.size) : "none");
       if (still) stills.push(still);
     }
     if (!stills.length) {
