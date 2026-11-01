@@ -49,8 +49,42 @@ def _config() -> tuple:
     return url, key, model
 
 
+# Gateway tail latency: the same diagnose (same tokens) usually takes
+# 5-8s but occasionally 20s+. If a call has not returned by its normal
+# worst case, one identical "hedge" request is sent and whichever
+# finishes first wins. Both show in the trace.
+HEDGE_AFTER_S = {"perceive": 7.0, "diagnose": 8.0}
+
+
 def _post(url: str, key: str, payload: dict, timeout: int = 120,
           purpose: str = "spark", image: bytes | None = None) -> dict:
+    hedge = HEDGE_AFTER_S.get(purpose)
+    if not hedge:
+        return _post_once(url, key, payload, timeout, purpose, image)
+    from concurrent.futures import (FIRST_COMPLETED, ThreadPoolExecutor,
+                                    wait)
+    pool = ThreadPoolExecutor(max_workers=2)
+    try:
+        first = trace.run_in(pool, _post_once, url, key, payload, timeout,
+                             purpose, image)
+        done, _ = wait([first], timeout=hedge)
+        if done:
+            return first.result()
+        second = trace.run_in(pool, _post_once, url, key, payload, timeout,
+                              purpose + " (hedge)", image)
+        pending = {first, second}
+        while pending:
+            done, pending = wait(pending, return_when=FIRST_COMPLETED)
+            for fut in done:
+                if fut.exception() is None:
+                    return fut.result()
+        return first.result()  # both failed: raise the first error
+    finally:
+        pool.shutdown(wait=False)  # the slower call finishes in background
+
+
+def _post_once(url: str, key: str, payload: dict, timeout: int,
+               purpose: str, image: bytes | None) -> dict:
     with trace.call(payload.get("model", "?"), purpose, image) as rec:
         reply = _post_raw(url, key, payload, timeout)
         rec["usage"] = reply.get("usage")
