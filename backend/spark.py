@@ -334,10 +334,15 @@ def merge_analyses(analyses: list) -> dict:
 
 def diagnose(appliance: str, device: str | None, labels: list,
              user_text: str, model: str | None = None,
-             sound: str = "") -> dict:
+             sound: str = "", answers: str = "",
+             markings: list | None = None) -> dict:
     """Call 2 (text-only): causes, relevant parts, steps, safety, fix check.
 
     Split from perception so neither reply hits the token ceiling.
+    Without `answers` it may also return up to two look-only questions
+    whose answer changes the plan (which light is on, where a float
+    sits). With `answers` (the owner's replies) it decides and asks
+    nothing more.
     """
     url, key, default_model = _config()
     prompt = (
@@ -353,14 +358,35 @@ def diagnose(appliance: str, device: str | None, labels: list,
         '"part": "part label from the list or null", '
         '"caution": "what not to touch on this step or null"}], '
         '"safety": ["unplug and remove the battery before opening"], '
+        '"questions": [{"ask": "Which light is on?", '
+        '"part": "part label or null", '
+        '"options": ["Green CHARGING", "Red LOW BATT", "None"]}], '
         '"resolution": "how to verify the fix worked and what to do '
         'if it did not"}. '
         f"Appliance: {appliance or 'unknown'}. "
         f"Exact device: {device or 'unknown'}. "
         f"Visible parts: {', '.join(labels) or 'none listed'}. "
+        + (f"Printed on the device: {'; '.join(markings)}. "
+           if markings else "") +
         f"The user wants: {user_text.strip()} "
         + (f"Measured sound evidence (deterministic, trust these "
-           f"numbers): {sound.strip()} " if sound.strip() else "") +
+           f"numbers): {sound.strip()} " if sound.strip() else "")
+        + (f"The owner already checked: {answers.strip()} Base the "
+           "causes, steps and headline on these answers, and return "
+           "an empty questions list. " if answers.strip() else
+           "questions: at most 2 things the owner can check right now "
+           "by only looking or listening (no tools, no opening, no "
+           "touching anything electrical) whose answer would change the "
+           "plan, e.g. which indicator light is lit, or, for anything on "
+           "a lead-acid battery (inverter, UPS), where the battery's "
+           "water-level floats sit (ask even when the battery is out of "
+           "frame: the owner can walk over and look). Ask in plain "
+           "everyday words, at most "
+           "8 words. 2-4 short options each, using the exact words "
+           "printed on the device when there are any. Empty list when "
+           "the photo, the "
+           "report and the sound already settle it. Steps are still "
+           "your best plan for the most likely answer. ") +
         "If it is a setup or assembly task, steps are the build/install "
         "order with parts and tools needed; if a repair, steps diagnose "
         "and fix. Each step must name WHAT and exactly HOW, referencing "
@@ -377,11 +403,12 @@ def diagnose(appliance: str, device: str | None, labels: list,
         "model": model or default_model,
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 8000,
-        "reasoning_effort": "low",
+        # The answers pass is the verdict: it gets more reasoning.
+        "reasoning_effort": "medium" if answers.strip() else "low",
         "response_format": {"type": "json_object"},
     }
     parsed = _complete(url, key, payload, ["causes", "steps"],
-                       purpose="diagnose")
+                       purpose="decide" if answers.strip() else "diagnose")
     causes = [str(c).strip() for c in parsed.get("causes", [])
               if str(c).strip()][:5]
     relevant = [str(r).strip() for r in parsed.get("relevant", [])
@@ -402,12 +429,23 @@ def diagnose(appliance: str, device: str | None, labels: list,
                           "part": None, "caution": None})
     safety = [str(x).strip() for x in parsed.get("safety", [])
               if str(x).strip()][:6]
+    questions = []
+    for q in parsed.get("questions", []) if not answers.strip() else []:
+        if not isinstance(q, dict) or not str(q.get("ask", "")).strip():
+            continue
+        opts = [str(o).strip() for o in q.get("options", [])
+                if str(o).strip()][:4]
+        if len(opts) < 2:
+            continue
+        questions.append({"ask": str(q["ask"]).strip(),
+                          "part": str(q.get("part") or "").strip() or None,
+                          "options": opts})
     words = str(parsed.get("headline", "")).split()
     headline = " ".join(words[:5]).rstrip(".,;") + "." if words else ""
     return {"issue": str(parsed.get("issue", "")).strip(),
             "headline": headline,
             "causes": causes, "relevant": relevant, "steps": steps[:8],
-            "safety": safety,
+            "safety": safety, "questions": questions[:2],
             "resolution": str(parsed.get("resolution", "")).strip()}
 
 

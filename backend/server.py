@@ -196,12 +196,15 @@ async def repair_analyze(file: UploadFile = File(...),
                           components: str = Form(""),
                           perception: str = Form(""),
                           sound: str = Form(""),
+                          answers: str = Form(""),
                           model: str | None = Form(None)):
     """Analyze, then attach every model call's trace record.
 
     `perception` (JSON) is the first look's Spark perception of this same
     still, sent back by the client so the walkthrough goes straight to
     diagnosis instead of perceiving the still a second time.
+    `answers` are the owner's replies to the first diagnosis's
+    questions ("Float level? Below the line."); the second pass decides.
 
     Uploads are read here; the blocking model calls run in a worker
     thread so they never stall the event loop (a stalled loop made
@@ -218,13 +221,14 @@ async def repair_analyze(file: UploadFile = File(...),
     except json.JSONDecodeError:
         prior = None
     out = await run_in_threadpool(_repair_analyze, images, text,
-                                  components, model, prior, sound)
+                                  components, model, prior, sound,
+                                  answers)
     out["trace"] = trace.export()
     return out
 
 
 def _repair_analyze(images, text, components, model, prior=None,
-                    sound=""):
+                    sound="", answers=""):
     """Repair flow: image in -> Muse Spark analysis + overlay highlights.
 
     One hosted gateway (MUSE_SPARK_API_URL/KEY): Spark
@@ -250,6 +254,7 @@ def _repair_analyze(images, text, components, model, prior=None,
     ask = ""
     inventory = []
     safety: list = []
+    questions: list = []
     headline = ""
     reuse = (isinstance(prior, dict) and isinstance(prior.get("components"), list)
              and len(images) == 1)
@@ -295,7 +300,9 @@ def _repair_analyze(images, text, components, model, prior=None,
                 diag = spark.diagnose(
                     notes.replace("The appliance is ", "").rstrip("."),
                     device or None, wanted, text, model=model,
-                    sound=sound)
+                    sound=sound, answers=answers,
+                    markings=(details.get("markings", [])
+                              + details.get("other", []))[:10])
             except Exception as exc:
                 return {"status": "diagnose-error", "detail": str(exc),
                         "notes": notes,
@@ -308,6 +315,7 @@ def _repair_analyze(images, text, components, model, prior=None,
             resolution = diag["resolution"]
             safety = diag["safety"]
             headline = diag.get("headline", "")
+            questions = diag.get("questions", [])
             diag_rel = [r.lower() for r in diag["relevant"]]
             relevant = [w for w in wanted if w.lower() in diag_rel]
         else:
@@ -319,10 +327,22 @@ def _repair_analyze(images, text, components, model, prior=None,
     verdict = judge(f"{device} {analysis.get('appliance') or ''}".strip(),
                     text, steps, causes)
     proposed = len(steps)
+    verdict["removed"] = [steps[i].get("check", "") + (
+        f": {steps[i].get('how')}" if steps[i].get("how") else "")
+        for i in verdict["blocked_steps"] if i < len(steps)]
     steps = [steps[i] for i in verdict["allowed_steps"]]
     verdict["proposed_steps"] = proposed
     verdict["headline"] = (verdict["spoken"] if verdict["verdict"] == "pro"
                            else headline)
+    # Questions are look-only checks whose answer can flip the verdict.
+    # The rules screen them like steps, and a danger symptom asks nothing.
+    if "danger-symptom" in verdict["fired"]:
+        questions = []
+    questions = [q for q in questions if judge(
+        f"{device} {analysis.get('appliance') or ''}".strip(), "",
+        [{"check": q["ask"], "how": " ".join(q["options"])}])["verdict"]
+        == "diy"]
+    verdict["final"] = not questions
     risk = {"level": "high" if verdict["verdict"] == "pro" else "standard",
             "hazard": verdict["rule"] or "", "reason": verdict["title"] or ""}
     from .muse_image import assign_legend
@@ -367,6 +387,8 @@ def _repair_analyze(images, text, components, model, prior=None,
             "issue": understood, "resolution": resolution,
             "device": device, "details": details, "ask": ask,
             "safety": safety,
+            "questions": questions,
+            "perception": analysis or None,
             "verdict": verdict,
             "risk": risk,
             "instances": [],
