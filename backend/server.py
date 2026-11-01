@@ -149,13 +149,18 @@ def tts(req: TTSRequest):
         detected = detect_language(req.text)
         code = detected["code"] or "eng"
     checkpoint = f"facebook/mms-tts-{code}"
+    trace.begin()
     try:
         with trace.call(checkpoint + " (local)", "speak", kind="hop"):
             wav = tts_local.synthesize(req.text, checkpoint,
                                        max_seconds=req.max_seconds)
+        recs = trace.export()
+        for r in recs:
+            r["parsed"] = {"text": req.text, "lang": code,
+                           "audio_kb": len(wav) // 1024}
         return {"audio_b64": base64.b64encode(wav).decode(),
                 "mime": "audio/wav", "model": checkpoint + " (local)",
-                "lang": code}
+                "lang": code, "trace": recs}
     except Exception as exc:
         return {"fallback": True, "text": req.text, "lang": code,
                 "error": str(exc)}
