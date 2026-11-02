@@ -105,6 +105,7 @@ def _post_once(url: str, key: str, payload: dict, timeout: int,
 
 def _post_raw(url: str, key: str, payload: dict, timeout: int) -> dict:
     import urllib.error
+    import urllib.request
     req = urllib.request.Request(
         url + "/chat/completions",
         data=json.dumps(payload).encode(),
@@ -375,6 +376,10 @@ def diagnose(appliance: str, device: str | None, labels: list,
         '"difficulty": "easy", "minutes": 20, '
         '"tools": ["soft brush", "bucket of water"], '
         '"confidence": "high", '
+        '"needs_pro": false, '
+        '"trade": "who repairs this kind of machine when the owner '
+        'cannot, 1-4 words: bicycle mechanic, printer repair, AC '
+        'technician, electrician", '
         '"based_on": ["photo: dust on the front grille", '
         '"you said: airflow weak on high fan"]}. '
         f"Appliance: {appliance or 'unknown'}. "
@@ -415,9 +420,15 @@ def diagnose(appliance: str, device: str | None, labels: list,
         "about the machine itself, never about things around it in the "
         "photo (decorations, furniture, the wall). Steps are only "
         "what the owner can do; when a professional may be needed after "
-        "them, say when in resolution, not as a step. Only when the owner "
-        "can do nothing useful is the single step the professional "
-        "visit. Always "
+        "them, say when in resolution, not as a step. Never propose a "
+        "step that touches wiring, sockets, battery terminals or cables, "
+        "gas fittings, or opens a sealed casing: the safety rules block "
+        "those. needs_pro is true only when the likely fix itself needs "
+        "one of those or a technician's tools or parts; false when safe "
+        "owner checks may well fix it. "
+        "When the cause is unclear, give the most useful safe checks for "
+        "the likely causes. Only when the owner truly can do nothing "
+        "useful is the single step the professional visit. Always "
         "include safety: power/battery to disconnect, non-conductive "
         "tools (wood/plastic), parts to never touch, water/heat "
         "warnings where relevant; each step gets its own caution. "
@@ -429,8 +440,10 @@ def diagnose(appliance: str, device: str | None, labels: list,
         "'you checked:' or 'sound:', taken only from what is given here "
         "(never brand names, labels or background that do not bear on "
         "the finding). Leave these out when steps are empty. "
-        "headline is the finding as one spoken sentence of at most 5 "
-        "words in total, starting with \"Looks like\". "
+        "headline is the likely fault as one spoken sentence of at most "
+        "5 words in total, starting with \"Looks like\" and naming the "
+        "fault itself (Looks like a weak capacitor), never who should "
+        "fix it. "
         "Emit compact JSON, start with {, keep it under 700 tokens."
     )
     payload = {
@@ -480,6 +493,8 @@ def diagnose(appliance: str, device: str | None, labels: list,
     words = str(parsed.get("headline", "")).split()
     headline = " ".join(words[:5]).rstrip(".,;") + "." if words else ""
     return {"issue": str(parsed.get("issue", "")).strip(),
+            "trade": " ".join(str(parsed.get("trade") or "").split()[:4]),
+            "needs_pro": parsed.get("needs_pro") is True,
             "headline": headline,
             "causes": causes, "relevant": relevant, "steps": steps[:8],
             "safety": safety, "questions": questions[:2],
@@ -617,7 +632,9 @@ def spot(image_bytes: bytes, want: str = "", model: str | None = None) -> dict:
                 {"type": "text", "text": (
                     f"{target} Reply with only compact JSON: "
                     '{"item": "<what they mean, 1-3 words, e.g. air '
-                    'conditioner>", "name": "<that object as seen in this '
+                    'conditioner; always filled from their words, even '
+                    'when it is not in the photo>", "name": "<that object '
+                    'as seen in this '
                     "photo, at most 6 words, with the brand if a logo is "
                     'readable; empty if it is not in the photo>", "look": '
                     '"<2-4 plain visual words for the whole object, colour '
@@ -686,7 +703,11 @@ def quick_checks(machine: str, issue: str, model: str | None = None) -> list:
     parsed = _complete(url, key, payload, ["checks"], purpose="quick checks")
     out = []
     for c in parsed.get("checks", []):
-        if isinstance(c, dict) and str(c.get("check", "")).strip():
+        text = str(c.get("check", "")).strip() if isinstance(c, dict) else ""
+        # Placeholders ("check 1") and one-word stubs are not checks.
+        if len(text.split()) < 2 or re.fullmatch(r"(?:check|step|item)\s*\d+", text, re.I):
+            continue
+        if isinstance(c, dict) and text:
             out.append({"check": str(c["check"]).strip(),
                         "how": str(c.get("how", "")).strip(),
                         "part": None, "caution": None})
