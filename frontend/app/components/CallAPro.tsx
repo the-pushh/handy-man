@@ -112,9 +112,7 @@ export default function CallAPro({ api, trade, brief }: { api: string; trade: st
 
   return (
     <section className="call-pro">
-      <BriefCard brief={brief} />
-
-      <p className="sheet-label" style={{ marginTop: 16 }}>Nearby {trade}</p>
+      <p className="sheet-label">Nearby {trade}</p>
       {state.kind === "locating" && (
         <Busy compact label="Finding where you are…" hint="Your phone's location, used only for this search." slowAfter={8} />
       )}
@@ -170,6 +168,12 @@ export default function CallAPro({ api, trade, brief }: { api: string; trade: st
         </ol>
       )}
       {state.kind === "ok" && <p className="evidence-note places-credit">Listings from Google Maps.</p>}
+
+      {/* What to tell them: after the list, so the people to call come
+          first; Text on a listing already sends this. */}
+      <div style={{ marginTop: 16 }}>
+        <BriefCard brief={brief} />
+      </div>
     </section>
   );
 }

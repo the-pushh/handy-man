@@ -152,6 +152,8 @@ export default function RepairWalkthrough({
     other?: string[];
   }>({});
   const [stepIdx, setStepIdx] = useState<number>(0);
+  // One screen at a time: the verdict (main), then the steps on tap.
+  const [view, setView] = useState<"main" | "steps">("main");
   const [stepLoading, setStepLoading] = useState<boolean>(false);
   const [fixed, setFixed] = useState<boolean>(false);
   const [booking, setBooking] = useState<boolean>(false);
@@ -176,6 +178,11 @@ export default function RepairWalkthrough({
   const imgRef = useRef<HTMLImageElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileRef = useRef<File | null>(null);
+  // SAM's outlines for this run (a step waits for them instead of
+  // racing them), and Muse Image fallbacks prepared ahead per part.
+  const samRef = useRef<Promise<Instance[]>>(Promise.resolve([]));
+  const highlightRef = useRef<Map<string, Promise<string | null>>>(new Map());
+  const highlightChain = useRef<Promise<unknown>>(Promise.resolve());
   // The re-check's "after" still: run 2 starts from it.
   const afterRef = useRef<File | null>(null);
   // "Still broken": what is still wrong, by voice or typed.
@@ -184,10 +191,15 @@ export default function RepairWalkthrough({
   const askedFixed = useRef<boolean>(false);
 
   /* Indices of SAM instances that belong to a step's part. */
+  /* The step's part: only SAM's best match for it (a second, weaker
+     match is usually the wrong thing and clutters the photo). */
   function masksFor(part: string | null | undefined, list: Instance[]): number[] {
     if (!part) return [];
     const want = part.toLowerCase();
-    return list.flatMap((inst, i) => (inst.label.toLowerCase() === want ? [i] : []));
+    const mine = list.flatMap((inst, i) => (inst.label.toLowerCase() === want ? [i] : []));
+    if (mine.length < 2) return mine;
+    const best = mine.reduce((a, b) => ((list[b].score ?? 0) > (list[a].score ?? 0) ? b : a));
+    return [best];
   }
 
   /* Show only the current step's SAM masks (all of them when the step
@@ -457,6 +469,7 @@ export default function RepairWalkthrough({
     setFixed(false);
     setBooking(false);
     setDone(null);
+    setView("main");
     // What the model works on: the owner's words, plus on run 2+ what
     // was tried and what is still wrong.
     const ask = followUp ? `${t}. ${followUp}` : t;
@@ -554,40 +567,34 @@ export default function RepairWalkthrough({
       // part SAM could not find.
       const segLabels: unknown[] = data.segment_labels || [];
       const still = fileRef.current;
+      highlightRef.current = new Map();
       if (segLabels.length && still) {
-        void (async () => {
+        samRef.current = (async () => {
           const sfd = new FormData();
           sfd.append("file", still);
           sfd.append("labels", JSON.stringify(segLabels));
-          let sam: Instance[] = [];
           try {
             const sd = await (await fetch(`${base}/api/segment`, { method: "POST", body: sfd })).json();
-            sam = sd.instances || [];
+            return (sd.instances || []) as Instance[];
           } catch (_) {
-            sam = [];
-          }
-          if (myRun !== runSeq.current) return;
-          setInstances(sam);
-          const part = foundSteps[0]?.part;
-          const covered = sam.length ? showStepMasks(part, sam) : false;
-          mark("sam masks shown", `${sam.length} masks, step 1 ${covered ? "covered" : "not covered"}`);
-          setStatus("");
-          if (covered || !part) return;
-          const hfd = new FormData();
-          hfd.append("file", still);
-          hfd.append("part", part);
-          hfd.append("legend", JSON.stringify(data.legend || []));
-          mark("highlight requested", part);
-          try {
-            const hd = await (await fetch(`${base}/api/repair/highlight`, { method: "POST", body: hfd })).json();
-            mark("highlight returned", hd.status);
-            if (myRun === runSeq.current && hd.overlay?.image_b64) {
-              setOverlayURL(`data:${hd.overlay.mime || "image/webp"};base64,${hd.overlay.image_b64}`);
-            }
-          } catch (_) {
-            // Step text still guides without a picture.
+            return [] as Instance[];
           }
         })();
+        void samRef.current.then((sam) => {
+          if (myRun !== runSeq.current) return;
+          setInstances(sam);
+          showStepMasks(null, sam);
+          setStatus("");
+          const missed = foundSteps
+            .map((st: { part: string | null }) => st.part)
+            .filter((part: string | null): part is string => !!part && !masksFor(part, sam).length);
+          mark("sam masks shown", `${sam.length} masks; preparing ${missed.length} illustrated highlight(s): ${missed.join(", ")}`);
+          // Steps SAM missed: illustrated highlights, one after another in
+          // the background, so a step rarely waits for one.
+          for (const part of missed) void fetchHighlight(part, still, base, data.legend || []);
+        });
+      } else {
+        samRef.current = Promise.resolve([]);
       }
       setStatus(segLabels.length ? "Outlining parts…" : "");
       const foundSafety: string[] = data.safety || [];
@@ -649,13 +656,10 @@ export default function RepairWalkthrough({
         setDetails(data.details);
       }
       setStepIdx(0);
-      if (foundSteps.length) {
-        await speakStep(
-          foundSteps[0],
-          0,
-          foundSteps.length,
-          data.legend || overlay?.legend || []
-        );
+      // Steps start when the owner taps "Show me the steps" (one screen
+      // at a time), so the verdict screen only says what to tap.
+      if (v && foundSteps.length) {
+        void say(v.verdict === "pro" ? "You can call a technician from here." : "Tap show me the steps when you're ready.");
       }
     } catch (e) {
       const err = e as Error;
@@ -701,44 +705,66 @@ export default function RepairWalkthrough({
     await last;
   }
 
+  /* Muse Image highlight for one part, made once and reused. Requests
+     run one at a time (a queue), so the next step's is not starved. */
+  function fetchHighlight(
+    part: string,
+    still: File,
+    base: string,
+    leg: { label: string; color: string; tag?: string }[]
+  ): Promise<string | null> {
+    const key = part.toLowerCase();
+    const have = highlightRef.current.get(key);
+    if (have) return have;
+    const job = highlightChain.current.then(async () => {
+      const fd = new FormData();
+      fd.append("file", still);
+      fd.append("part", part);
+      fd.append("legend", JSON.stringify(leg));
+      mark("highlight requested", part);
+      try {
+        const d = await (await fetch(`${base}/api/repair/highlight`, { method: "POST", body: fd })).json();
+        mark("highlight returned", `${part}: ${d.status}`);
+        if (!d.overlay?.image_b64) return null;
+        const fresh = (d.overlay.legend || []).filter(
+          (e: { label: string }) => !leg.some((x) => x.label.toLowerCase() === e.label.toLowerCase())
+        );
+        if (fresh.length) setLegend((prev) => [...prev, ...fresh]);
+        return `data:${d.overlay.mime || "image/webp"};base64,${d.overlay.image_b64}`;
+      } catch (_) {
+        return null;
+      }
+    });
+    highlightChain.current = job.catch(() => null);
+    highlightRef.current.set(key, job);
+    return job;
+  }
+
   async function goStep(i: number): Promise<void> {
     if (i < 0 || i >= steps.length || !fileRef.current) return;
     hush(); // the previous step never talks over this one
     setStepIdx(i);
     const st = steps[i];
-    // SAM already outlined this part: show its mask, skip muse-image.
-    if (showStepMasks(st.part, instances)) {
+    // Speak right away; the highlight lands while the step is read.
+    const spoken = speakStep(st, i, steps.length);
+    setStepLoading(true);
+    // SAM's outlines may still be on their way: wait for them (a few
+    // seconds at most) rather than racing to a slower illustration.
+    const sam = await Promise.race([
+      samRef.current,
+      new Promise<Instance[]>((r) => setTimeout(() => r(instances), 6000)),
+    ]);
+    if (showStepMasks(st.part, sam)) {
       setOverlayURL("");
+      mark("step highlight", `${i + 1}: SAM outline of ${st.part}`);
     } else if (st.part) {
-      setStepLoading(true);
-      try {
-        const fd = new FormData();
-        fd.append("file", fileRef.current);
-        fd.append("part", st.part);
-        fd.append("legend", JSON.stringify(legend));
-        const r = await fetch(`${API}/api/repair/highlight`, {
-          method: "POST",
-          body: fd,
-        });
-        const data = await r.json();
-        if (data.overlay?.image_b64) {
-          setOverlayURL(
-            `data:${data.overlay.mime || "image/webp"};base64,${data.overlay.image_b64}`
-          );
-          // Legend stays canonical for the whole walkthrough: only
-          // merge in entries for parts not already listed.
-          const known = new Set(legend.map((e) => e.label.toLowerCase()));
-          const fresh = (data.overlay.legend || []).filter(
-            (e: { label: string }) => !known.has(e.label.toLowerCase())
-          );
-          if (fresh.length) setLegend((prev) => [...prev, ...fresh]);
-        }
-      } catch (_) {
-        // Keep the previous highlight; the step text still guides.
-      }
-      setStepLoading(false);
+      setOverlayURL("");
+      const url = await fetchHighlight(st.part, fileRef.current, API, legend);
+      if (url) setOverlayURL(url);
+      mark("step highlight", `${i + 1}: ${url ? "illustrated" : "none"} for ${st.part}`);
     }
-    await speakStep(st, i, steps.length);
+    setStepLoading(false);
+    await spoken;
   }
 
   /* Last step done: camera re-check of the part, then the Done card. */
@@ -863,44 +889,72 @@ export default function RepairWalkthrough({
   }
 
 
+  function showSteps(): void {
+    mark("tap", "show me the steps");
+    setView("steps");
+    void goStep(0);
+  }
+
+  function back(): void {
+    hush();
+    if (booking && !done) {
+      mark("tap", "back from technicians");
+      setBooking(false);
+    } else if (view === "steps" && !done) {
+      mark("tap", "back to verdict");
+      setView("main");
+    }
+  }
+
   const busy = status && !failure ? status : "";
   const name = appliance || device || "your device";
   const removed = verdict?.blocked_steps.length || 0;
+  const article = (w: string) => (/^[aeiou]/i.test(w) ? "an" : "a");
+  const trade = verdict?.trade || "technician";
+  const screen: "fail" | "pros" | "done" | "steps" | "verdict" | "question" | "working" = failure
+    ? "fail"
+    : booking
+      ? "pros"
+      : done
+        ? "done"
+        : view === "steps" && steps.length
+          ? "steps"
+          : verdict
+            ? "verdict"
+            : questions[answered.length]
+              ? "question"
+              : "working";
+  const step = steps[stepIdx];
+  const stepTag = step?.part
+    ? legend.find((e) => e.label.toLowerCase() === step.part!.toLowerCase())?.tag
+    : undefined;
+  const canBack = (screen === "steps" || screen === "pros") && !done;
 
   return (
-    <section className="walk">
-      <header className="walk-head">
-        <p className="sheet-label">{name}</p>
-        <p className="walk-said">&ldquo;{issue}&rdquo;</p>
-        {busy && (
-          <Busy
-            label={busy === "Working it out…" && attempt > 1 ? `Run ${attempt}: working out what's still wrong…` : busy}
-            hint={BUSY[busy]?.hint || ""}
-            slowAfter={BUSY[busy]?.slowAfter || 0}
-          />
+    <section className="walk screened">
+      <header className="walk-bar">
+        {canBack ? (
+          <button type="button" className="walk-icon" onClick={back} aria-label="Back">
+            ←
+          </button>
+        ) : (
+          <span className="walk-icon-space" />
         )}
+        <div className="walk-title">
+          <p className="sheet-label">
+            {name}
+            {attempt > 1 ? ` · run ${attempt} of ${MAX_RUNS}` : ""}
+          </p>
+          <p className="walk-said">&ldquo;{issue}&rdquo;</p>
+        </div>
+        <button type="button" className="walk-icon" onClick={onClose} aria-label="Close">
+          ✕
+        </button>
       </header>
-
-      {failure && (
-        <section className="fail-card" role="alert">
-          <p className="fail-title">{failure.title}</p>
-          <p>{failure.hint}</p>
-          <div className="row">
-            <button type="button" className="btn-primary" onClick={() => void run(files, issue, API)}>
-              Try again
-            </button>
-            <button type="button" className="btn-outline" onClick={onClose}>
-              Point the camera again
-            </button>
-          </div>
-        </section>
-      )}
 
       {needBase && (
         <div className="fail-card">
-          <p>
-            Paste the backend address (it changes every run; remembered in this browser only):
-          </p>
+          <p>Paste the backend address (remembered in this browser only):</p>
           <input
             value={baseInput}
             onChange={(e) => setBaseInput(e.target.value)}
@@ -931,16 +985,18 @@ export default function RepairWalkthrough({
         </div>
       )}
 
-      {imgURL && (
+      {/* The photo: every screen except the final check (before/after)
+          and the technician list. On a step it shows that step's part. */}
+      {imgURL && screen !== "done" && screen !== "pros" && (
         <figure className="walk-photo">
-          <div style={{ position: "relative" }}>
+          <div className="photo-box">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img ref={imgRef} src={overlayURL || imgURL} alt={name} />
             <canvas ref={canvasRef} className="mask-layer" hidden={!!overlayURL} />
           </div>
           {overlayURL ? (
-            <figcaption>Illustrative highlight (muse-image), not a measured outline</figcaption>
-          ) : instances.length > 0 ? (
+            <figcaption>Illustrative highlight (Muse Image), not a measured outline</figcaption>
+          ) : instances.length > 0 && screen !== "steps" ? (
             <figcaption>
               Outlined by SAM 3.1:{" "}
               {[...new Set(instances.map((inst) => inst.label))].map((label) => {
@@ -957,212 +1013,316 @@ export default function RepairWalkthrough({
                   >
                     {label}
                     {best ? ` ${Math.round(best * 100)}%` : ""}
-                    {mine.length > 1 ? ` ×${mine.length}` : ""}
                   </button>
                 );
               })}
             </figcaption>
+          ) : screen === "steps" && step?.part ? (
+            <figcaption>
+              {stepTag && <span className="tag-letter active">{stepTag}</span>} {step.part}
+            </figcaption>
           ) : null}
         </figure>
       )}
-      {stillURLs.length > 1 && (
-        <div className="views">
-          {stillURLs.map((u, i) => (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img key={i} src={u} alt={`view ${i + 1}`} />
-          ))}
-        </div>
-      )}
 
-      {(questions.length > 0 || answered.length > 0) && !verdict && (
-        <section className="question-card" aria-live="polite">
-          {answered.length > 0 && (
-            <ul className="checklist">
-              {answered.map((a, i) => (
-                <li key={i} className="done">
-                  <span aria-hidden="true">✓</span> {a.ask} <strong>{a.reply}</strong>
-                </li>
-              ))}
-            </ul>
-          )}
-          {questions[answered.length] && (
-            <>
-              <p className="sheet-label">
-                Quick check{questions.length > 1 ? ` ${answered.length + 1} of ${questions.length}` : ""}
-              </p>
-              <p className="question">{questions[answered.length].ask}</p>
-              <div className="chips">
-                {[...questions[answered.length].options, "Not sure"]
-                  .filter((o, i, all) => all.findIndex((x) => x.toLowerCase() === o.toLowerCase()) === i)
-                  .map((o) => (
-                    <button key={o} type="button" className="chip" onClick={() => reply(questions[answered.length], o)}>
-                      {o}
-                    </button>
-                  ))}
-              </div>
-              <p className="evidence-note">Just look. No need to touch or open anything.</p>
-            </>
-          )}
-        </section>
-      )}
+      <div className="walk-body">
+        {screen === "working" && busy && (
+          <Busy
+            label={busy === "Working it out…" && attempt > 1 ? `Run ${attempt}: working out what's still wrong…` : busy}
+            hint={BUSY[busy]?.hint || ""}
+            slowAfter={BUSY[busy]?.slowAfter || 0}
+          />
+        )}
+        {screen === "working" && !busy && ask && <p className="instruction">{ask}</p>}
 
-      {verdict && (
-        <section className={`verdict-card ${verdict.verdict}`}>
-          <p className="verdict-title">
-            {verdict.verdict === "pro"
-              ? "Call a pro"
-              : acceptRisk
-                ? "At your own risk"
-                : "You can fix this"}
-          </p>
-          {acceptRisk && verdict.verdict === "diy" && (
-            <p className="callout callout-caution own-risk">
-              You chose to go on: {acceptRisk.title}
+        {screen === "fail" && failure && (
+          <section className="fail-card" role="alert">
+            <p className="fail-title">{failure.title}</p>
+            <p>{failure.hint}</p>
+          </section>
+        )}
+
+        {screen === "question" && (
+          <section className="question-card" aria-live="polite">
+            {answered.length > 0 && (
+              <ul className="checklist">
+                {answered.map((a, i) => (
+                  <li key={i} className="done">
+                    <span aria-hidden="true">✓</span> {a.ask} <strong>{a.reply}</strong>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="sheet-label">
+              Quick check{questions.length > 1 ? ` ${answered.length + 1} of ${questions.length}` : ""}
             </p>
-          )}
-          {attempt > 1 && <p className="sheet-label">Run {attempt} of {MAX_RUNS}</p>}
-          {verdict.verdict === "diy" && verdict.headline && (
-            <p className="verdict-finding">{verdict.headline}</p>
-          )}
-          {verdict.verdict === "pro" && (
-            <p className="verdict-finding">{verdict.title}</p>
-          )}
-          {verdict.verdict === "diy" && (verdict.difficulty || verdict.minutes || (verdict.tools || []).length > 0) && (
-            <dl className="verdict-meta">
-              {verdict.difficulty && (
-                <div><dt>Difficulty</dt><dd>{cap(verdict.difficulty)}</dd></div>
+            <p className="question">{questions[answered.length].ask}</p>
+            <div className="chips">
+              {[...questions[answered.length].options, "Not sure"]
+                .filter((o, i, all) => all.findIndex((x) => x.toLowerCase() === o.toLowerCase()) === i)
+                .map((o) => (
+                  <button key={o} type="button" className="chip" onClick={() => reply(questions[answered.length], o)}>
+                    {o}
+                  </button>
+                ))}
+            </div>
+            <p className="evidence-note">Just look. No need to touch or open anything.</p>
+          </section>
+        )}
+
+        {screen === "verdict" && verdict && (
+          <>
+            <section className={`verdict-card ${verdict.verdict}`}>
+              <p className="verdict-title">
+                {verdict.verdict === "pro" ? "Call a pro" : acceptRisk ? "At your own risk" : "You can fix this"}
+              </p>
+              <p className="verdict-finding">
+                {verdict.verdict === "pro" ? verdict.title : verdict.headline}
+              </p>
+              {acceptRisk && verdict.verdict === "diy" && (
+                <p className="callout callout-caution own-risk">You chose to go on: {acceptRisk.title}</p>
               )}
-              {verdict.minutes && (
-                <div><dt>Time</dt><dd>~{verdict.minutes} min</dd></div>
+              {verdict.verdict === "diy" && (
+                <p className="verdict-line">
+                  {[
+                    verdict.difficulty && cap(verdict.difficulty),
+                    verdict.minutes && `~${verdict.minutes} min`,
+                    `${steps.length} step${steps.length === 1 ? "" : "s"}`,
+                    (verdict.tools || []).length ? verdict.tools!.join(", ") : "no tools",
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </p>
               )}
-              <div>
-                <dt>Tools</dt>
-                <dd>{(verdict.tools || []).length ? verdict.tools!.join(", ") : "None"}</dd>
-              </div>
-            </dl>
-          )}
-          {(verdict.confidence || (verdict.based_on || []).length > 0) && (
-            <div className="verdict-basis">
-              {verdict.confidence && (
-                <p className="sheet-label">Confidence: {verdict.confidence}</p>
+              {verdict.verdict === "pro" && verdict.headline && verdict.headline !== verdict.title && (
+                <p className="verdict-line">{verdict.headline}</p>
               )}
+            </section>
+            {heard && (
+              <p className="evidence-note heard-line">
+                Heard: {heard.features.beeps} beep{heard.features.beeps === 1 ? "" : "s"}
+                {heard.features.beep_interval_ms ? ` every ${(heard.features.beep_interval_ms / 1000).toFixed(1)} s` : ""}
+                {heard.wonder ? ` · Muse Wonder: ${heard.wonder.beeps ?? "?"} beeps` : ""}
+                {!heard.agree ? " (they disagree)" : ""}
+              </p>
+            )}
+            <details className="workings">
+              <summary>Why I think so</summary>
               {(verdict.based_on || []).length > 0 && (
                 <ul>
                   {verdict.based_on!.map((b, i) => <li key={i}>{b}</li>)}
-                  {verdict.verdict === "pro" && verdict.rule && (
-                    <li>safety rule: {verdict.rule}</li>
-                  )}
+                  {verdict.verdict === "pro" && verdict.rule && <li>safety rule: {verdict.rule}</li>}
                 </ul>
               )}
+              {verdict.confidence && <p>Confidence: {verdict.confidence}</p>}
+              {removed > 0 && (
+                <p>The safety rules removed {removed} of the {verdict.proposed_steps} steps the model suggested.</p>
+              )}
+              {causes.length > 0 && (
+                <>
+                  <p className="sheet-label">Likely causes</p>
+                  <ul>{causes.map((c, i) => <li key={i}>{c}</li>)}</ul>
+                </>
+              )}
+              {safety.length > 0 && (
+                <>
+                  <p className="sheet-label">Handle with care</p>
+                  <ul>{safety.map((w, i) => <li key={i}>{w}</li>)}</ul>
+                </>
+              )}
+              {resolution && (
+                <>
+                  <p className="sheet-label">How to tell it worked</p>
+                  <p>{resolution}</p>
+                </>
+              )}
+              {inventory.length > 0 && (
+                <>
+                  <p className="sheet-label">Parts seen</p>
+                  <ul>{inventory.map((c, i) => <li key={i}>{c.label}</li>)}</ul>
+                </>
+              )}
+              {(device || (details.markings || []).length > 0) && (
+                <>
+                  <p className="sheet-label">Read off the device</p>
+                  <ul>
+                    {device && <li>badge: {device}</li>}
+                    {(details.markings || []).map((m, i) => <li key={i}>{m}</li>)}
+                  </ul>
+                </>
+              )}
+              {notes && <p>{notes}</p>}
+            </details>
+            <div className="walk-links">
+              {onListen && (
+                <button type="button" className="link-btn" onClick={onListen}>
+                  {heard ? "Listen again" : "Let me listen"}
+                </button>
+              )}
+              {onMoreViews && (
+                <button type="button" className="link-btn" onClick={onMoreViews}>
+                  Add a closer view
+                </button>
+              )}
             </div>
-          )}
-          {removed > 0 && (
-            <p className="evidence-note">
-              The safety rules removed {removed} of the {verdict.proposed_steps} steps the model suggested.
-            </p>
-          )}
-          {verdict.verdict === "pro" && !booking && (
-            <button type="button" className="btn-primary" onClick={openPro}>
-              Find {/^[aeiou]/i.test(verdict.trade || "pro") ? "an" : "a"} {verdict.trade || "pro"}
-            </button>
-          )}
-        </section>
-      )}
+          </>
+        )}
 
-      {heard && (
-        <div className={`heard-card${heard.agree ? "" : " doubt"}`}>
-          <p className="sheet-label">What I heard</p>
-          <table>
-            <tbody>
-              <tr>
-                <td>Measured</td>
-                <td>
-                  {heard.features.beeps} beep{heard.features.beeps === 1 ? "" : "s"}
-                  {heard.features.beep_ms ? ` · ${heard.features.beep_ms} ms` : ""}
-                  {heard.features.beep_interval_ms ? ` · every ${(heard.features.beep_interval_ms / 1000).toFixed(1)} s` : ""}
-                  {heard.features.beep_hz ? ` · ${heard.features.beep_hz} Hz` : ""}
-                  {` · ${heard.features.clicks} click${heard.features.clicks === 1 ? "" : "s"}`}
-                </td>
-              </tr>
-              <tr>
-                <td>Muse Wonder</td>
-                <td>
-                  {heard.wonder
-                    ? `${heard.wonder.beeps ?? "?"} beeps · ${heard.wonder.sound || "—"}`
-                    : "unavailable"}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-          {!heard.agree && (
-            <p className="evidence-note">They disagree on the count, so the diagnosis leans on the measured numbers.</p>
-          )}
-        </div>
-      )}
-
-      {steps.length > 0 && !done && (
-        <section className="step-card">
-          <div className="step-top">
-            <p className="sheet-label">
-              {verdict?.verdict === "pro" ? "Safe check" : "Step"} {stepIdx + 1} of {steps.length}
-            </p>
-            <div className="ticks">
-              {steps.map((_, i) => (
-                <span key={i} className={i < stepIdx ? "tick done" : i === stepIdx ? "tick active" : "tick"} />
-              ))}
+        {screen === "steps" && step && (
+          <section className="step-card">
+            <div className="step-top">
+              <p className="sheet-label">
+                {verdict?.verdict === "pro" ? "Safe check" : "Step"} {stepIdx + 1} of {steps.length}
+              </p>
+              <div className="ticks">
+                {steps.map((_, i) => (
+                  <span key={i} className={i < stepIdx ? "tick done" : i === stepIdx ? "tick active" : "tick"} />
+                ))}
+              </div>
             </div>
-          </div>
-          {(() => {
-            const s = steps[stepIdx];
-            if (!s) return null;
-            const tag = legend.find(
-              (e) => s.part && e.label.toLowerCase() === s.part.toLowerCase()
-            )?.tag;
-            return (
-              <>
-                <p className="instruction">{s.check}</p>
-                {s.how && <p className="step-how">{s.how}</p>}
-                {s.part && (
-                  <p className="step-part">
-                    {tag && <span className="tag-letter active">{tag}</span>} {s.part}
-                  </p>
+            <p className="instruction">{step.check}</p>
+            {step.how && <p className="step-how">{step.how}</p>}
+            {step.caution && (
+              <div className="callout callout-dont-touch">
+                <p className="sheet-label">Careful</p>
+                <p>{step.caution}</p>
+              </div>
+            )}
+            {stepLoading && (
+              <Busy
+                compact
+                label="Highlighting the part…"
+                hint="Marking this step's part on your photo. A few seconds."
+                slowAfter={12}
+              />
+            )}
+          </section>
+        )}
+
+        {screen === "done" && done && (
+          <section className={`done-card ${done.looksFixed === true ? "ok" : done.looksFixed === false ? "bad" : ""}`}>
+            <div className="before-after">
+              <figure>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={stillURLs[0] || imgURL} alt="before the fix" />
+                <figcaption>Before</figcaption>
+              </figure>
+              <figure>
+                {done.afterURL ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={done.afterURL} alt="after the fix" />
+                ) : (
+                  <div className="after-missing">No camera frame</div>
                 )}
-                {s.caution && (
-                  <div className="callout callout-dont-touch">
-                    <p className="sheet-label">Careful</p>
-                    <p>{s.caution}</p>
-                  </div>
-                )}
-              </>
-            );
-          })()}
-          {stepLoading && (
-            <Busy
-              compact
-              label="Highlighting the part…"
-              hint="Marking this step's part on your photo. A few seconds."
-              slowAfter={12}
+                <figcaption>After</figcaption>
+              </figure>
+            </div>
+            <div className="done-result" role="status">
+              {done.state === "checking" && (
+                <Busy label="Checking the after photo…" hint="Muse Spark compares before and after. Usually 5–10 s." slowAfter={15} />
+              )}
+              {done.state === "error" && "Couldn't run the check. Just tell me below."}
+              {done.state === "ok" && done.looksFixed === true && <>✓ {cap(done.seen)}</>}
+              {done.state === "ok" && done.looksFixed === false && <>✗ {cap(done.next || done.seen)}</>}
+              {done.state === "ok" && done.looksFixed === null && <>Couldn&apos;t see it clearly. {cap(done.next || "")}</>}
+            </div>
+            {fixed && <p className="done-result">Fixed. {done.seconds < 60 ? `${done.seconds} s` : `${Math.floor(done.seconds / 60)} min ${done.seconds % 60} s`}, ₹0, {steps.length} steps.</p>}
+            {stillWrong !== null && !fixed && (
+              <form
+                className="still-wrong"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  sendStillWrong();
+                }}
+              >
+                <label className="sheet-label" htmlFor="still-wrong">What&apos;s still not right?</label>
+                <input
+                  id="still-wrong"
+                  className="text-input"
+                  value={stillWrong}
+                  onChange={(e) => setStillWrong(e.target.value)}
+                  placeholder="e.g. still blowing warm air"
+                  autoComplete="off"
+                />
+              </form>
+            )}
+          </section>
+        )}
+
+        {screen === "pros" && (
+          <>
+            <p className="verdict-line pros-why">
+              {verdict?.verdict === "pro" ? verdict.title : verdict?.headline || "Needs a closer look."}
+            </p>
+            <CallAPro
+              api={API}
+              trade={trade}
+              brief={{
+                device: [device, appliance].filter(Boolean).join(" ") || "",
+                issue,
+                finding: verdict?.headline || causes[0] || "needs a closer look",
+                rule: verdict?.verdict === "pro" ? verdict.title : null,
+                checks: [
+                  ...answered.map((a) => `${a.ask} ${a.reply}`),
+                  ...steps.slice(0, Math.max(stepIdx + 1, 1)).map((st) => st.check),
+                ],
+                sound: heard ? heard.summary : null,
+                photo: fileRef.current || null,
+                clip: heard?.clip || null,
+              }}
             />
-          )}
-          <div className="row">
+          </>
+        )}
+      </div>
+
+      {/* One clear next action per screen, always in reach. */}
+      <div className="walk-cta">
+        {screen === "fail" && (
+          <>
+            <button type="button" className="btn-primary" onClick={() => void run(files, issue, API)}>
+              Try again
+            </button>
+            <button type="button" className="btn-outline" onClick={onClose}>
+              Point the camera again
+            </button>
+          </>
+        )}
+        {screen === "verdict" && verdict?.verdict === "diy" && steps.length > 0 && (
+          <button type="button" className="btn-primary" onClick={showSteps}>
+            Show me the steps
+          </button>
+        )}
+        {screen === "verdict" && verdict?.verdict === "pro" && (
+          <>
+            <button type="button" className="btn-primary" onClick={openPro}>
+              Find {article(trade)} {trade}
+            </button>
+            {steps.length > 0 && (
+              <button type="button" className="btn-outline" onClick={showSteps}>
+                What can I check safely?
+              </button>
+            )}
+          </>
+        )}
+        {screen === "steps" && (
+          <>
             <button
               type="button"
               className="btn-outline"
-              onClick={() => void goStep(stepIdx - 1)}
-              disabled={stepIdx === 0 || stepLoading}
+              onClick={() => (stepIdx === 0 ? back() : void goStep(stepIdx - 1))}
+              disabled={stepLoading}
             >
               Back
             </button>
             <button
               type="button"
               className="btn-primary"
-              onClick={() =>
-                stepIdx < steps.length - 1
-                  ? void goStep(stepIdx + 1)
-                  : verdict?.verdict === "pro"
-                    ? openPro()
-                    : void finishFix()
-              }
+              onClick={() => {
+                mark("tap", stepIdx < steps.length - 1 ? `next step ${stepIdx + 2}` : "finish steps");
+                if (stepIdx < steps.length - 1) void goStep(stepIdx + 1);
+                else if (verdict?.verdict === "pro") openPro();
+                else void finishFix();
+              }}
               disabled={stepLoading}
             >
               {stepLoading
@@ -1170,189 +1330,37 @@ export default function RepairWalkthrough({
                 : stepIdx < steps.length - 1
                   ? "Next step"
                   : verdict?.verdict === "pro"
-                    ? `Find ${/^[aeiou]/i.test(verdict.trade || "pro") ? "an" : "a"} ${verdict.trade || "pro"}`
+                    ? `Find ${article(trade)} ${trade}`
                     : "Done, check it"}
             </button>
-          </div>
-        </section>
-      )}
-
-      {done && (
-        <section className={`done-card ${done.looksFixed === true ? "ok" : done.looksFixed === false ? "bad" : ""}`}>
-          <p className="sheet-label">Final check</p>
-          <div className="before-after">
-            <figure>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={stillURLs[0] || imgURL} alt="before the fix" />
-              <figcaption>Before</figcaption>
-            </figure>
-            <figure>
-              {done.afterURL ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={done.afterURL} alt="after the fix" />
-              ) : (
-                <div className="after-missing">No camera frame</div>
-              )}
-              <figcaption>After</figcaption>
-            </figure>
-          </div>
-          <div className="done-result" role="status">
-            {done.state === "checking" && (
-              <Busy
-                label="Checking the after photo…"
-                hint="Muse Spark compares before and after. Usually 5–10 s."
-                slowAfter={15}
-              />
-            )}
-            {done.state === "error" && "Couldn't run the check. Try again, or just tell me below."}
-            {done.state === "ok" && done.looksFixed === true && <>✓ {cap(done.seen)}</>}
-            {done.state === "ok" && done.looksFixed === false && <>✗ {cap(done.next || done.seen)}</>}
-            {done.state === "ok" && done.looksFixed === null && <>Couldn&apos;t see it clearly. {cap(done.next || "")}</>}
-          </div>
-          {done.state !== "checking" && done.looksFixed !== true && (
-            <button type="button" className="btn-outline" onClick={() => void finishFix()}>
-              Check again
+          </>
+        )}
+        {screen === "done" && done && done.state !== "checking" && !fixed && stillWrong === null && (
+          <>
+            <button type="button" className="btn-success" onClick={() => void confirmFixed(true)}>
+              It works now
             </button>
-          )}
-          <div className="done-stats">
-            <div><strong>{done.seconds < 60 ? `${done.seconds} s` : `${Math.floor(done.seconds / 60)} min ${done.seconds % 60} s`}</strong><span>time taken</span></div>
-            <div><strong>₹0</strong><span>spent</span></div>
-            <div><strong>{steps.length}</strong><span>steps done</span></div>
-          </div>
-          {!fixed && !booking && stillWrong === null && done.state !== "checking" && (
-            <div className="row" style={{ marginTop: 12 }}>
-              <button type="button" className="btn-success" onClick={() => void confirmFixed(true)}>
-                It works now
-              </button>
-              <button type="button" className="btn-outline" onClick={() => void confirmFixed(false)}>
-                Still broken
-              </button>
-            </div>
-          )}
-          {fixed && <p className="done-result">Fixed. Close this and point the camera at the next thing.</p>}
-          {stillWrong !== null && !booking && (
-            <form
-              className="still-wrong"
-              onSubmit={(e) => {
-                e.preventDefault();
-                sendStillWrong();
-              }}
-            >
-              <label className="sheet-label" htmlFor="still-wrong">What&apos;s still not right?</label>
-              <input
-                id="still-wrong"
-                className="text-input"
-                value={stillWrong}
-                onChange={(e) => setStillWrong(e.target.value)}
-                placeholder="e.g. still blowing warm air"
-                autoComplete="off"
-              />
-              <div className="row" style={{ marginTop: 8 }}>
-                <button type="button" className="btn-outline" onClick={hearStillWrong} disabled={hearing}>
-                  {hearing ? "Listening…" : "Say it"}
-                </button>
-                <button type="submit" className="btn-primary" disabled={!stillWrong.trim()}>
-                  Try again (run {attempt + 1})
-                </button>
-              </div>
-            </form>
-          )}
-        </section>
-      )}
-
-      {ask && <p className="instruction">{ask}</p>}
-
-      {booking && (
-        <CallAPro
-          api={API}
-          trade={verdict?.trade || "repair service"}
-          brief={{
-            device: [device, appliance].filter(Boolean).join(" ") || "",
-            issue,
-            finding: verdict?.headline || causes[0] || "needs a closer look",
-            rule: verdict?.verdict === "pro" ? verdict.title : null,
-            checks: [
-              ...answered.map((a) => `${a.ask} ${a.reply}`),
-              ...steps.slice(0, Math.max(stepIdx + 1, 1)).map((st) => st.check),
-            ],
-            sound: heard ? heard.summary : null,
-            photo: fileRef.current || null,
-            clip: heard?.clip || null,
-          }}
-        />
-      )}
-
-      <div className="walk-actions">
-        {onListen && (
-          <button type="button" className="btn-outline" onClick={onListen}>
-            {heard ? "Listen again" : "Let me listen"}
+            <button type="button" className="btn-outline" onClick={() => void confirmFixed(false)}>
+              Still broken
+            </button>
+          </>
+        )}
+        {screen === "done" && stillWrong !== null && !fixed && (
+          <>
+            <button type="button" className="btn-outline" onClick={hearStillWrong} disabled={hearing}>
+              {hearing ? "Listening…" : "Say it"}
+            </button>
+            <button type="button" className="btn-primary" onClick={sendStillWrong} disabled={!stillWrong.trim()}>
+              Try again (run {attempt + 1})
+            </button>
+          </>
+        )}
+        {screen === "done" && fixed && (
+          <button type="button" className="btn-primary" onClick={onClose}>
+            Done
           </button>
         )}
-        {onMoreViews && (
-          <button type="button" className="btn-outline" onClick={onMoreViews}>
-            Add a closer view
-          </button>
-        )}
-        <button type="button" className="btn-outline" onClick={onClose}>
-          Close
-        </button>
       </div>
-
-      {(causes.length > 0 || inventory.length > 0 || said.length > 0) && (
-        <details className="workings">
-          <summary>How I worked this out</summary>
-          {notes && <p>{notes}</p>}
-          {causes.length > 0 && (
-            <>
-              <p className="sheet-label">Likely causes</p>
-              <ul>{causes.map((c, i) => <li key={i}>{c}</li>)}</ul>
-            </>
-          )}
-          {safety.length > 0 && (
-            <>
-              <p className="sheet-label">Handle with care</p>
-              <ul>{safety.map((w, i) => <li key={i}>{w}</li>)}</ul>
-            </>
-          )}
-          {resolution && (
-            <>
-              <p className="sheet-label">How to tell it worked</p>
-              <p>{resolution}</p>
-            </>
-          )}
-          {(device || (details.markings || []).length > 0) && (
-            <>
-              <p className="sheet-label">Read off the device</p>
-              <ul>
-                {device && <li>badge: {device}</li>}
-                {details.serial && <li>serial: {details.serial}</li>}
-                {(details.markings || []).map((m, i) => <li key={i}>{m}</li>)}
-                {(details.other || []).map((m, i) => <li key={`o${i}`}>{m}</li>)}
-              </ul>
-            </>
-          )}
-          {inventory.length > 0 && (
-            <>
-              <p className="sheet-label">Parts seen</p>
-              <ul>
-                {inventory.map((c, i) => (
-                  <li key={i}>
-                    <strong>{c.label}</strong>
-                    {[c.color, c.condition, c.position].filter(Boolean).length > 0 &&
-                      ` — ${[c.color, c.condition, c.position].filter(Boolean).join(" · ")}`}
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-          {said.length > 0 && (
-            <>
-              <p className="sheet-label">Said aloud</p>
-              <ol>{said.map((line, i) => <li key={i}>{line}</li>)}</ol>
-            </>
-          )}
-        </details>
-      )}
     </section>
   );
 }

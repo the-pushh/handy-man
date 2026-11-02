@@ -1097,3 +1097,64 @@ html, body {
 @media (prefers-reduced-motion: reduce) { .scan-sweep::after { animation: none; top: 0; height: 100%; opacity: 0.25; } }
 .live-busy { position: absolute; top: 56px; left: 16px; right: 16px; z-index: 5; margin: 0; }
 .pro-phone { margin: 2px 0 0; font-size: 15px; font-variant-numeric: tabular-nums; color: var(--line); }
+
+/* Taking the picture: a shutter flash, then the frozen frame shrinks
+   toward the bottom of the camera view. */
+.shutter { position: absolute; inset: 0; z-index: 6; pointer-events: none; overflow: hidden; }
+.shutter::before {
+  content: ""; position: absolute; inset: 0; background: #fff; z-index: 2;
+  animation: shutter-flash 0.35s ease-out forwards;
+}
+.snap-img {
+  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+  border: 3px solid var(--primary);
+  animation: snap-shrink 0.75s ease-in forwards;
+}
+@keyframes shutter-flash { 0% { opacity: 0.9; } 100% { opacity: 0; } }
+@keyframes snap-shrink {
+  0%, 30% { transform: scale(1); opacity: 1; }
+  100% { transform: translate(28%, 34%) scale(0.32); opacity: 0.9; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .shutter::before { animation: none; opacity: 0; }
+  .snap-img { animation: none; }
+}
+
+/* Walkthrough: one screen at a time, sized to the phone. Photo on top,
+   the screen's content in the middle (scrolls only inside itself if it
+   must), its one next action pinned at the bottom. */
+.overlay.overlay-walk { overflow: hidden; padding: 10px 14px calc(12px + env(safe-area-inset-bottom)); }
+.walk.screened {
+  display: flex; flex-direction: column; height: 100%;
+  max-width: 720px; margin: 0 auto;
+}
+.walk-bar { display: flex; align-items: center; gap: 8px; flex: none; }
+.walk-title { flex: 1; min-width: 0; }
+.walk-title .sheet-label { margin: 0; color: var(--line-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.walk.screened .walk-said { font-size: 16px; margin: 2px 0 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.walk-icon {
+  flex: none; width: 40px; height: 40px; display: grid; place-items: center;
+  border: 1px solid var(--line-muted); background: var(--paper-deep);
+  color: var(--line); font-size: 18px; cursor: pointer;
+}
+.walk-icon-space { flex: none; width: 40px; }
+.walk.screened .walk-photo { flex: none; margin: 8px 0 0; text-align: center; }
+.photo-box { position: relative; display: inline-block; max-width: 100%; vertical-align: top; }
+.walk.screened .walk-photo img {
+  display: block; width: auto; height: auto; max-width: 100%; max-height: 36cqh;
+}
+.walk.screened .walk-photo figcaption { line-height: 1.6; margin-top: 4px; text-align: left; }
+.walk-body { flex: 1; min-height: 0; overflow-y: auto; margin-top: 8px; }
+.walk-body > * + * { margin-top: 8px; }
+.walk-cta { flex: none; display: flex; gap: 8px; padding-top: 10px; }
+.walk-cta:empty { display: none; }
+.walk-cta > * { flex: 1; }
+.verdict-line { margin: 6px 0 0; font-size: 15px; color: var(--line); line-height: 1.4; }
+.pros-why { margin: 0 0 8px; }
+.heard-line { margin: 0; }
+.walk-links { display: flex; gap: 16px; }
+.link-btn {
+  background: none; border: 0; padding: 4px 0; color: var(--line-muted);
+  font: inherit; font-size: 14px; text-decoration: underline; cursor: pointer;
+}
+.walk.screened .before-after img { max-height: 26cqh; object-fit: cover; }
