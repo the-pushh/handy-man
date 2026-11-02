@@ -354,6 +354,8 @@ def _repair_analyze(images, text, components, model, prior=None,
     diag_questions = False
     meta: dict = {}
     headline = ""
+    trade_hint = ""
+    needs_pro = False
     reuse = (isinstance(prior, dict) and isinstance(prior.get("components"), list)
              and len(images) == 1)
     if not wanted:
@@ -426,6 +428,8 @@ def _repair_analyze(images, text, components, model, prior=None,
             resolution = diag["resolution"]
             safety = diag["safety"]
             headline = diag.get("headline", "")
+            trade_hint = diag.get("trade", "")
+            needs_pro = bool(diag.get("needs_pro"))
             questions = diag.get("questions", [])
             diag_questions = bool(questions)
             meta = {k: diag.get(k) for k in ("difficulty", "minutes",
@@ -442,7 +446,8 @@ def _repair_analyze(images, text, components, model, prior=None,
     # The spoken finding leads the causes: it is what the owner hears,
     # so a finding only a pro can fix ("low refrigerant") forces "pro".
     verdict = judge(f"{device} {analysis.get('appliance') or ''}".strip(),
-                    text, steps, causes, finding=headline)
+                    text, steps, causes, finding=headline,
+                    trade_hint=trade_hint, needs_pro=needs_pro)
     if accept_risk and verdict["verdict"] == "pro":
         # The owner was warned and chose to go on at their own risk: every
         # proposed step stays, and the verdict says which rule they took on.
@@ -716,6 +721,27 @@ FRAMING_HINTS = {
 }
 
 
+_STOP = re.compile(
+    r"\b(?:is|isn'?t|are|aren'?t|was|not|no|won'?t|wont|doesn'?t|does|"
+    r"keeps?|stopped|has|have|seems?|stuck|making|makes|gives?|giving|"
+    r"se|ka|ki|ke|nahi|me|mein|hai|kar|kaam|broke|broken|leaking|beeping|"
+    r"started|starts?|running|runs?)\b", re.I)
+_LEAD = re.compile(r"^(?:my|our|the|a|an|this|that|mera|meri|hamara|ye|yeh)\s+", re.I)
+
+
+def item_from_words(said: str) -> str:
+    """The thing the owner named, from their own words, when the model
+    left it blank: "my microwave stopped heating" -> "microwave".
+    Pronouns and empty results give ""."""
+    text = re.split(r"[,.;:!?]", said.strip(), maxsplit=1)[0]
+    text = _LEAD.sub("", text.strip())
+    head = _STOP.split(text, maxsplit=1)[0].strip()
+    words = head.split()[:3]
+    if not words or words[0].lower() in ("it", "it's", "its", "this", "that", "ye", "yeh"):
+        return ""
+    return " ".join(words)
+
+
 def framing_from_box(box: dict | None, said: str) -> str:
     """The outline settles what Spark guessed: a small box is too far, a
     box pressed against both sides is cut off."""
@@ -815,7 +841,7 @@ async def detect_machine(request: Request, file: UploadFile = File(...),
             instance = None  # the name alone still shows
     framing = framing_from_box(instance["box"] if instance else None,
                                seen["framing"])
-    item = seen["item"] or seen["name"] or "machine"
+    item = seen["item"] or item_from_words(want) or seen["name"] or "machine"
     # A close view (outline filling much of the frame) is good enough to
     # diagnose even if the edges spill out of the photo.
     close = bool(instance) and framing in ("cut_off", "too_close") and (

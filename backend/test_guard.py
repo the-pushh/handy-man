@@ -95,6 +95,17 @@ def test_latin_text_never_goes_to_the_hindi_voice():
     assert server.voice_for("Clean the filter.", "eng") == "eng"
 
 
+
+def test_the_item_comes_from_the_owners_words_when_the_model_leaves_it_blank():
+    f = server.item_from_words
+    assert f("my microwave stopped heating") == "microwave"
+    assert f("the laptop seems to be broken") == "laptop"
+    assert f("AC se paani tapak raha hai") == "AC"
+    assert f("my washing machine is not spinning") == "washing machine"
+    assert f("inverter keeps beeping") == "inverter"
+    assert f("it's broken") == ""
+
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     for name, fn in tests:
