@@ -22,6 +22,8 @@ import Orb from "./components/Orb";
 import type { OrbState } from "./components/Orb";
 import RepairWalkthrough from "./components/RepairWalkthrough";
 import History from "./components/History";
+import LiveDetect from "./components/LiveDetect";
+import type { LiveDetection } from "./components/LiveDetect";
 
 interface Overlay {
   files: File[];
@@ -129,6 +131,9 @@ export default function Home() {
   // survives) but is hidden so the camera shows while the owner aims.
   const [peek, setPeek] = useState<string>("");
   const darkWarned = useRef<boolean>(false);
+  // The machine outlined on the live view right now (LiveDetect).
+  const liveRef = useRef<LiveDetection | null>(null);
+  const [live, setLive] = useState<LiveDetection | null>(null);
   const [showHistory, setShowHistory] = useState<boolean>(false);
   // "No" on the confirm card: name the device instead of re-pointing.
   const [fixing, setFixing] = useState<boolean>(false);
@@ -408,9 +413,13 @@ export default function Home() {
     void detectIssueLang(said).then(() => mark("detect-language done"));
     setOrb("thinking");
     setStatusMsg("Looking at what I can see…");
-    const frame = provided || pendingFrameRef.current || (await captureStillAsync());
+    // The frame the live view already outlined, when it is still in
+    // view: the card then shows that outline at once.
+    const seen = !provided && !pendingFrameRef.current ? liveRef.current : null;
+    const frame =
+      provided || pendingFrameRef.current || seen?.frame || (await captureStillAsync());
     pendingFrameRef.current = null;
-    mark("frame captured", frame ? kb(frame.size) : "none");
+    mark("frame captured", frame ? `${kb(frame.size)}${seen ? ` (live: ${seen.name})` : ""}` : "none");
     // Bad light: say so once and let the owner fix it; a second tap in
     // the dark goes ahead anyway (the model may still manage).
     if (frame && !provided) {
@@ -434,7 +443,8 @@ export default function Home() {
     let perceived = false;
     const cfd = new FormData();
     cfd.append("file", frame, "frame.jpg");
-    void fetch(`${apiBase()}/api/caption`, { method: "POST", body: cfd })
+    if (seen) setStatusMsg(`I'm looking at: ${seen.name}`);
+    else void fetch(`${apiBase()}/api/caption`, { method: "POST", body: cfd })
       .then((cr) => cr.json())
       .then((cd) => {
         if (cd.status === "ok" && !perceived) {
@@ -477,9 +487,10 @@ export default function Home() {
         "device";
       const label = (data.components || [])[0]?.label || device;
       const frameURL = URL.createObjectURL(frame);
+      const liveMask = seen?.instance ? [seen.instance] : [];
       const curl: Confirm = {
         device,
-        overlayURL: frameURL,
+        overlayURL: liveMask.length ? await composeMasks(frameURL, liveMask) : frameURL,
         frameURL,
         frame,
         perception: data.perception || null,
@@ -490,7 +501,7 @@ export default function Home() {
           data.perception && !SOUND_WORDS.test(said)
             ? requestDiagnosis(apiBase(), [frame], said, data.perception).catch(() => null)
             : null,
-        highlight: "none",
+        highlight: liveMask.length ? "sam" : "none",
       };
       // SAM 3.1 masks for the appliance arrive ~2s later in their own
       // request; muse-image (labelled illustrative) only if SAM finds
@@ -504,6 +515,7 @@ export default function Home() {
       };
       const segLabels: unknown[] = data.segment_labels || [];
       void (async () => {
+        if (liveMask.length) return; // outlined live already
         let sam: SamInstance[] = [];
         if (segLabels.length) {
           const sfd = new FormData();
@@ -823,7 +835,9 @@ export default function Home() {
     statusMsg ||
     (confirm
       ? `Is this your ${confirm.device}? Say yes or no.`
-      : "Point at what's broken, tap the button and tell me.");
+      : live
+        ? `${live.name} in view. Tap the button and tell me what's wrong.`
+        : "Point at what's broken, tap the button and tell me.");
   // What the app is doing right now, always visible during a turn.
   const phase = mic || orb === "listening"
     ? "Listening"
@@ -848,6 +862,13 @@ export default function Home() {
 
       <div className="cutout">
         <video ref={videoRef} className="live" autoPlay playsInline muted />
+        <LiveDetect
+          videoRef={videoRef}
+          active={!overlay && !confirm && !showHistory && !peek && orb !== "thinking"}
+          apiBase={apiBase}
+          liveRef={liveRef}
+          onChange={setLive}
+        />
 
         <span className="crop tl" />
         <span className="crop tr" />
