@@ -412,6 +412,8 @@ def diagnose(appliance: str, device: str | None, labels: list,
         "order with parts and tools needed; if a repair, steps diagnose "
         "and fix. Each step must name WHAT and exactly HOW, referencing "
         "the visible parts by name — never generic advice. Steps are only "
+        "about the machine itself, never about things around it in the "
+        "photo (decorations, furniture, the wall). Steps are only "
         "what the owner can do; when a professional may be needed after "
         "them, say when in resolution, not as a step. Only when the owner "
         "can do nothing useful is the single step the professional "
