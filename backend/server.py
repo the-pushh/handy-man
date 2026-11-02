@@ -509,6 +509,14 @@ def _repair_analyze(images, text, components, model, prior=None,
     # trade name; masks keep the part label.
     looks = {str(c.get("label", "")).lower(): c.get("look")
              for c in analysis.get("components", []) if c.get("look")}
+    # A step's own description of its exact spot ("key with a small
+    # light" for the caps lock key) goes to SAM first.
+    for st in steps:
+        if isinstance(st, dict) and st.get("part") and st.get("part_look"):
+            key = st["part"].lower()
+            prev = looks.get(key)
+            prev = prev if isinstance(prev, list) else ([prev] if prev else [])
+            looks[key] = [st["part_look"]] + [x for x in prev if x != st["part_look"]]
     if appliance_name:
         # "white box" missed the real inverter; "device" found it.
         looks[appliance_name.lower()] = [

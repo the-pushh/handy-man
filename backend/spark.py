@@ -359,7 +359,12 @@ def diagnose(appliance: str, device: str | None, labels: list,
         '"relevant": ["part label tied to the issue"], '
         '"steps": [{"check": "what to inspect", '
         '"how": "exactly how to inspect or fix it", '
-        '"part": "part label from the list or null", '
+        '"part": "the exact spot this step looks at or touches, as small '
+        'as it is: caps lock key, not keyboard; power LED, not front '
+        'panel. A label from the list only when the step is about that '
+        'whole part. null if none", '
+        '"part_look": "2-4 plain words for how that spot looks in the '
+        'photo, e.g. key with a small light, round green light", '
         '"caution": "what not to touch on this step or null"}], '
         '"safety": ["unplug and remove the battery before opening"], '
         '"questions": [{"ask": "Which light is on?", '
@@ -406,8 +411,11 @@ def diagnose(appliance: str, device: str | None, labels: list,
         "If it is a setup or assembly task, steps are the build/install "
         "order with parts and tools needed; if a repair, steps diagnose "
         "and fix. Each step must name WHAT and exactly HOW, referencing "
-        "the visible parts by name — never generic advice. Mention "
-        "calling a professional exactly once, as the final step. Always "
+        "the visible parts by name — never generic advice. Steps are only "
+        "what the owner can do; when a professional may be needed after "
+        "them, say when in resolution, not as a step. Only when the owner "
+        "can do nothing useful is the single step the professional "
+        "visit. Always "
         "include safety: power/battery to disconnect, non-conductive "
         "tools (wood/plastic), parts to never touch, water/heat "
         "warnings where relevant; each step gets its own caution. "
@@ -447,6 +455,8 @@ def diagnose(appliance: str, device: str | None, labels: list,
                     "check": check,
                     "how": str(s.get("how", "")).strip(),
                     "part": str(s.get("part", "") or "").strip() or None,
+                    "part_look": str(s.get("part_look", "") or "").strip()
+                    or None,
                     "caution": str(s.get("caution", "") or "").strip() or None,
                 })
         elif str(s).strip():
