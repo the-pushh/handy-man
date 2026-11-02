@@ -254,6 +254,8 @@ RULES = [
 PRO_STEP = _rx(r"professional", r"technician", r"mechanic", r"electrician",
                r"service (?:centre|center|visit)", r"call a pro",
                r"book a (?:service|repair)")
+FALLBACK = _rx(r"if\b", r"in case", r"otherwise", r"unless", r"when .{0,30}fail",
+              r"still not", r"doesn'?t (?:work|help)", r"does not (?:work|help)")
 PRO_RECOMMENDED = Rule(
     "pro-recommended",
     "What's left to try needs a technician's tools and training.",
@@ -310,7 +312,9 @@ def judge(device: str = "", issue: str = "", steps: list | None = None,
 
     for i, st in enumerate(steps):
         check = st.get("check", "") if isinstance(st, dict) else str(st)
-        if PRO_STEP.search(check):
+        # "If it still won't start, call a technician" is a fallback the
+        # owner may never need, not the verdict.
+        if PRO_STEP.search(check) and not FALLBACK.search(check):
             if PRO_RECOMMENDED not in fired:
                 fired.append(PRO_RECOMMENDED)
             if i not in blocked:

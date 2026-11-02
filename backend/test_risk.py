@@ -300,11 +300,22 @@ def test_a_get_a_professional_step_makes_it_a_pro_job():
               "my AC is not cooling. Run 1 already tried: clean the filter. "
               "It is still not fixed: still blowing warm air.",
               [{"check": "filter behind front panel", "how": "wash the filter"},
-               {"check": "professional service for persistent warm air",
-                "how": "book an AC technician visit"}])
+               {"check": "book an AC technician to test the cooling",
+                "how": "call a local AC service"}])
     assert v["verdict"] == "pro" and v["rule"] == "pro-recommended"
     assert v["trade"] == "AC technician"
     assert v["allowed_steps"] == [0]
+
+
+def test_a_fallback_professional_step_stays_diy():
+    # "If it still doesn't work, call a technician" is a fallback, not the
+    # verdict: a vague "laptop seems broken" must not become a pro job.
+    v = judge("laptop", "the laptop seems to be broken",
+              [{"check": "press caps lock and watch its light", "how": "press it once"},
+               {"check": "if it still doesn't power on, get a professional laptop repair",
+                "how": "take it to a service centre"}])
+    assert v["verdict"] == "diy", v
+
 
 
 if __name__ == "__main__":
