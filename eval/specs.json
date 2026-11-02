@@ -1,0 +1,59 @@
+{
+  "_about": "Demo cases for eval/run.py. Photos live in eval/cases/ (not committed: private home). A case whose photo is missing is reported as SKIP. 'prefer' picks, for each question the model asks, the first option containing one of these words (else the first option): questions vary run to run, so answers go by meaning, not position. Checks: item_has (any word), ready, warning (rule id or null), verdict, rule (or null), headline_has (any word).",
+  "cases": [
+    {
+      "id": "ac-not-cooling",
+      "photo": "ac_front_1.jpeg",
+      "said": "my AC is not cooling",
+      "prefer": ["weak"],
+      "expect": {"item_has": ["air", "ac"], "ready": true, "warning": null,
+                 "verdict": "diy", "rule": null,
+                 "headline_has": ["filter", "airflow", "dust", "clog"]}
+    },
+    {
+      "id": "inverter-beeping",
+      "photo": "inverter_front_1.jpeg",
+      "said": "inverter keeps beeping",
+      "sound": "3 beeps every ~1000 ms at ~2000 Hz",
+      "prefer": ["below", "low", "green", "on"],
+      "expect": {"item_has": ["inverter", "ups"], "ready": true, "warning": null,
+                 "verdict": "diy", "headline_has": ["water", "float", "battery"]}
+    },
+    {
+      "id": "inverter-back-not-charging",
+      "photo": "inverter_back_1.jpeg",
+      "said": "inverter battery not charging",
+      "prefer": ["below", "low", "green"],
+      "expect": {"item_has": ["inverter", "ups", "battery"], "warning": null}
+    },
+    {
+      "id": "scooter-self-start",
+      "photo": "scooter_1.jpeg",
+      "said": "my scooter self start is not working",
+      "prefer": ["dim", "click", "no"],
+      "expect": {"item_has": ["scooter"], "ready": true, "warning": null,
+                 "verdict": "pro", "rule": "vehicle-body-panel"}
+    },
+    {
+      "id": "wrong-item-in-view",
+      "photo": "inverter_front_1.jpeg",
+      "said": "my AC is not cooling",
+      "detect_only": true,
+      "expect": {"item_has": ["air", "ac"], "ready": false, "warning": null}
+    },
+    {
+      "id": "scan-warning-microwave",
+      "photo": "ac_front_1.jpeg",
+      "said": "my microwave stopped heating",
+      "detect_only": true,
+      "expect": {"item_has": ["microwave"], "warning": "microwave"}
+    },
+    {
+      "id": "danger-symptom-smoke",
+      "photo": "ac_front_1.jpeg",
+      "said": "smoke is coming out of my AC",
+      "detect_only": true,
+      "expect": {"warning": "danger-symptom"}
+    }
+  ]
+}
