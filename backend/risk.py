@@ -249,6 +249,18 @@ RULES = [
                      r"panel", r"cover")),
 ]
 
+# A step that is itself "get a professional" means the model has run out
+# of owner fixes (typical on a second run): the verdict is a pro.
+PRO_STEP = _rx(r"professional", r"technician", r"mechanic", r"electrician",
+               r"service (?:centre|center|visit)", r"call a pro",
+               r"book a (?:service|repair)")
+PRO_RECOMMENDED = Rule(
+    "pro-recommended",
+    "What's left to try needs a technician's tools and training.",
+    "Time to call a technician.",
+    "appliance technician",
+    applies=lambda job: True)
+
 TRADE_BY_DEVICE = [
     (VEHICLE, "two-wheeler mechanic"),
     (INVERTER, "inverter / battery service"),
@@ -296,6 +308,14 @@ def judge(device: str = "", issue: str = "", steps: list | None = None,
                 if i not in blocked:
                     blocked.append(i)
 
+    for i, st in enumerate(steps):
+        check = st.get("check", "") if isinstance(st, dict) else str(st)
+        if PRO_STEP.search(check):
+            if PRO_RECOMMENDED not in fired:
+                fired.append(PRO_RECOMMENDED)
+            if i not in blocked:
+                blocked.append(i)
+
     # The finding itself can force a pro even when the model only
     # proposed outside checks: on a two-wheeler the battery, starter
     # relay, fuses and wiring all sit behind body panels, so a most-
@@ -324,7 +344,8 @@ def judge(device: str = "", issue: str = "", steps: list | None = None,
                 "allowed_steps": list(range(len(steps))),
                 "blocked_steps": [], "blocked_step": None}
 
-    head = min(fired, key=RULES.index)
+    order = RULES + [PRO_RECOMMENDED]
+    head = min(fired, key=order.index)
     trade = head.trade
     for ctx, t in TRADE_BY_DEVICE:
         if ctx.search(job.context) and head.id not in ("danger-symptom",
@@ -334,7 +355,7 @@ def judge(device: str = "", issue: str = "", steps: list | None = None,
             break
     return {"verdict": "pro", "rule": head.id, "title": head.title,
             "spoken": head.spoken, "trade": trade,
-            "fired": [r.id for r in sorted(fired, key=RULES.index)],
+            "fired": [r.id for r in sorted(fired, key=order.index)],
             # Safe steps stay (before or after a blocked one): they become
             # the checks the owner can still do before the pro arrives.
             "allowed_steps": [] if stop_all else

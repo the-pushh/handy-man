@@ -271,14 +271,6 @@ def test_no_steps_no_risk():
     expect(judge("", "", []), "diy")
 
 
-if __name__ == "__main__":
-    tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
-    for name, fn in tests:
-        fn()
-        print(f"ok  {name}")
-    print(f"\n{len(tests)} passed")
-
-
 # --- Scan-time warnings -----------------------------------------------
 
 def test_scan_warns_for_a_microwave():
@@ -301,3 +293,23 @@ def test_scan_lets_the_demo_machines_through():
     assert scan_check("Honda Activa scooter", "self start not working") is None
     assert scan_check("inverter", "keeps beeping") is None
     assert scan_check("laptop", "very slow") is None
+
+
+def test_a_get_a_professional_step_makes_it_a_pro_job():
+    v = judge("Panasonic air conditioner",
+              "my AC is not cooling. Run 1 already tried: clean the filter. "
+              "It is still not fixed: still blowing warm air.",
+              [{"check": "filter behind front panel", "how": "wash the filter"},
+               {"check": "professional service for persistent warm air",
+                "how": "book an AC technician visit"}])
+    assert v["verdict"] == "pro" and v["rule"] == "pro-recommended"
+    assert v["trade"] == "AC technician"
+    assert v["allowed_steps"] == [0]
+
+
+if __name__ == "__main__":
+    tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
+    for name, fn in tests:
+        fn()
+        print(f"ok  {name}")
+    print(f"\n{len(tests)} passed")
