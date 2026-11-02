@@ -82,8 +82,11 @@ export default function LiveDetect({
   want,
   apiBase,
   onResult,
+  hold = false,
 }: {
   videoRef: RefObject<HTMLVideoElement | null>;
+  // The page is taking the picture: keep the outline up, ask nothing.
+  hold?: boolean;
   // What the owner said; null = not searching (no calls, nothing drawn).
   want: string | null;
   apiBase: () => string;
@@ -98,6 +101,8 @@ export default function LiveDetect({
   onResultRef.current = onResult;
   const apiRef = useRef(apiBase);
   apiRef.current = apiBase;
+  const holdRef = useRef(hold);
+  holdRef.current = hold;
 
   useEffect(() => {
     setShown(null);
@@ -179,7 +184,7 @@ export default function LiveDetect({
     const tick = () => {
       if (!alive) return;
       const video = videoRef.current;
-      if (!video?.videoWidth || document.hidden) return;
+      if (!video?.videoWidth || document.hidden || holdRef.current) return;
       const now = signature(video, sctx);
       const t = performance.now();
       const motion = prev ? distance(now, prev) : 0;
@@ -307,7 +312,7 @@ export default function LiveDetect({
           <span className="live-tag-dot" aria-hidden="true" />
           {shown.name}
           <span className="live-tag-src">
-            {shown.instance
+            {hold ? "Got it · hold still" : shown.instance
               ? `Spark · SAM 3.1 ${Math.round((shown.instance.score || 0) * 100)}%`
               : "Spark"}
           </span>

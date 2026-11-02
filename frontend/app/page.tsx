@@ -164,6 +164,11 @@ export default function Home() {
   // What the camera is looking for (the owner's words); null = idle.
   const [seekWant, setSeekWant] = useState<string | null>(null);
   const [stuck, setStuck] = useState<boolean>(false);
+  // Taking the picture: outline held on the live view, then a shutter
+  // flash with the frozen frame shrinking away.
+  const [hold, setHold] = useState<boolean>(false);
+  const [snap, setSnap] = useState<string>("");
+  const snapToken = useRef<number>(0);
   // Scan-time warning, before any diagnosis.
   const [warn, setWarn] = useState<{ w: ScanWarning; res: SeekResult; url: string } | null>(null);
   const [riskOk, setRiskOk] = useState<boolean>(false);
@@ -505,10 +510,8 @@ export default function Home() {
       return;
     }
     if (res.ready) {
-      setSeekWant(null);
       setStuck(false);
-      mark("picture taken", `${res.name} (${res.framing})`);
-      void capture(res.frame, res.item, s.acceptRisk);
+      takePicture(res.frame, res.item || s.item, s.acceptRisk, res.name);
       return;
     }
     s.tries += 1;
@@ -524,22 +527,48 @@ export default function Home() {
   const seekCb = useRef(onSeek);
   seekCb.current = onSeek;
 
+  // Framed: keep the outline on the live view a moment ("Got it, hold
+  // still"), flash the shutter, then open the walkthrough.
+  function takePicture(frame: File, item: string, acceptRisk: ScanWarning | null, name = "") {
+    const token = ++snapToken.current;
+    setHold(true);
+    setStatusMsg(`Got the ${name || item || "picture"}. Hold still…`);
+    mark("framed", name || item);
+    window.setTimeout(() => {
+      if (token !== snapToken.current) return;
+      const url = URL.createObjectURL(frame);
+      setSnap(url);
+      mark("picture taken", `${name || item}`);
+      window.setTimeout(() => {
+        if (token !== snapToken.current) return;
+        setSnap("");
+        URL.revokeObjectURL(url);
+        setHold(false);
+        setSeekWant(null);
+        void capture(frame, item, acceptRisk);
+      }, 750);
+    }, 1100);
+  }
+
   // The owner gave up on framing: take the picture as the view is now.
   async function useThisView(): Promise<void> {
     const s = seekRef.current;
     const frame = (await captureStillAsync()) || s.last?.frame || null;
-    setSeekWant(null);
     setStuck(false);
     if (!frame) {
+      setSeekWant(null);
       setStatusMsg("Camera not ready yet. Try again.");
       setOrb("idle");
       return;
     }
-    mark("picture taken", "owner chose this view");
-    void capture(frame, s.item, s.acceptRisk);
+    mark("owner chose this view");
+    takePicture(frame, s.item, s.acceptRisk);
   }
 
   function cancelSeek(): void {
+    snapToken.current++;
+    setHold(false);
+    setSnap("");
     setSeekWant(null);
     setStuck(false);
     setWarn(null);
@@ -557,8 +586,13 @@ export default function Home() {
     mark("risk accepted", cur.w.rule);
     URL.revokeObjectURL(cur.url);
     setWarn(null);
-    if (cur.res.ready || s.uploaded) {
+    if (s.uploaded) {
       void capture(cur.res.frame, cur.res.item, cur.w);
+      return;
+    }
+    if (cur.res.ready) {
+      setSeekWant(issueRef.current);
+      takePicture(cur.res.frame, cur.res.item, cur.w, cur.res.name);
       return;
     }
     setOrb("thinking");
@@ -785,7 +819,14 @@ export default function Home() {
           want={overlay || showHistory || peek ? null : seekWant}
           apiBase={apiBase}
           onResult={(r) => seekCb.current(r)}
+          hold={hold}
         />
+        {snap && (
+          <div className="shutter" aria-hidden="true">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={snap} alt="" className="snap-img" />
+          </div>
+        )}
 
         <span className="crop tl" />
         <span className="crop tr" />
@@ -1021,7 +1062,7 @@ export default function Home() {
       </nav>
 
       {overlay && (
-        <div className="overlay" hidden={!!peek}>
+        <div className="overlay mat overlay-walk" hidden={!!peek}>
           <RepairWalkthrough
             key={overlay.key}
             files={overlay.files}
