@@ -644,6 +644,35 @@ async def caption(file: UploadFile = File(...)):
                 "trace": trace.export()}
 
 
+@app.post("/api/detect")
+async def detect_machine(file: UploadFile = File(...)):
+    """Live-view detection: Muse Spark names the machine in the frame,
+    then SAM 3.1 outlines it. The camera view draws the outline over the
+    live stream; the photo taken for the turn reuses it.
+
+    One instance (the best SAM match) or none; `name` is "" when Spark
+    sees no machine.
+    """
+    from . import sam31, spark
+
+    trace.begin()
+    image = images_normalized([await file.read()])[0]
+    try:
+        seen = await run_in_threadpool(spark.spot, image)
+    except Exception as exc:
+        return {"status": "detect-error", "detail": str(exc),
+                "trace": trace.export()}
+    instance = None
+    if seen["name"]:
+        try:
+            instance = await run_in_threadpool(
+                sam31.find_object, image, seen["name"], seen["look"])
+        except Exception:
+            instance = None  # the name alone still shows
+    return {"status": "ok", "name": seen["name"], "look": seen["look"],
+            "instance": instance, "trace": trace.export()}
+
+
 @app.post("/api/repair/highlight")
 async def repair_highlight(file: UploadFile = File(...),
                             part: str = Form(...),

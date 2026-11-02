@@ -324,3 +324,29 @@ def segment(image_bytes: bytes, labels: list, max_parts: int = 4) -> list:
             except Exception:
                 pass  # one failed phrase never sinks the others
         return out
+
+
+def find_object(image_bytes: bytes, name: str, look: str = "") -> dict | None:
+    """The whole machine for the live view: its look ("white rectangular
+    box"), its name ("Panasonic air conditioner") and the bare noun ("air
+    conditioner") asked in parallel; the best-scoring match wins.
+
+    Parallel, not one after another, so the outline lands in about one
+    SAM round trip; any phrase may match where the others miss.
+    """
+    words = concept(name).split()
+    phrases = [p for p in dict.fromkeys(
+        [concept(look), concept(name), " ".join(words[-2:])]) if p]
+    if not phrases:
+        return None
+    with ThreadPoolExecutor(max_workers=len(phrases)) as pool:
+        futures = [trace.run_in(pool, _query, image_bytes, p, name)
+                   for p in phrases]
+        found = []
+        for fut in futures:
+            try:
+                found.extend(fut.result())
+            except Exception:
+                pass  # one failed phrase never sinks the others
+    found.sort(key=lambda i: -(i["score"] or 0))
+    return found[0] if found else None

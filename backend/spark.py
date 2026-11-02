@@ -571,3 +571,52 @@ def caption(image_bytes: bytes, model: str | None = None) -> str:
         raise RuntimeError("caption came back empty "
                            f"(finish: {reply['_trace'].get('finish')})")
     return f"I'm looking at: {text}"
+
+
+def spot(image_bytes: bytes, model: str | None = None) -> dict:
+    """Live-view detection, step 1: name the main machine in the frame and
+    describe its look in the plain words SAM 3.1 matches.
+
+    {"name": "Panasonic air conditioner", "look": "white air conditioner"}
+    One call at minimal effort, no retry: the live view asks again on
+    the next frame anyway. `name` is "" when no machine is in view.
+    """
+    url, key, default_model = _config()
+    b64 = base64.b64encode(image_bytes).decode()
+    payload = {
+        "model": model or default_model,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": (
+                    "Is there a machine, appliance, vehicle or device in "
+                    "this photo? Reply with only compact JSON: "
+                    '{"name": "<at most 6 words, with the brand if a logo '
+                    'is readable>", "look": "<2-4 plain visual words for '
+                    "the whole object as it looks, colour plus shape, e.g. "
+                    'white wall box, black scooter, silver laptop>"}. '
+                    'If there is none, reply {"name": "", "look": ""}.')},
+                {"type": "image_url",
+                 "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+            ],
+        }],
+        "max_tokens": 400,
+        "reasoning_effort": "minimal",
+    }
+    reply = _post(url, key, payload, purpose="spot", image=image_bytes)
+    try:
+        parsed = _extract_json(reply)
+    except RuntimeError:
+        parsed = {}
+    if not parsed:
+        # Plain text instead of JSON: take the first line as the name.
+        try:
+            text = (reply["choices"][0]["message"].get("content") or "")
+        except (KeyError, IndexError, TypeError):
+            text = ""
+        first = text.strip().splitlines()[0] if text.strip() else ""
+        parsed = {"name": first.strip(" .\"'{}"), "look": ""}
+    name = str(parsed.get("name") or "").strip(" .\"'")
+    look = str(parsed.get("look") or "").strip(" .\"'")
+    reply["_trace"]["parsed"] = {"name": name, "look": look}
+    return {"name": name, "look": look}
