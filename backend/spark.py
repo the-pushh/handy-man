@@ -53,7 +53,10 @@ def _config() -> tuple:
 # worst case, one identical "hedge" request is sent and whichever
 # finishes first wins. Both show in the trace.
 HEDGE_AFTER_S = {"perceive": 7.0, "diagnose": 8.0, "decide": 12.0,
-                 "recheck": 8.0}
+                 "recheck": 8.0,
+                 # Live search: usually 2-4s, but a 15s straggler stalls
+                 # the camera view, so a second call races it after 5s.
+                 "spot": 5.0}
 
 
 def _post(url: str, key: str, payload: dict, timeout: int = 120,
@@ -607,10 +610,13 @@ def spot(image_bytes: bytes, want: str = "", model: str | None = None) -> dict:
                     'readable; empty if it is not in the photo>", "look": '
                     '"<2-4 plain visual words for the whole object, colour '
                     'plus shape, e.g. white wall box>", "framing": "<good if '
-                    "the whole object is clearly in view and fills a good "
-                    "part of the photo; too_far if it is small; too_close or "
-                    "cut_off if part of it is outside the photo; not_visible "
-                    "if it is not in the photo; blurry; too_dark>\"}")},
+                    "it is clearly visible and fills a good part of the "
+                    "photo (a close view showing most of it is good); "
+                    "too_far if it is small; cut_off if less than half of it "
+                    "is in the photo; not_visible if it is not in the photo "
+                    "or you are not sure it is the thing they mean; blurry; "
+                    'too_dark>"}. Never name a different kind of machine '
+                    "as the one they mean.")},
                 {"type": "image_url",
                  "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
             ],

@@ -718,7 +718,11 @@ async def detect_machine(request: Request, file: UploadFile = File(...),
     framing = framing_from_box(instance["box"] if instance else None,
                                seen["framing"])
     item = seen["item"] or seen["name"] or "machine"
-    ready = framing == "good" and bool(seen["name"])
+    # A close view (outline filling much of the frame) is good enough to
+    # diagnose even if the edges spill out of the photo.
+    close = bool(instance) and framing in ("cut_off", "too_close") and (
+        instance["box"]["w"] * instance["box"]["h"] >= 0.2)
+    ready = bool(seen["name"]) and (framing == "good" or close)
     # The machine the owner named is enough to warn: no need to wait
     # until it is framed.
     warning = scan_check(f"{seen['item']} {seen['name']}", want)
