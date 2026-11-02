@@ -2,247 +2,182 @@
 
 Fix what you can. Call for what you can't.
 
-**Live:** https://<your-vercel-domain> (free to use, no login)
+**Live:** https://handyman.thepushh.com (free, no login, made for phones)
 
-Point your phone at something broken and say what's wrong. Meta's models
-look, listen and diagnose; a rules layer decides whether you can fix it
-yourself. If you can, it walks you through it step by step and checks the
-result with the camera. If not, it names the safety rule and shows nearby
-pros with a ready-to-share brief.
+Tell your phone what's broken. Meta's models find the machine in your
+camera, work out what's wrong and decide, with a safety-rules layer,
+whether you can fix it yourself. If you can, it talks you through the fix
+step by step, highlighting each part on the photo, and checks the result
+with the camera. If you can't, it says why and lists nearby technicians
+with phone numbers and a ready-to-send description of the problem.
 
-## Stack
+## How a fix goes
 
-- Frontend: Next.js + TypeScript in `frontend/`, on Vercel. The browser
-  only talks to its own origin; `frontend/middleware.ts` proxies `/api/*`
-  to the backend.
-- Backend: FastAPI in `backend/server.py`, served on Modal by
-  `backend/modal_app.py`. Model calls go to Meta's hosted Model API; the safety
-  rules are `backend/risk.py`; speech is local MMS-TTS.
+1. **Say what's wrong.** Tap the button and speak (or type): "my AC is not
+   cooling".
+2. **The camera finds it.** The app looks for the machine you named in the
+   live camera and outlines it on the stream.
+3. **It frames the picture with you.** If the machine isn't in view, is
+   too far or is cut off, it says so ("Come closer to the air
+   conditioner") and checks again when you hold still. When the framing
+   is good it takes the picture itself. "Use this view" skips ahead.
+4. **The fix.** The picture opens large; the app asks at most one or two
+   look-only questions, gives its verdict, then speaks each step while
+   highlighting the part it is talking about. The model decides how many
+   steps.
+5. **"Is it fixed now?"** After the last step it takes an after photo,
+   compares it with the before photo, and asks.
+6. **Still broken?** It asks what's still wrong and runs again with that,
+   without repeating a fix already tried. After three runs, or as soon as
+   the model or the rules say a technician is needed, it shows nearby
+   technicians.
+7. **DIY or pro.** Easy fixes are walked through. When a fix needs a
+   technician (opening a scooter's panel, refrigerant, wiring), the
+   verdict names the safety rule, keeps the look-only checks and shows
+   who to call.
+8. **Warning before you start.** For machines an owner shouldn't open
+   (microwave, gas appliance, geyser, switchboard or wiring, EV battery,
+   TV) or a danger sign (smoke, sparks, a swollen battery), the app warns
+   right after the scan. You can call a technician, or tick "I understand
+   the risk" and go on at your own risk; that run is labelled as such.
+9. **History.** Every run is kept on the phone, grouped by machine, with
+   each attempt listed under it (photos, steps, verdict, outcome).
 
-| Role | Model | Where |
-|---|---|---|
-| Perception, diagnosis, decision, re-check | `muse-spark-1.3` (prod), `muse-spark-1.3-contributor` (local dev) | `backend/spark.py` |
-| Part outlines | `sam-3.1` | `backend/sam31.py` |
-| Hearing beeps and clicks | `muse-wonder-1.0` + measured audio features | `backend/wonder.py`, `backend/audiofeat.py` |
-| Illustrative highlight (fallback when SAM finds nothing) | `muse-image-1.0` | `backend/muse_image.py` |
-| Speech | MMS-TTS (English and Hindi voices baked into the image) | `backend/tts_local.py` |
-| Speech-to-text | browser speech recognition | `frontend/app/page.tsx` |
-| Nearby pros | Google Places API (New); without a key, a Google Maps search link | `backend/places.py`, `frontend/app/components/CallAPro.tsx` |
+While a model works, the screen says what is happening, who is doing it
+and for how long ("Looking for the air conditioner… 4s · Muse Spark looks,
+SAM 3.1 outlines").
 
-## Deploy
+## Which model runs where
 
-Backend on [Modal](https://modal.com), frontend on Vercel. No tunnels, no
-login, no database.
+All calls are live; there are no canned answers.
 
-- **Backend:** `modal deploy backend/modal_app.py`. It builds the image
-  from `backend/requirements.txt` (CPU-only torch, both MMS voices baked in
-  at build time), serves the FastAPI app with `@modal.asgi_app`, and
-  speaks one warm-up line before a container takes traffic. Sizing (cores,
-  memory, warm containers, max containers, request timeout) is one block
-  at the top of that file. Production always runs `muse-spark-1.3`:
-  `modal_app.py` sets `SPARK_MODEL=prod` and `HANDYMAN_ENV=production`
-  itself.
-- **Secrets:** one Modal secret named `handy-man` with
-  `MUSE_SPARK_API_URL`, `MUSE_SPARK_API_KEY`, `PROXY_SECRET`,
-  `ALLOWED_ORIGINS` and, optionally, `GOOGLE_PLACES_API_KEY`. The backend
-  refuses to start, naming each missing key. Vercel holds `BACKEND_URL`
-  and the same `PROXY_SECRET`. Every variable is documented in
-  `backend/.env.example` and `frontend/.env.example`.
-- **Frontend:** Vercel builds `frontend/` from the repo. The browser only
-  talks to the Vercel domain; `frontend/middleware.ts` forwards `/api/*`
-  to Modal with the proxy secret, and the backend rejects calls without it.
-- **CI:** `.github/workflows/checks.yml` runs ruff, the backend tests and
-  the frontend typecheck on pull requests and pushes. It deploys nothing.
-- **Protecting the bill:** per-IP limits on fixes and requests, a cap on
-  Places lookups per session and per IP, at most 3 Modal containers, and
-  one JSON usage line per request in the Modal logs (`"kind": "usage"`).
-- **History:** past jobs stay in the browser (localStorage for the facts,
-  IndexedDB for small before/after thumbnails and the sound clip, last 20
-  jobs). Nothing is stored on the server.
-- **Unused:** `infra/setup.sh` (the earlier Google Cloud Run setup) is no
-  longer used and is kept for reference only. `backend/Dockerfile` is for
-  running the backend as a container locally: `make container` (uses your
-  `.env`).
+| Screen | What happens | Model | Code |
+|---|---|---|---|
+| Camera search | Find the machine you named, judge the framing | `muse-spark-1.3` | `backend/spark.py` `spot()` |
+| Camera search | Outline the machine on the live stream | `sam-3.1` | `backend/sam31.py` `find_object()` |
+| Camera search | Warn before diagnosis | rules (no model) | `backend/risk.py` `scan_check()` |
+| Listening (beeps) | Count and time beeps; cross-check by ear | measured audio features + `muse-wonder-1.0` | `backend/audiofeat.py`, `backend/wonder.py` |
+| Walkthrough | Read the photo, diagnose, ask questions, decide | `muse-spark-1.3` | `backend/spark.py` |
+| Walkthrough | Decide what an owner may do | rules (no model) | `backend/risk.py` `judge()` |
+| Walkthrough | Outline each step's part | `sam-3.1`; `muse-image-1.0` (labelled illustrative) when SAM finds nothing | `backend/sam31.py`, `backend/muse_image.py` |
+| Final check | Compare before and after photos | `muse-spark-1.3` | `backend/spark.py` `recheck()` |
+| Speech | Speak every line | MMS-TTS (Meta), English and Hindi voices, on our server | `backend/tts_local.py` |
+| Speech-to-text | What you say | the browser's speech recognition | `frontend/app/page.tsx` |
+| Technicians | Nearby listings with phone numbers | Google Places API (New); a Google Maps search button without it | `backend/places.py`, `frontend/app/components/CallAPro.tsx` |
+
+Local development uses `muse-spark-1.3-contributor` (`SPARK_MODEL=local`);
+production always runs `muse-spark-1.3`.
+
+## The safety rules
+
+The model proposes; `backend/risk.py` decides. It reads every proposed
+step and the reported symptoms and blocks what an owner shouldn't do:
+mains wiring, gas fittings, battery terminals, sealed casings, a
+scooter's body panels, an AC's sealed refrigerant system, and any step
+that is itself "get a professional". Owner jobs are allowed explicitly
+(an AC's front panel and filter, an inverter battery's floats and
+distilled water, a laptop's base cover for RAM or SSD). The verdict card
+names the rule that fired. `python backend/test_risk.py` runs its 34
+tests.
 
 ## Languages
 
-- Voice: all 999 MMS-TTS checkpoints, downloaded lazily on first use
-  (`/api/languages` lists them; the UI has an Auto-detect + picker).
-- Narration: the model's own replies (English; Hindi and Hinglish voices
-  are baked in).
-- Honest gaps: some languages have no MMS voice at all (verified absent:
-  Mandarin, Japanese, Italian, Norwegian) — those reply in English with
-  the recognizer still set to your language. Symptom matching runs
-  against a reverse translation so it works in any narrated language.
-- First use of a new narration language downloads the NLLB model once
-  (~2.5GB) and is slow; every later turn is instant.
+- Speech recognition is the browser's, in English (`en-US`). The app
+  detects Hindi and Hinglish in what was said (`/api/detect-language`)
+  to pick the voice.
+- The model replies in English. Lines in Hindi script are spoken with the
+  Hindi MMS voice; everything in Latin letters (English, Hinglish typed in
+  English letters) with the English voice.
+- Other languages are not supported in this build.
 
-### Widely-spoken language coverage
-
-| Language | Voice | Narration |
-|---|---|---|
-| English, Hindi, Hinglish | local MMS | authored (no translation needed) |
-| Spanish, German, French, Portuguese, Dutch, Catalan, Korean, Marathi, Bengali, Tamil, Telugu, Urdu, Arabic, Persian, Russian, Polish, Ukrainian, Vietnamese, Thai, Indonesian, Swahili, Gujarati, Punjabi, Hebrew, Greek, Romanian, Hungarian, Finnish, Swedish | local MMS | NLLB-translated, cached |
-| Mandarin, Japanese, Italian, Norwegian, Turkish, Czech, Danish, Standard Malay | — (no MMS checkpoint exists) | replies simply in English |
-
-<details>
-<summary>All 107 translated-narration languages</summary>
-
-- Achinese (`ace`)
-- Akan (`aka`)
-- Amharic (`amh`)
-- Arabic (`ara`)
-- Assamese (`asm`)
-- Awadhi (`awa`)
-- Central Aymara (`ayr`)
-- South Azerbaijani (`azb`)
-- North Azerbaijani (`azj-script_cyrillic`)
-- North Azerbaijani (`azj-script_latin`)
-- Bashkir (`bak`)
-- Bambara (`bam`)
-- Balinese (`ban`)
-- Bemba (Zambia) (`bem`)
-- Bengali (`ben`)
-- Tibetan (`bod`)
-- Bulgarian (`bul`)
-- Catalan (`cat`)
-- Welsh (`cym`)
-- German (`deu`)
-- Southwestern Dinka (`dik`)
-- Dyula (`dyu`)
-- Dzongkha (`dzo`)
-- Modern Greek (1453-) (`ell`)
-- English (`eng`)
-- Basque (`eus`)
-- Ewe (`ewe`)
-- Faroese (`fao`)
-- Persian (`fas`)
-- Fijian (`fij`)
-- Finnish (`fin`)
-- Fon (`fon`)
-- French (`fra`)
-- Guarani (`grn`)
-- Gujarati (`guj`)
-- Haitian (`hat`)
-- Hausa (`hau`)
-- Hebrew (`heb`)
-- Hindi (`hin`)
-- Chhattisgarhi (`hne`)
-- Hungarian (`hun`)
-- Iloko (`ilo`)
-- Indonesian (`ind`)
-- Icelandic (`isl`)
-- Javanese (`jav`)
-- Kabyle (`kab`)
-- Kachin (`kac`)
-- Kannada (`kan`)
-- Kazakh (`kaz`)
-- Kabiyè (`kbp`)
-- Khmer (`khm`)
-- Kikuyu (`kik`)
-- Kinyarwanda (`kin`)
-- Kirghiz (`kir`)
-- Northern Kurdish (`kmr-script_arabic`)
-- Northern Kurdish (`kmr-script_cyrillic`)
-- Northern Kurdish (`kmr-script_latin`)
-- Korean (`kor`)
-- Lao (`lao`)
-- Ganda (`lug`)
-- Maithili (`mai`)
-- Malayalam (`mal`)
-- Marathi (`mar`)
-- Minangkabau (`min`)
-- Dutch (`nld`)
-- Nuer (`nus`)
-- Chichewa (`nya`)
-- Odia (`ory`)
-- Pangasinan (`pag`)
-- Panjabi (`pan`)
-- Papiamento (`pap`)
-- Polish (`pol`)
-- Portuguese (`por`)
-- Ayacucho Quechua (`quy`)
-- Romanian (`ron`)
-- Rundi (`run`)
-- Russian (`rus`)
-- Sango (`sag`)
-- Shan (`shn`)
-- Samoan (`smo`)
-- Shona (`sna`)
-- Somali (`som`)
-- Spanish (`spa`)
-- Sundanese (`sun`)
-- Swedish (`swe`)
-- Swahili (individual language) (`swh`)
-- Tamil (`tam`)
-- Tamasheq (`taq`)
-- Tatar (`tat`)
-- Telugu (`tel`)
-- Tajik (`tgk`)
-- Tagalog (`tgl`)
-- Thai (`tha`)
-- Tigrinya (`tir`)
-- Tok Pisin (`tpi`)
-- Tsonga (`tso`)
-- Turkmen (`tuk-script_arabic`)
-- Turkmen (`tuk-script_latin`)
-- Uighur (`uig-script_arabic`)
-- Uighur (`uig-script_cyrillic`)
-- Ukrainian (`ukr`)
-- Urdu (`urd-script_arabic`)
-- Urdu (`urd-script_devanagari`)
-- Urdu (`urd-script_latin`)
-- Vietnamese (`vie`)
-- Waray (Philippines) (`war`)
-- Yoruba (`yor`)
-
-</details>
-
-## Run
-
-One command does everything (setup + backend on :8000 + frontend on :3000):
+## Run locally
 
 ```
-make
+make            # setup + backend on :8000 + frontend on :3000
 ```
 
-Open http://127.0.0.1:3000 in a browser (camera/mic need localhost or
-HTTPS). Ctrl-C stops both servers.
-
-Useful extras:
+Open http://127.0.0.1:3000 (camera and mic need localhost or HTTPS).
+Needs `MUSE_SPARK_API_URL` and `MUSE_SPARK_API_KEY` in `.env` at the repo
+root; every variable is documented in `backend/.env.example` and
+`frontend/.env.example`.
 
 ```
-make setup      # dependencies only (venv + pip + npm), idempotent
-make backend    # FastAPI alone — HANDYMAN_MODAL=0 for local fallbacks
+make setup      # dependencies only (venv + pip + npm)
+make backend    # FastAPI alone
 make frontend   # Next.js alone
-make deploy     # deploy the backend to Modal (modal deploy backend/modal_app.py)
-make auth       # authenticate this machine with Modal (opens browser)
-make clean      # remove frontend build output
+make phone      # backend + frontend + a cloudflared tunnel for a real phone
+make container  # the backend as a local Docker container (uses .env)
+make deploy     # modal deploy backend/modal_app.py
 ```
 
-## Repair flow (real intelligence + highlights)
+## Tests and eval
 
-One flow: point the camera, Talk (or type) the issue, the system
-captures a still itself and opens the repair overlay over the live
-feed. `POST /api/repair/analyze` (+ `/api/repair/highlight` per step):
-Muse Spark (`muse-spark-1.3-contributor`) identifies the appliance,
-brand/model, and parts; a second call diagnoses causes, safety
-warnings, and ordered check/how steps; Muse Image (`muse-image-1.0`)
-highlights each step's part with an IKEA-style A/B/C legend while the
-MMS voice talks you through it — one step at a time with Next/Back,
-plus embedded tutorial videos, reference-picture links, and a closing
-resolution check. Needs `MUSE_SPARK_API_URL` + `MUSE_SPARK_API_KEY` in
-`.env` (see `backend/.env.example`). Hosted `sam-3.1` masks stay a hook point
-until its dashboard request format lands.
+```
+python backend/test_risk.py        # safety rules
+python backend/test_audiofeat.py   # beep measurement
+python backend/test_limits.py      # rate limits
+python backend/test_guard.py       # proxy secret, limits, voice choice
+SPARK_MODEL=prod python -m eval.run   # demo cases, live models
+```
 
-## Flow (voice is the only trigger)
+`eval/run.py` sends each case in `eval/specs.json` through the real
+backend (camera search, diagnosis, answers) and prints a pass/fail table.
+The photos are from a private home and are not in the repo; put your own
+in `eval/cases/` with the names in `specs.json`. A case without its photo
+is reported as SKIP. Latest run (2026-11-02, `muse-spark-1.3`):
 
-Tap Talk and speak — the system takes it from there: it captures a still
-itself, detects your language (English, Hindi, Hinglish/code-mix), and
-streams its thinking aloud while overlays land simultaneously — finding
-the device, checking regional variants, searching the logo, marking
-components, pinpointing the problem area. Each inference shows the spliced
-image portion it came from. Then spoken repair steps with highlights.
-Saying "next" (or अगला) advances a step. Tapping the still tags a part
-the detector missed. The video stream is never recorded — only
-system-captured stills.
+| Case | What it checks | Result |
+|---|---|---|
+| ac-not-cooling | finds the AC, framed, no warning, DIY, "clogged filter", 3 steps | PASS |
+| inverter-beeping | finds the inverter, 3 measured beeps, DIY, "low battery water", 4 steps | PASS |
+| inverter-back-not-charging | finds the inverter from the back, analysis runs, 4 steps | PASS |
+| scooter-self-start | pro verdict, rule `vehicle-body-panel` | SKIP (no photo yet) |
+| wrong-item-in-view | asked for the AC, inverter in view: not ready | PASS |
+| scan-warning-microwave | "microwave": warning before diagnosis | PASS |
+| danger-symptom-smoke | "smoke": danger warning on any machine | PASS |
+
+6 passed, 0 failed, 1 skipped.
+
+CI (`.github/workflows/checks.yml`) runs ruff, the four test files and
+the frontend type check. It deploys nothing.
+
+## Deploy
+
+Backend on [Modal](https://modal.com), frontend on Vercel. No database.
+
+- **Backend:** `modal deploy backend/modal_app.py`. It builds the image
+  from `backend/requirements.txt` (CPU-only torch, both MMS voices baked
+  in), serves the FastAPI app with `@modal.asgi_app`, and speaks one
+  warm-up line before a container takes traffic. Sizing (2 cores, 3 GB,
+  one warm container, at most 3) is one block at the top of that file.
+  It sets `SPARK_MODEL=prod` and `HANDYMAN_ENV=production` itself.
+- **Secrets:** one Modal secret named `handy-man` with
+  `MUSE_SPARK_API_URL`, `MUSE_SPARK_API_KEY`, `PROXY_SECRET`,
+  `ALLOWED_ORIGINS` and, optionally, `GOOGLE_PLACES_API_KEY`. The backend
+  refuses to start, naming each missing key. A running container keeps
+  the secret it started with: redeploy after changing it. Vercel holds
+  `BACKEND_URL` and the same `PROXY_SECRET`.
+- **Frontend:** Vercel builds `frontend/`. The browser only talks to the
+  Vercel domain; `frontend/middleware.ts` forwards `/api/*` to Modal with
+  the proxy secret, and the backend rejects calls without it.
+- **Protecting the bill:** per-IP limits on fixes and requests, a cap on
+  technician searches per session and per IP per day, at most 3 Modal
+  containers, and one JSON usage line per request in the Modal logs
+  (`"kind": "usage"`).
+- **Privacy:** history stays in the browser (localStorage for the facts,
+  IndexedDB for small photos and the sound clip, last 20 runs). Nothing
+  is stored on the server. Location goes in a request body, never in a
+  URL, and only when the technician list opens.
+- **Unused:** `infra/setup.sh` (an earlier Google Cloud Run setup) is kept
+  for reference only. `backend/Dockerfile` is for running locally.
+
+## Built during the hackathon (Oct 26 to Nov 4)
+
+Everything in this repository was written during the event: the first
+commit is on 2026-10-30, and every commit since is in `git log`. No code,
+data or assets from before the event; the demo photos are our own and
+are not committed. Third-party pieces are open-source libraries (Next.js,
+FastAPI, PyTorch, transformers) and hosted APIs (Meta's Model API, Google
+Places), used through their public interfaces.
+
+See [FUTURE.md](FUTURE.md) for what comes next.
