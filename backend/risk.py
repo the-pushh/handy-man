@@ -349,3 +349,72 @@ def assess_risk(device: str = "", issue: str = "") -> dict:
     v = judge(device, issue, [])
     return {"level": "high" if v["verdict"] == "pro" else "standard",
             "hazard": v["rule"] or "", "reason": v["title"] or ""}
+
+
+# --- Scan-time check: machines an owner should not tinker with -----------
+#
+# Runs the moment the camera finds the machine the owner named, before
+# any diagnosis: the owner hears the warning first and may go on at their
+# own risk (the walkthrough then shows every step, marked as their risk).
+# Symptoms the owner reported (smoke, a swollen battery) warn here too.
+MACHINES = [
+    ("microwave",
+     _rx(r"microwave", r"\botg\b", r"convection oven"),
+     "A microwave stores a deadly charge inside even when unplugged; "
+     "only a technician should open or repair it.",
+     "Microwaves are for a technician.",
+     "appliance technician"),
+    ("gas-appliance",
+     _rx(r"gas (?:stove|hob|cooktop|geyser|heater|cylinder|pipe|burner)",
+         r"\blpg\b", r"cylinder", r"regulator", r"gas chulha"),
+     "Gas appliances can leak or explode; a gas technician must handle "
+     "them.",
+     "Gas is for a gas technician.",
+     "gas technician"),
+    ("water-heater",
+     _rx(r"geyser", r"water heater", r"boiler", r"immersion rod"),
+     "A water heater mixes mains power with hot water under pressure; "
+     "a technician must open it.",
+     "Water heaters are for a technician.",
+     "appliance technician"),
+    ("mains-board",
+     _rx(r"switch ?board", r"\bmcb\b", r"fuse box", r"distribution (?:box|board)",
+         r"electric(?:al)? panel", r"breaker (?:box|panel)", r"meter box",
+         r"wall socket", r"socket", r"plug point", r"wiring"),
+     "Switchboards, sockets and wiring carry mains power; that is an "
+     "electrician's job.",
+     "This needs an electrician.",
+     "electrician"),
+    ("ev-battery",
+     _rx(r"electric (?:scooter|bike|vehicle|car)", r"\bev\b", r"e-?scooter",
+         r"e-?bike", r"lithium (?:battery|pack)", r"battery pack"),
+     "An electric vehicle's battery pack is high voltage and can catch "
+     "fire; a service centre must handle it.",
+     "EV batteries need a service centre.",
+     "EV service centre"),
+    ("tv-display",
+     _rx(r"\btv\b", r"television", r"\bcrt\b", r"monitor"),
+     "Inside a TV or monitor are high-voltage parts that stay charged; a "
+     "technician must open it.",
+     "TVs are for a technician.",
+     "TV repair"),
+]
+
+
+def scan_check(machine: str = "", issue: str = "") -> dict | None:
+    """Warn before diagnosis: the machine itself, or a danger symptom the
+    owner reported. None when nothing fires.
+
+    {"rule", "title", "spoken", "trade"}: the walkthrough's verdict uses
+    the same shape.
+    """
+    job = Job(machine or "", issue or "", [])
+    for rule in RULES:
+        if rule.symptom and rule.applies(job) and rule.symptom(job.issue):
+            return {"rule": rule.id, "title": rule.title,
+                    "spoken": rule.spoken, "trade": rule.trade}
+    for rid, rx, title, spoken, trade in MACHINES:
+        if rx.search(job.context):
+            return {"rule": rid, "title": title, "spoken": spoken,
+                    "trade": trade}
+    return None

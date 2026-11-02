@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from risk import judge  # noqa: E402
+from risk import judge, scan_check  # noqa: E402
 
 
 def step(check, how=""):
@@ -277,3 +277,27 @@ if __name__ == "__main__":
         fn()
         print(f"ok  {name}")
     print(f"\n{len(tests)} passed")
+
+
+# --- Scan-time warnings -----------------------------------------------
+
+def test_scan_warns_for_a_microwave():
+    w = scan_check("Samsung microwave oven", "it stopped heating")
+    assert w and w["rule"] == "microwave"
+
+
+def test_scan_warns_for_a_geyser_and_a_switchboard():
+    assert scan_check("geyser", "no hot water")["rule"] == "water-heater"
+    assert scan_check("switch board", "socket not working")["rule"] == "mains-board"
+
+
+def test_scan_warns_for_a_danger_symptom_on_any_machine():
+    w = scan_check("air conditioner", "there is smoke coming out")
+    assert w and w["rule"] == "danger-symptom"
+
+
+def test_scan_lets_the_demo_machines_through():
+    assert scan_check("Panasonic air conditioner", "not cooling") is None
+    assert scan_check("Honda Activa scooter", "self start not working") is None
+    assert scan_check("inverter", "keeps beeping") is None
+    assert scan_check("laptop", "very slow") is None
