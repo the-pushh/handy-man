@@ -33,7 +33,7 @@ export default function Intro({ onClose }: { onClose: () => void }) {
     <div className="intro-backdrop">
       <div className="intro-card" role="dialog" aria-modal="true" aria-labelledby="intro-title">
         <p className="sheet-label">Welcome</p>
-        <h2 id="intro-title" className="intro-title">Fix what you can. Call for what you can&apos;t.</h2>
+        <h2 id="intro-title" className="intro-title">Try DIY before you call a handyman.</h2>
         <p className="intro-lead">
           Point your phone at something that&apos;s acting up and say what&apos;s wrong. Handyman runs the
           quick checks people miss, walks you through a safe fix, or finds a technician nearby.
