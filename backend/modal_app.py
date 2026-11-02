@@ -49,7 +49,13 @@ def _bake_voices() -> None:
 
 def _requirements() -> list:
     """requirements.txt minus torch (CPU wheel installed separately) and
-    modal (the container doesn't need the client)."""
+    modal (the container doesn't need the client).
+
+    Only read on your machine, where the image is built. Inside the
+    container this file runs from /root without requirements.txt next to
+    it, and the already-built image is used as is."""
+    if not modal.is_local():
+        return []
     lines = (BACKEND / "requirements.txt").read_text().splitlines()
     return [ln.strip() for ln in lines
             if ln.strip() and not ln.startswith("#")
