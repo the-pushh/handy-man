@@ -1372,3 +1372,88 @@ section.history-card { cursor: default; }
 .before-after img, .walk.screened .before-after img, .history-card .before-after img {
   display: block; width: 100%; height: 128px; max-height: none; object-fit: cover;
 }
+
+/* ===================================================================
+   GRID, EDGE TO EDGE
+   The mat covers the whole phone, centred: it is shifted by the same
+   few pixels the 8px-snapped app screen is inset by, so its lines pass
+   exactly through the screen's edges and every element on it.
+   =================================================================== */
+.phone::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-color: var(--paper-deep);
+  background-image:
+    linear-gradient(var(--mat-major) 1px, transparent 1px),
+    linear-gradient(90deg, var(--mat-major) 1px, transparent 1px),
+    linear-gradient(var(--mat-mid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--mat-mid) 1px, transparent 1px),
+    linear-gradient(var(--mat-minor) 1px, transparent 1px),
+    linear-gradient(90deg, var(--mat-minor) 1px, transparent 1px);
+  background-size: 80px 80px, 80px 80px, 40px 40px, 40px 40px, 8px 8px, 8px 8px;
+  background-position: calc((100cqw - round(down, 100cqw, 16px)) / 2) 0;
+}
+/* The app screen itself is transparent: the phone's mat shows through. */
+.stage.mat { background: none; }
+/* Overlays keep an opaque mat; it starts at the screen's corner, which
+   is on the phone mat's lines, so the two meet seamlessly. */
+
+/* Camera frame: a 1px line drawn above the video, and a pin (a small
+   cross on the grid intersection) at each corner. */
+.cutout { outline: 0; overflow: visible; }
+.cutout::after {
+  content: ""; position: absolute; inset: 0; z-index: 7;
+  border: 1px solid var(--line); pointer-events: none;
+}
+.cutout > video.live { overflow: hidden; }
+.crop {
+  width: 16px; height: 16px; border: 0 !important; z-index: 8;
+  background:
+    linear-gradient(var(--primary), var(--primary)) center / 16px 2px no-repeat,
+    linear-gradient(var(--primary), var(--primary)) center / 2px 16px no-repeat;
+}
+.crop.tl { top: -8px; left: -8px; }
+.crop.tr { top: -8px; right: -8px; left: auto; }
+.crop.bl { bottom: -8px; left: -8px; top: auto; }
+.crop.br { bottom: -8px; right: -8px; top: auto; left: auto; }
+/* Things that move inside the camera stay inside it. */
+.scan-sweep, .shutter { overflow: hidden; }
+
+/* History: machine card > run rows. The machine name is the card's
+   title (bigger, bold, on the card's own header strip); runs are rows
+   with a hairline between them. */
+.history-group {
+  border: 1px solid var(--grid-major); background: var(--paper);
+  padding: 0; margin: 0;
+}
+.history-group + .history-group { margin-top: 16px; }
+.history-machine {
+  display: flex; align-items: center; justify-content: space-between;
+  height: 48px; margin: 0; padding: 0 15px;
+  background: var(--paper-raised);
+  box-shadow: inset 0 -1px 0 var(--grid-major);
+}
+.history-machine-name { font-size: 18px; line-height: 24px; font-weight: 700; }
+.history-machine-count { font-size: 13px; line-height: 16px; color: var(--line-muted); }
+.history-list { gap: 0; }
+.history-row {
+  display: grid; gap: 8px; width: 100%; text-align: left;
+  padding: 16px 15px; margin: 0; border: 0;
+  background: none; color: var(--line); font: inherit; cursor: pointer;
+}
+.history-list li + li .history-row { box-shadow: inset 0 1px 0 var(--grid-major); }
+.history-row:active { background: var(--paper-raised); }
+/* The machine card's border is drawn on top (takes no room), so its
+   header strip and rows start exactly on the grid. */
+.history-group { position: relative; border: 0; }
+.history-group::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  border: 1px solid var(--grid-major);
+}
+.history-machine { padding: 0 16px; }
+.history-row { padding: 16px; }
+.history-machine .history-machine-name { font-size: 18px; line-height: 24px; font-weight: 700; color: var(--line); }
+.history-machine .history-machine-count { font-size: 13px; line-height: 16px; font-weight: 500; color: var(--line-muted); }
