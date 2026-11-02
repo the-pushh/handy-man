@@ -10,6 +10,7 @@ import { mark, turnElapsed } from "../lib/timeline";
 import { requestDiagnosis } from "../lib/diagnosis";
 import type { Heard } from "../lib/recorder";
 import CallAPro from "./CallAPro";
+import Busy from "./Busy";
 import type { ScanWarning } from "./LiveDetect";
 import { getSpeechRecognition } from "../lib/speech";
 import { newJobId, putMedia, saveJob, updateJob } from "../lib/history";
@@ -65,6 +66,16 @@ interface Question {
 const ORANGE = "#e86a17";
 
 const cap = (t: string) => (t ? t[0].toUpperCase() + t.slice(1) : t);
+
+// Who is working during each wait, and how long it usually takes.
+const BUSY: Record<string, { hint: string; slowAfter: number }> = {
+  "Working it out…": {
+    hint: "Muse Spark is reading the photo and what you said; then the safety rules check its plan. Usually 15–30 s.",
+    slowAfter: 35,
+  },
+  "Deciding…": { hint: "Muse Spark is deciding with your answers. Usually 10–20 s.", slowAfter: 25 },
+  "Outlining parts…": { hint: "SAM 3.1 is outlining the parts on your photo. A few seconds.", slowAfter: 10 },
+};
 
 // Runs on one machine before the walkthrough calls a technician.
 const MAX_RUNS = 3;
@@ -862,9 +873,11 @@ export default function RepairWalkthrough({
         <p className="sheet-label">{name}</p>
         <p className="walk-said">&ldquo;{issue}&rdquo;</p>
         {busy && (
-          <p className="status-chip" role="status">
-            <span className="dot" aria-hidden="true" /> {busy}
-          </p>
+          <Busy
+            label={busy === "Working it out…" && attempt > 1 ? `Run ${attempt}: working out what's still wrong…` : busy}
+            hint={BUSY[busy]?.hint || ""}
+            slowAfter={BUSY[busy]?.slowAfter || 0}
+          />
         )}
       </header>
 
@@ -1123,6 +1136,14 @@ export default function RepairWalkthrough({
               </>
             );
           })()}
+          {stepLoading && (
+            <Busy
+              compact
+              label="Highlighting the part…"
+              hint="Marking this step's part on your photo. A few seconds."
+              slowAfter={12}
+            />
+          )}
           <div className="row">
             <button
               type="button"
@@ -1175,13 +1196,19 @@ export default function RepairWalkthrough({
               <figcaption>After</figcaption>
             </figure>
           </div>
-          <p className="done-result" role="status">
-            {done.state === "checking" && "Checking the after photo…"}
+          <div className="done-result" role="status">
+            {done.state === "checking" && (
+              <Busy
+                label="Checking the after photo…"
+                hint="Muse Spark compares before and after. Usually 5–10 s."
+                slowAfter={15}
+              />
+            )}
             {done.state === "error" && "Couldn't run the check. Try again, or just tell me below."}
             {done.state === "ok" && done.looksFixed === true && <>✓ {cap(done.seen)}</>}
             {done.state === "ok" && done.looksFixed === false && <>✗ {cap(done.next || done.seen)}</>}
             {done.state === "ok" && done.looksFixed === null && <>Couldn&apos;t see it clearly. {cap(done.next || "")}</>}
-          </p>
+          </div>
           {done.state !== "checking" && done.looksFixed !== true && (
             <button type="button" className="btn-outline" onClick={() => void finishFix()}>
               Check again

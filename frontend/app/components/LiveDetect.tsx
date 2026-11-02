@@ -17,6 +17,7 @@ import type { RefObject } from "react";
 import { drawStill } from "../lib/still";
 import { mark } from "../lib/timeline";
 import { ORANGE } from "../lib/masks";
+import Busy from "./Busy";
 import type { SamInstance } from "../lib/masks";
 
 export interface ScanWarning {
@@ -91,6 +92,8 @@ export default function LiveDetect({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [shown, setShown] = useState<SeekResult | null>(null);
   const [item, setItem] = useState<string>("");
+  // A check is on its way to the models (drives the scan line + timer).
+  const [checking, setChecking] = useState<boolean>(false);
   const onResultRef = useRef(onResult);
   onResultRef.current = onResult;
   const apiRef = useRef(apiBase);
@@ -99,6 +102,7 @@ export default function LiveDetect({
   useEffect(() => {
     setShown(null);
     setItem("");
+    setChecking(false);
     if (!want) return;
     const sig = document.createElement("canvas");
     sig.width = SIG_W;
@@ -118,6 +122,7 @@ export default function LiveDetect({
       const video = videoRef.current;
       if (!video?.videoWidth) return;
       inFlight = true;
+      setChecking(true);
       lastCall = performance.now();
       calls++;
       askedSig = now;
@@ -167,6 +172,7 @@ export default function LiveDetect({
         // Network or timeout: the next settled view tries again.
       } finally {
         inFlight = false;
+        if (alive) setChecking(false);
       }
     };
 
@@ -281,10 +287,22 @@ export default function LiveDetect({
   }, [shown, videoRef]);
 
   if (!want) return null;
+  const what = item ? `the ${item}` : "it";
   return (
     <>
       <canvas ref={canvasRef} className="live-detect" aria-hidden="true" />
-      {shown ? (
+      {checking && <div className="scan-sweep" aria-hidden="true" />}
+      {checking ? (
+        <div className="live-busy">
+          <Busy
+            compact
+            label={shown ? `Checking the view of ${what}…` : `Looking for ${what}…`}
+            hint="Muse Spark looks, SAM 3.1 outlines. Hold the phone steady."
+            slowAfter={9}
+            slowHint="Still checking. The model is slow right now; keep holding steady."
+          />
+        </div>
+      ) : shown ? (
         <p className="live-tag" role="status">
           <span className="live-tag-dot" aria-hidden="true" />
           {shown.name}
@@ -297,7 +315,7 @@ export default function LiveDetect({
       ) : (
         <p className="live-tag live-tag-scan" role="status">
           <span className="live-tag-dot" aria-hidden="true" />
-          {item ? `Looking for the ${item}…` : "Looking…"}
+          {item ? `Hold steady on the ${item}` : "Hold the phone steady"}
         </p>
       )}
     </>

@@ -1050,3 +1050,50 @@ html, body {
 }
 .history-machine span { font-size: 13px; font-weight: 500; color: var(--line-muted); }
 .history-risk { color: var(--primary); font-size: 13px; }
+
+/* Busy: every wait shows what is happening, who is doing it and for how
+   long (components/Busy.tsx). */
+.busy {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--primary);
+  background: rgba(8, 8, 8, 0.72);
+  color: var(--line);
+}
+.busy-row { display: flex; align-items: center; gap: 10px; }
+.busy-label { flex: 1; font-size: 16px; font-weight: 600; line-height: 1.3; }
+.busy-secs { font-variant-numeric: tabular-nums; font-size: 14px; color: var(--line-muted); }
+.busy-mark {
+  flex: none; width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid var(--primary); border-right-color: transparent;
+  animation: busy-spin 0.9s linear infinite;
+}
+.busy-bar { position: relative; height: 3px; margin-top: 8px; overflow: hidden; background: var(--line-faint); }
+.busy-bar span {
+  position: absolute; top: 0; bottom: 0; width: 35%;
+  background: var(--primary);
+  animation: busy-slide 1.4s ease-in-out infinite;
+}
+.busy-hint { margin: 6px 0 0; font-size: 13px; line-height: 1.4; color: var(--line-muted); }
+.busy-compact { padding: 6px 10px; }
+.busy-compact .busy-label { font-size: 14px; }
+@keyframes busy-spin { to { transform: rotate(360deg); } }
+@keyframes busy-slide { 0% { left: -35%; } 100% { left: 100%; } }
+@media (prefers-reduced-motion: reduce) {
+  .busy-mark { animation: none; border-right-color: var(--primary); }
+  .busy-bar span { animation: none; left: 0; width: 100%; opacity: 0.5; }
+}
+
+/* Live search: a scan line sweeps the camera while a check is running. */
+.scan-sweep {
+  position: absolute; inset: 0; pointer-events: none; z-index: 3; overflow: hidden;
+}
+.scan-sweep::after {
+  content: ""; position: absolute; left: 0; right: 0; height: 28%;
+  background: linear-gradient(to bottom, transparent, rgba(255, 106, 26, 0.18) 85%, rgba(255, 106, 26, 0.7));
+  animation: scan-down 1.8s linear infinite;
+}
+@keyframes scan-down { 0% { top: -28%; } 100% { top: 100%; } }
+@media (prefers-reduced-motion: reduce) { .scan-sweep::after { animation: none; top: 0; height: 100%; opacity: 0.25; } }
+.live-busy { position: absolute; top: 56px; left: 16px; right: 16px; z-index: 5; margin: 0; }
+.pro-phone { margin: 2px 0 0; font-size: 15px; font-variant-numeric: tabular-nums; color: var(--line); }

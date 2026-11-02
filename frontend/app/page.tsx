@@ -24,6 +24,13 @@ import History from "./components/History";
 import LiveDetect from "./components/LiveDetect";
 import type { ScanWarning, SeekResult } from "./components/LiveDetect";
 import CallAPro from "./components/CallAPro";
+import Busy from "./components/Busy";
+
+// Who is working during the camera-screen waits.
+const PAGE_BUSY: Record<string, string> = {
+  "Looking at your photo…": "Muse Spark is finding the machine you named.",
+  "Checking the sound…": "Measuring the beeps and asking Muse Wonder. A few seconds.",
+};
 
 interface Overlay {
   files: File[];
@@ -779,7 +786,12 @@ export default function Home() {
         <span className="crop bl" />
         <span className="crop br" />
 
-        {phase && !warn && !seekWant && (
+        {orb === "thinking" && !seekWant && !warn && statusMsg && PAGE_BUSY[statusMsg] !== undefined && (
+          <div className="live-busy">
+            <Busy compact label={statusMsg} hint={PAGE_BUSY[statusMsg]} slowAfter={12} />
+          </div>
+        )}
+        {phase && !warn && !seekWant && !(orb === "thinking" && PAGE_BUSY[statusMsg] !== undefined) && (
           <p className="status-chip scan-chip" role="status">
             <span className="dot" aria-hidden="true" /> {phase}
           </p>
@@ -811,7 +823,7 @@ export default function Home() {
                   rule: warn.w.title,
                   checks: [],
                   sound: null,
-                  photo: warn.res.frame,
+                  photo: warn.res.name ? warn.res.frame : null,
                   clip: null,
                 }}
               />
