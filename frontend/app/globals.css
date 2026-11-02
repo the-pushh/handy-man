@@ -1519,3 +1519,10 @@ section.history-card { cursor: default; }
   border: 6px solid transparent; border-top-color: #000;
 }
 .caution-pin { right: 7px; bottom: 7px; } /* 8px from the card edge, counting its 1px border */
+
+/* A past run: what closed it on top, then one button per thing to look
+   at, full width, 8 apart. */
+.run-actions { display: grid; gap: 8px; }
+.run-actions button { width: 100%; }
+.verdict-card.diy .verdict-title { color: var(--success); }
+.verdict-card .pill { vertical-align: 1px; }

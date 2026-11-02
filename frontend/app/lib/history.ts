@@ -43,6 +43,23 @@ export interface Job {
   parentId?: string | null;
   // A scan-time warning the owner overrode, at their own risk.
   riskAccepted?: { rule: string; title: string } | null;
+  // The technicians found for this diagnosis (as listed, with phones),
+  // and who the owner called or texted from the list.
+  pros?: SavedPro[];
+  prosTrade?: string | null;
+  contacted?: { name: string; phone: string | null; how: "call" | "text"; at: string } | null;
+}
+
+export interface SavedPro {
+  id: string;
+  name: string;
+  address: string;
+  distance_km: number;
+  open_now: boolean | null;
+  phone: string | null;
+  rating: number | null;
+  ratings: number | null;
+  maps_url: string | null;
 }
 
 function read(): Job[] {

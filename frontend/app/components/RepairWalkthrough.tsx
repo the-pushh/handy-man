@@ -1306,6 +1306,19 @@ export default function RepairWalkthrough({
             <CallAPro
               api={API}
               trade={trade}
+              onFound={(pros) => {
+                if (jobId.current) updateJob(jobId.current, { pros, prosTrade: trade });
+                mark("technicians found", `${pros.length} ${trade}`);
+              }}
+              onContact={(p, how) => {
+                if (jobId.current) {
+                  updateJob(jobId.current, {
+                    outcome: "called a pro",
+                    contacted: { name: p.name, phone: p.phone, how, at: new Date().toISOString() },
+                  });
+                }
+                mark("tap", `${how} ${p.name}`);
+              }}
               brief={{
                 device: [device, appliance].filter(Boolean).join(" ") || "",
                 issue,

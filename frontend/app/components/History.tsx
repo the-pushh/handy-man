@@ -5,9 +5,9 @@
    Everything comes from lib/history.ts (localStorage + IndexedDB). */
 
 import { useEffect, useState } from "react";
-import { BriefCard } from "./CallAPro";
+import { BriefCard, ProList } from "./CallAPro";
 import CautionPin from "./CautionPin";
-import { clearHistory, getMedia, listJobs } from "../lib/history";
+import { clearHistory, getMedia, listJobs, updateJob } from "../lib/history";
 import type { Job, MediaKind } from "../lib/history";
 
 function when(iso: string): string {
@@ -23,6 +23,8 @@ function when(iso: string): string {
   }
 }
 
+const cap = (t: string) => (t ? t[0].toUpperCase() + t.slice(1) : t);
+
 const OUTCOME: Record<string, string> = {
   fixed: "Fixed",
   "still broken": "Still broken",
@@ -32,10 +34,33 @@ const OUTCOME: Record<string, string> = {
 /* One past run, the same way the walkthrough showed it: a summary
    first (verdict, outcome, before/after), the steps one at a time with
    the picture the owner saw, and the diagnosis to share on request. */
-function JobView({ job, onBack }: { job: Job; onBack: () => void }) {
+/* What closed this run, in a few words, for the top of the run view. */
+function closedBy(job: Job, next: Job | undefined): { title: string; line: string; tone: string } {
+  if (job.contacted) {
+    return {
+      title: `${job.contacted.how === "call" ? "Called" : "Texted"} ${job.contacted.name}`,
+      line: `${job.prosTrade || "Technician"} · ${when(job.contacted.at)}`,
+      tone: "",
+    };
+  }
+  if (job.outcome === "fixed") return { title: "Fixed", line: "You confirmed it works after the fix.", tone: "diy" };
+  if (job.outcome === "still broken") {
+    return {
+      title: "Still broken",
+      line: next ? `Tried again in run ${next.attempt || 2}.` : "Not fixed by this run.",
+      tone: "pro",
+    };
+  }
+  if (job.outcome === "called a pro") {
+    return { title: "Sent to a technician", line: "Looked for someone nearby to fix it.", tone: "" };
+  }
+  return { title: "Not finished", line: "Closed before the final check.", tone: "" };
+}
+
+function JobView({ job, next, onBack }: { job: Job; next?: Job; onBack: () => void }) {
   const [urls, setUrls] = useState<Record<string, string>>({});
   const [files, setFiles] = useState<{ before?: File; clip?: File }>({});
-  const [screen, setScreen] = useState<"summary" | "steps" | "share">("summary");
+  const [screen, setScreen] = useState<"summary" | "steps" | "share" | "pros" | "compare">("summary");
   const [idx, setIdx] = useState<number>(0);
 
   useEffect(() => {
@@ -67,7 +92,17 @@ function JobView({ job, onBack }: { job: Job; onBack: () => void }) {
     };
   }, [job]);
 
-  const title = job.verdict === "pro" ? "Call a pro" : job.riskAccepted ? "At your own risk" : "You can fix this";
+  const closed = closedBy(job, next);
+  const brief = {
+    device: job.device,
+    issue: job.issue,
+    finding: job.finding || job.headline,
+    rule: job.verdict === "pro" ? job.ruleTitle : null,
+    checks: [...job.answers.map((a) => `${a.ask} ${a.reply}`), ...job.steps.map((st) => st.check)],
+    sound: job.sound,
+    photo: files.before || null,
+    clip: files.clip || null,
+  };
   const step = job.steps[idx];
   const stepPicture = urls[`step${idx}`] || urls.before || "";
   const back = () => (screen === "summary" ? onBack() : setScreen("summary"));
@@ -87,7 +122,7 @@ function JobView({ job, onBack }: { job: Job; onBack: () => void }) {
         <span className="walk-icon-space" />
       </header>
 
-      {screen !== "share" && (stepPicture || urls.before) && (
+      {(screen === "summary" || screen === "steps") && (stepPicture || urls.before) && (
         <figure className="walk-photo">
           <div className="photo-box">
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -108,37 +143,80 @@ function JobView({ job, onBack }: { job: Job; onBack: () => void }) {
       <div className="walk-body">
         {screen === "summary" && (
           <>
-            <section className={`verdict-card ${job.verdict || ""}`}>
-              <p className="verdict-title">{title}</p>
-              <p className="verdict-finding">{job.verdict === "pro" ? job.ruleTitle : job.headline}</p>
-              {job.outcome && <p className="verdict-line">Outcome: {OUTCOME[job.outcome] || job.outcome}</p>}
-              {job.riskAccepted && (
-                <p className="verdict-line">Done at the owner&apos;s own risk.</p>
-              )}
+            {/* What closed this run, then the diagnosis in one line. */}
+            <section className={`verdict-card ${closed.tone}`}>
+              <p className="verdict-title">{closed.title}</p>
+              <p className="verdict-line">{closed.line}</p>
+              <p className="verdict-line">
+                <span className={`pill ${job.verdict || ""}`}>
+                  {job.verdict === "pro" ? "Pro" : job.riskAccepted ? "Own risk" : "DIY"}
+                </span>{" "}
+                {job.verdict === "pro" ? job.ruleTitle : job.headline}
+              </p>
             </section>
-            {urls.after && (
-              <section className="history-card">
-                <div className="before-after">
-                  <figure>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={urls.before} alt="before" />
-                    <figcaption>Before</figcaption>
-                  </figure>
-                  <figure>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={urls.after} alt="after" />
-                    <figcaption>After</figcaption>
-                  </figure>
-                </div>
-                {job.recheck && (
-                  <p className="verdict-line">
-                    {job.recheck.looksFixed === true ? "✓ " : job.recheck.looksFixed === false ? "✗ " : ""}
-                    {job.recheck.seen}
-                  </p>
-                )}
-              </section>
-            )}
+            <div className="run-actions">
+              {job.steps.length > 0 && (
+                <button type="button" className="btn-outline" onClick={() => { setIdx(0); setScreen("steps"); }}>
+                  See the {job.steps.length} step{job.steps.length === 1 ? "" : "s"}
+                </button>
+              )}
+              {(job.pros || []).length > 0 && (
+                <button type="button" className="btn-outline" onClick={() => setScreen("pros")}>
+                  {job.prosTrade ? cap(job.prosTrade) : "Technicians"} nearby ({job.pros!.length})
+                </button>
+              )}
+              {urls.after && (
+                <button type="button" className="btn-outline" onClick={() => setScreen("compare")}>
+                  Before &amp; after
+                </button>
+              )}
+              <button type="button" className="btn-outline" onClick={() => setScreen("share")}>
+                Share diagnosis
+              </button>
+            </div>
           </>
+        )}
+
+        {screen === "compare" && (
+          <section className="history-card">
+            <div className="before-after">
+              <figure>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={urls.before} alt="before" />
+                <figcaption>Before</figcaption>
+              </figure>
+              <figure>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={urls.after} alt="after" />
+                <figcaption>After</figcaption>
+              </figure>
+            </div>
+            {job.recheck && (
+              <p className="verdict-line">
+                {job.recheck.looksFixed === true ? "✓ " : job.recheck.looksFixed === false ? "✗ " : ""}
+                {job.recheck.seen}
+              </p>
+            )}
+          </section>
+        )}
+
+        {screen === "pros" && (
+          <section className="call-pro">
+            <p className="sheet-label">
+              {job.prosTrade ? cap(job.prosTrade) : "Technicians"} found for this diagnosis
+            </p>
+            <ProList
+              pros={job.pros || []}
+              brief={brief}
+              onContact={(p, how) =>
+                updateJob(job.id, {
+                  outcome: "called a pro",
+                  contacted: { name: p.name, phone: p.phone, how, at: new Date().toISOString() },
+                })
+              }
+            />
+            <p className="evidence-note places-credit">Listings from Google Maps, saved with this run.</p>
+          </section>
         )}
 
         {screen === "steps" && step && (
@@ -159,40 +237,10 @@ function JobView({ job, onBack }: { job: Job; onBack: () => void }) {
           </section>
         )}
 
-        {screen === "share" && (
-          <BriefCard
-            brief={{
-              device: job.device,
-              issue: job.issue,
-              finding: job.finding || job.headline,
-              rule: job.verdict === "pro" ? job.ruleTitle : null,
-              checks: [...job.answers.map((a) => `${a.ask} ${a.reply}`), ...job.steps.map((st) => st.check)],
-              sound: job.sound,
-              photo: files.before || null,
-              clip: files.clip || null,
-            }}
-          />
-        )}
+        {screen === "share" && <BriefCard brief={brief} />}
       </div>
 
       <div className="walk-cta">
-        {screen === "summary" && job.steps.length > 0 && (
-          <button
-            type="button"
-            className="btn-primary"
-            onClick={() => {
-              setIdx(0);
-              setScreen("steps");
-            }}
-          >
-            See the {job.steps.length} step{job.steps.length === 1 ? "" : "s"}
-          </button>
-        )}
-        {screen === "summary" && (
-          <button type="button" className="btn-outline" onClick={() => setScreen("share")}>
-            Share diagnosis
-          </button>
-        )}
         {screen === "steps" && (
           <>
             <button type="button" className="btn-outline" onClick={() => (idx === 0 ? setScreen("summary") : setIdx(idx - 1))}>
@@ -237,7 +285,18 @@ export default function History({ onClose }: { onClose: () => void }) {
     setJobs(listJobs());
   }, []);
 
-  if (open) return <JobView job={open} onBack={() => setOpen(null)} />;
+  if (open) {
+    return (
+      <JobView
+        job={open}
+        next={jobs.find((j) => j.parentId === open.id)}
+        onBack={() => {
+          setJobs(listJobs());
+          setOpen(null);
+        }}
+      />
+    );
+  }
 
   return (
     <section className="walk screened">
@@ -278,7 +337,11 @@ export default function History({ onClose }: { onClose: () => void }) {
                       </span>
                       <span className="history-finding">{j.headline || j.issue}</span>
                       <span className="history-outcome">
-                        {j.outcome ? OUTCOME[j.outcome] || j.outcome : "No outcome yet"}
+                        {j.contacted
+                          ? `${j.contacted.how === "call" ? "Called" : "Texted"} ${j.contacted.name}`
+                          : j.outcome
+                            ? OUTCOME[j.outcome] || j.outcome
+                            : "No outcome yet"}
                       </span>
                     </button>
                   </li>

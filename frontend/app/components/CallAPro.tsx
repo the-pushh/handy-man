@@ -10,7 +10,7 @@ import { useEffect, useState } from "react";
 import Busy from "./Busy";
 import { sessionId } from "../lib/apiBase";
 
-interface Pro {
+export interface Pro {
   id: string;
   name: string;
   address: string;
@@ -71,7 +71,83 @@ type State =
   | { kind: "ok"; pros: Pro[] }
   | { kind: "fallback"; text: string };
 
-export default function CallAPro({ api, trade, brief }: { api: string; trade: string; brief: Brief }) {
+export type ContactHow = "call" | "text";
+
+/* The technicians found, each with Call / Text (the diagnosis prefilled)
+   / Map. Used live (after a search) and in History (the saved list). */
+export function ProList({
+  pros,
+  brief,
+  onContact,
+}: {
+  pros: Pro[];
+  brief: Brief;
+  onContact?: (p: Pro, how: ContactHow) => void;
+}) {
+  return (
+    <ol className="pro-list">
+      {pros.map((p) => (
+        <li key={p.id} className="pro-row">
+          <div className="pro-main">
+            <p className="pro-name">{p.name}</p>
+            <p className="pro-meta">
+              {p.distance_km.toFixed(1)} km
+              {p.open_now === true && <span className="open"> · Open now</span>}
+              {p.open_now === false && <span className="closed"> · Closed</span>}
+              {p.rating ? ` · ★ ${p.rating.toFixed(1)}${p.ratings ? ` (${p.ratings})` : ""}` : ""}
+            </p>
+            <p className="pro-addr">{p.address}</p>
+            {p.phone && <p className="pro-phone">{p.phone}</p>}
+          </div>
+          <div className="pro-actions">
+            {p.phone ? (
+              <>
+                <a
+                  className="btn-primary"
+                  href={`tel:${p.phone.replace(/[^\d+]/g, "")}`}
+                  onClick={() => onContact?.(p, "call")}
+                >
+                  Call
+                </a>
+                {/* The diagnosis card as the message, ready to send. */}
+                <a
+                  className="btn-outline"
+                  href={`sms:${p.phone.replace(/[^\d+]/g, "")}?&body=${encodeURIComponent(briefText(brief))}`}
+                  onClick={() => onContact?.(p, "text")}
+                >
+                  Text
+                </a>
+              </>
+            ) : (
+              <span className="evidence-note">No phone listed</span>
+            )}
+            {p.maps_url && (
+              <a className="btn-outline" href={p.maps_url} target="_blank" rel="noreferrer">
+                Map
+              </a>
+            )}
+          </div>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+export default function CallAPro({
+  api,
+  trade,
+  brief,
+  onFound,
+  onContact,
+}: {
+  api: string;
+  trade: string;
+  brief: Brief;
+  // The list as found, so History can keep it with this diagnosis.
+  onFound?: (pros: Pro[]) => void;
+  // The owner tapped Call or Text on someone.
+  onContact?: (p: Pro, how: ContactHow) => void;
+}) {
   const [state, setState] = useState<State>({ kind: "locating" });
 
   useEffect(() => {
@@ -93,6 +169,7 @@ export default function CallAPro({ api, trade, brief }: { api: string; trade: st
           const d = await r.json();
           if (d.status === "ok" && d.pros.length) {
             setState({ kind: "ok", pros: d.pros });
+            onFound?.(d.pros);
           } else if (d.status === "ok") {
             fallback(`No ${trade} listed within 5 km. Search a wider area on Google Maps.`);
           } else if (d.status === "rate-limited") {
@@ -128,44 +205,7 @@ export default function CallAPro({ api, trade, brief }: { api: string; trade: st
         </div>
       )}
       {state.kind === "ok" && (
-        <ol className="pro-list">
-          {state.pros.map((p) => (
-            <li key={p.id} className="pro-row">
-              <div className="pro-main">
-                <p className="pro-name">{p.name}</p>
-                <p className="pro-meta">
-                  {p.distance_km.toFixed(1)} km
-                  {p.open_now === true && <span className="open"> · Open now</span>}
-                  {p.open_now === false && <span className="closed"> · Closed</span>}
-                  {p.rating ? ` · ★ ${p.rating.toFixed(1)}${p.ratings ? ` (${p.ratings})` : ""}` : ""}
-                </p>
-                <p className="pro-addr">{p.address}</p>
-                {p.phone && <p className="pro-phone">{p.phone}</p>}
-              </div>
-              <div className="pro-actions">
-                {p.phone ? (
-                  <>
-                    <a className="btn-primary" href={`tel:${p.phone.replace(/[^\d+]/g, "")}`}>
-                      Call
-                    </a>
-                    {/* The diagnosis card as the message, ready to send. */}
-                    <a
-                      className="btn-outline"
-                      href={`sms:${p.phone.replace(/[^\d+]/g, "")}?&body=${encodeURIComponent(briefText(brief))}`}
-                    >
-                      Text
-                    </a>
-                  </>
-                ) : (
-                  <span className="evidence-note">No phone listed</span>
-                )}
-                {p.maps_url && (
-                  <a className="btn-outline" href={p.maps_url} target="_blank" rel="noreferrer">Map</a>
-                )}
-              </div>
-            </li>
-          ))}
-        </ol>
+        <ProList pros={state.pros} brief={brief} onContact={onContact} />
       )}
       {state.kind === "ok" && <p className="evidence-note places-credit">Listings from Google Maps.</p>}
 
