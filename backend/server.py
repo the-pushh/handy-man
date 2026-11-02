@@ -750,6 +750,36 @@ def client_events(req: ClientEvents):
     return {"status": "ok"}
 
 
+class QuickRequest(BaseModel):
+    machine: str = ""
+    issue: str = ""
+
+
+@app.post("/api/quick-checks")
+async def quick_checks(req: QuickRequest):
+    """Phase 0: common first checks for this machine and problem, screened
+    by the safety rules like any step. Text only, a few seconds."""
+    from . import spark
+    from .risk import judge
+
+    trace.begin()
+    try:
+        checks = await run_in_threadpool(spark.quick_checks, req.machine,
+                                         req.issue)
+    except Exception as exc:
+        return {"status": "quick-error", "detail": str(exc)[:300],
+                "checks": [], "trace": trace.export()}
+    v = judge(req.machine, req.issue, checks)
+    kept = [checks[i] for i in v["allowed_steps"]] if v["verdict"] == "diy" \
+        else [checks[i] for i in v["allowed_steps"]
+              if i not in v["blocked_steps"]]
+    trace.log_outcome("quick-checks", machine=req.machine, said=req.issue[:200],
+                      checks=[c["check"] for c in kept],
+                      removed=[checks[i]["check"] for i in v["blocked_steps"]
+                               if i < len(checks)])
+    return {"status": "ok", "checks": kept, "trace": trace.export()}
+
+
 @app.post("/api/detect")
 async def detect_machine(request: Request, file: UploadFile = File(...),
                          want: str = Form(""), start: str = Form("")):

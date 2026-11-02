@@ -653,3 +653,41 @@ def spot(image_bytes: bytes, want: str = "", model: str | None = None) -> dict:
 
 FRAMINGS = ("good", "too_far", "too_close", "cut_off", "not_visible",
             "blurry", "too_dark")
+
+
+def quick_checks(machine: str, issue: str, model: str | None = None) -> list:
+    """Phase 0: the common first things anyone tries on this kind of
+    machine before a real diagnosis (laptop: charger plugged in and its
+    light, hold the power button 15 s, brightness up).
+
+    Text-only, low effort, 2-4 checks of {"check", "how"}. The safety
+    rules screen them afterwards like any step.
+    """
+    url, key, default_model = _config()
+    prompt = (
+        "You help an owner with a household machine before any real "
+        f"diagnosis. Machine: {machine or 'unknown'}. The owner says: "
+        f"{issue.strip()[:300]}. List the 2 to 4 most common quick things "
+        "anyone tries first on this kind of machine for this kind of "
+        "problem, most likely fix first: power and plug, a restart or "
+        "reset, a setting, a switch, a remote's batteries. Each must take "
+        "under a minute, need no tools, and never open anything or touch "
+        "wiring. Reply with only compact JSON: "
+        '{"checks": [{"check": "at most 7 words", "how": "one short '
+        'sentence, exactly what to do and what to look for"}]}'
+    )
+    payload = {
+        "model": model or default_model,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 1500,
+        "reasoning_effort": "low",
+        "response_format": {"type": "json_object"},
+    }
+    parsed = _complete(url, key, payload, ["checks"], purpose="quick checks")
+    out = []
+    for c in parsed.get("checks", []):
+        if isinstance(c, dict) and str(c.get("check", "")).strip():
+            out.append({"check": str(c["check"]).strip(),
+                        "how": str(c.get("how", "")).strip(),
+                        "part": None, "caution": None})
+    return out[:4]
