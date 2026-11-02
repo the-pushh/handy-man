@@ -7,6 +7,7 @@
    button opens a Google Maps search for the trade instead. */
 
 import { useEffect, useState } from "react";
+import Busy from "./Busy";
 import { sessionId } from "../lib/apiBase";
 
 interface Pro {
@@ -114,8 +115,12 @@ export default function CallAPro({ api, trade, brief }: { api: string; trade: st
       <BriefCard brief={brief} />
 
       <p className="sheet-label" style={{ marginTop: 16 }}>Nearby {trade}</p>
-      {state.kind === "locating" && <p className="evidence-note">Finding where you are…</p>}
-      {state.kind === "loading" && <p className="evidence-note">Searching nearby…</p>}
+      {state.kind === "locating" && (
+        <Busy compact label="Finding where you are…" hint="Your phone's location, used only for this search." slowAfter={8} />
+      )}
+      {state.kind === "loading" && (
+        <Busy compact label={`Searching for ${trade} nearby…`} hint="Google Maps listings within 5 km." slowAfter={8} />
+      )}
       {state.kind === "fallback" && (
         <div className="find-nearby">
           <p className="evidence-note">{state.text}</p>
@@ -137,10 +142,22 @@ export default function CallAPro({ api, trade, brief }: { api: string; trade: st
                   {p.rating ? ` · ★ ${p.rating.toFixed(1)}${p.ratings ? ` (${p.ratings})` : ""}` : ""}
                 </p>
                 <p className="pro-addr">{p.address}</p>
+                {p.phone && <p className="pro-phone">{p.phone}</p>}
               </div>
               <div className="pro-actions">
                 {p.phone ? (
-                  <a className="btn-primary" href={`tel:${p.phone.replace(/\s+/g, "")}`}>Call</a>
+                  <>
+                    <a className="btn-primary" href={`tel:${p.phone.replace(/[^\d+]/g, "")}`}>
+                      Call
+                    </a>
+                    {/* The diagnosis card as the message, ready to send. */}
+                    <a
+                      className="btn-outline"
+                      href={`sms:${p.phone.replace(/[^\d+]/g, "")}?&body=${encodeURIComponent(briefText(brief))}`}
+                    >
+                      Text
+                    </a>
+                  </>
                 ) : (
                   <span className="evidence-note">No phone listed</span>
                 )}
