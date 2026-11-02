@@ -1,13 +1,13 @@
-# Checks on every pull request and every push to main: ruff, the backend
-# unit tests, and the frontend typecheck. No deploy job: the backend is
-# deployed by hand to Modal (`modal deploy backend/modal_app.py`) and the
-# frontend by Vercel's own Git integration. See the README.
+# Checks: ruff, the backend unit tests, and the frontend typecheck.
+# Started by hand (Actions tab > checks > Run workflow), not on every
+# push. The same steps run locally: see "Tests and eval" in the README.
+# No deploy job: the backend is deployed by hand to Modal
+# (`modal deploy backend/modal_app.py`) and the frontend by Vercel's own
+# Git integration.
 name: checks
 
 on:
-  pull_request:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read

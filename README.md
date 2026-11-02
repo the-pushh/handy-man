@@ -138,8 +138,9 @@ is reported as SKIP. Latest run (2026-11-02, `muse-spark-1.3`):
 
 6 passed, 0 failed, 1 skipped.
 
-CI (`.github/workflows/checks.yml`) runs ruff, the four test files and
-the frontend type check. It deploys nothing.
+`.github/workflows/checks.yml` runs ruff, the four test files and the
+frontend type check when started by hand from the Actions tab (not on
+every push). It deploys nothing.
 
 ## Deploy
 
