@@ -93,7 +93,7 @@ def run(case):
         if v["verdict"] == "pro" and not v["trade"]:
             out["problems"].append("pro with no trade")
         head = (d.get("headline") or "").lower()
-        if v["verdict"] == "diy" and re.search(r"professional|technician|electrician|pro repair|needs? (?:a )?(?:repair|service)", head):
+        if v["verdict"] == "diy" and re.search(r"professional|technician|handyman|electrician|pro repair|needs? (?:a )?(?:repair|service)", head):
             out["problems"].append("DIY verdict but the finding says to call a pro")
         if "car" in machine and "two-wheeler" in (v["trade"] or ""):
             out["problems"].append("car sent to a two-wheeler mechanic")

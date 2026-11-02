@@ -190,7 +190,7 @@ def _strip_owner_jobs(job: Job, text: str) -> str:
 RULES = [
     Rule("danger-symptom",
          "Sparks, smoke, a burning smell or a shock mean it stays off "
-         "until a technician sees it.",
+         "until a handyman checks it.",
          "Switch it off now.",
          "electrician",
          applies=lambda job: True,
@@ -199,25 +199,25 @@ RULES = [
                           r"current leak", r"on fire", r"caught fire",
                           r"catching fire"))),
     Rule("swollen-battery",
-         "A swollen battery can catch fire; a technician must remove it.",
-         "That battery needs a pro.",
+         "A swollen battery can catch fire. Let a handyman take it out.",
+         "That battery needs a handyman.",
          "laptop / phone repair",
          applies=lambda job: True,
          symptom=_any(_rx(r"swollen", r"swelling", r"bulg", r"puff",
                           r"battery (?:has )?expand"))),
     Rule("gas-fittings",
-         "Gas pipes, regulators and burner fittings are for a gas "
-         "technician only.",
-         "Call a gas technician.",
+         "Gas pipes, regulators and burner fittings can leak. Leave them "
+         "to a handyman who works with gas.",
+         "Call a handyman for the gas.",
          "gas technician",
          applies=lambda job: True,
          step=_hands_on(r"gas (?:pipe|line|hose|valve|regulator|fitting)",
                         r"regulator", r"lpg", r"cylinder valve",
                         r"burner (?:pipe|fitting|nozzle)")),
     Rule("mains-electricity",
-         "Wiring, sockets and the switchboard carry mains power; that is "
-         "an electrician's job.",
-         "Call an electrician.",
+         "Wiring, sockets and the switchboard carry mains power. Leave "
+         "them to a handyman.",
+         "Call a handyman for this.",
          "electrician",
          applies=lambda job: True,
          step=_hands_on(r"wir(?:e|es|ing)\b", r"mains",
@@ -226,8 +226,8 @@ RULES = [
                         r"plug point", r"capacitor", r"pcb",
                         r"circuit board", r"control board")),
     Rule("vehicle-body-panel",
-         "Opening the scooter's panel needs a mechanic.",
-         "This one needs a mechanic.",
+         "Opening the scooter's panel is a job for a handyman.",
+         "This one needs a handyman.",
          "two-wheeler mechanic",
          applies=lambda job: bool(VEHICLE.search(job.context)),
          step=_opens(r"panel", r"cowl", r"fairing",
@@ -235,24 +235,24 @@ RULES = [
                      r"battery (?:cover|box|compartment|lid)",
                      r"cover")),
     Rule("ac-sealed-system",
-         "Refrigerant and the compressor are a sealed system; an AC "
-         "technician has to test and recharge it.",
-         "Needs an AC technician.",
+         "Refrigerant and the compressor are sealed. A handyman has to "
+         "test and recharge them.",
+         "This one needs a handyman.",
          "AC technician",
          applies=lambda job: bool(AC.search(job.context))),
     Rule("battery-terminals",
-         "Battery terminals carry high current; anything beyond looking "
-         "at them is for a technician.",
-         "Needs a technician.",
+         "Battery terminals carry high current. Look, but leave the rest "
+         "to a handyman.",
+         "This one needs a handyman.",
          "battery service",
          applies=lambda job: True,
          step=_hands_on(r"terminals?",
                         r"battery (?:lead|cable|clamp|post|wire)s?",
                         r"negative lead", r"positive lead")),
     Rule("sealed-casing",
-         "Opening the unit's sealed casing exposes live parts; a "
-         "technician must do it.",
-         "Needs a technician.",
+         "Opening the sealed casing exposes live parts. Let a handyman "
+         "do it.",
+         "This one needs a handyman.",
          "appliance technician",
          applies=lambda job: True,
          step=_opens(r"casing", r"housing",
@@ -271,8 +271,8 @@ FALLBACK = _rx(r"if\b", r"in case", r"otherwise", r"unless", r"when .{0,30}fail"
               r"still not", r"doesn'?t (?:work|help)", r"does not (?:work|help)")
 PRO_RECOMMENDED = Rule(
     "pro-recommended",
-    "What's left to try needs a technician's tools and training.",
-    "Time to call a technician.",
+    "What's left to try needs a handyman's tools and training.",
+    "Time to call a handyman.",
     "appliance technician",
     applies=lambda job: True)
 
@@ -387,7 +387,7 @@ def judge(device: str = "", issue: str = "", steps: list | None = None,
                     "scooter" if re.search(r"activa|jupiter|access 125|scooty|dio|"
                                            r"pleasure|maestro|ntorq|two[- ]wheeler",
                                            job.context) else "vehicle")
-        title = f"Opening the {noun}'s panel needs a mechanic."
+        title = f"Opening the {noun}'s panel is a job for a handyman."
     return {"verdict": "pro", "rule": head.id, "title": title,
             "spoken": head.spoken, "trade": trade,
             "fired": [r.id for r in sorted(fired, key=order.index)],
@@ -416,43 +416,42 @@ def assess_risk(device: str = "", issue: str = "") -> dict:
 MACHINES = [
     ("microwave",
      _rx(r"microwave", r"\botg\b", r"convection oven"),
-     "A microwave stores a deadly charge inside even when unplugged; "
-     "only a technician should open or repair it.",
-     "Microwaves are for a technician.",
+     "A microwave holds a deadly charge even when unplugged. Only a "
+     "handyman should open it.",
+     "Microwaves are a job for a handyman.",
      "appliance technician"),
     ("gas-appliance",
      _rx(r"gas (?:stove|hob|cooktop|geyser|heater|cylinder|pipe|burner)",
          r"\blpg\b", r"cylinder", r"regulator", r"gas chulha"),
-     "Gas appliances can leak or explode; a gas technician must handle "
-     "them.",
-     "Gas is for a gas technician.",
+     "Gas appliances can leak or explode. Let a handyman handle them.",
+     "Gas is a job for a handyman.",
      "gas technician"),
     ("water-heater",
      _rx(r"geyser", r"water heater", r"boiler", r"immersion rod"),
-     "A water heater mixes mains power with hot water under pressure; "
-     "a technician must open it.",
-     "Water heaters are for a technician.",
+     "A water heater mixes mains power and hot water under pressure. "
+     "Let a handyman open it.",
+     "Water heaters are a job for a handyman.",
      "appliance technician"),
     ("mains-board",
      _rx(r"switch ?board", r"\bmcb\b", r"fuse box", r"distribution (?:box|board)",
          r"electric(?:al)? panel", r"breaker (?:box|panel)", r"meter box",
          r"wall socket", r"socket", r"plug point", r"wiring"),
-     "Switchboards, sockets and wiring carry mains power; that is an "
-     "electrician's job.",
-     "This needs an electrician.",
+     "Switchboards, sockets and wiring carry mains power. Leave them "
+     "to a handyman.",
+     "This needs a handyman.",
      "electrician"),
     ("ev-battery",
      _rx(r"electric (?:scooter|bike|vehicle|car)", r"\bev\b", r"e-?scooter",
          r"e-?bike", r"lithium (?:battery|pack)", r"battery pack"),
-     "An electric vehicle's battery pack is high voltage and can catch "
-     "fire; a service centre must handle it.",
-     "EV batteries need a service centre.",
+     "An electric vehicle's battery is high voltage and can catch "
+     "fire. Let a handyman handle it.",
+     "EV batteries need a handyman.",
      "EV service centre"),
     ("tv-display",
      _rx(r"\btv\b", r"television", r"\bcrt\b", r"monitor"),
-     "Inside a TV or monitor are high-voltage parts that stay charged; a "
-     "technician must open it.",
-     "TVs are for a technician.",
+     "A TV or monitor holds high-voltage parts that stay charged. Let "
+     "a handyman open it.",
+     "TVs are a job for a handyman.",
      "TV repair"),
 ]
 

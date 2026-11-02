@@ -69,7 +69,7 @@ def test_scooter_side_panel_is_pro():
         step("Battery", "Open the side panel to reach the battery"),
     ])
     expect(v, "pro", "vehicle-body-panel")
-    assert v["title"] == "Opening the scooter's panel needs a mechanic."
+    assert v["title"] == "Opening the scooter's panel is a job for a handyman."
 
 
 def test_inverter_float_check_is_owner_job():
@@ -128,7 +128,7 @@ def test_spark_scooter_proposal_is_overridden():
               SPARK_SCOOTER_STEPS)
     expect(v, "pro", "vehicle-body-panel", allowed=[0, 1, 2, 4])
     assert v["blocked_step"] == 3 and v["blocked_steps"] == [3]
-    assert v["title"] == "Opening the scooter's panel needs a mechanic."
+    assert v["title"] == "Opening the scooter's panel is a job for a handyman."
 
 
 def test_scooter_weak_battery_finding_needs_mechanic_even_without_panel_step():
@@ -137,7 +137,7 @@ def test_scooter_weak_battery_finding_needs_mechanic_even_without_panel_step():
     v = judge("Honda Activa scooter", "self start dead, kick start works",
               SPARK_SCOOTER_STEPS[:3], causes=["weak battery", "brake switch"])
     expect(v, "pro", "vehicle-body-panel", allowed=[0, 1, 2])
-    assert v["title"] == "Opening the scooter's panel needs a mechanic."
+    assert v["title"] == "Opening the scooter's panel is a job for a handyman."
 
 
 def test_scooter_kill_switch_finding_stays_diy():
