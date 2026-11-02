@@ -10,6 +10,8 @@ import { mark, turnElapsed } from "../lib/timeline";
 import { requestDiagnosis } from "../lib/diagnosis";
 import type { Heard } from "../lib/recorder";
 import CallAPro from "./CallAPro";
+import type { ScanWarning } from "./LiveDetect";
+import { getSpeechRecognition } from "../lib/speech";
 import { newJobId, putMedia, saveJob, updateJob } from "../lib/history";
 
 /* The rules layer's decision (backend/risk.py): the model proposes
@@ -28,6 +30,8 @@ interface Verdict {
   tools?: string[];
   confidence?: "high" | "medium" | "low" | null;
   based_on?: string[];
+  // Rule the owner chose to override at the scan warning (own risk).
+  overridden?: string | null;
 }
 
 /* What went wrong, in words for the owner (never the raw error). */
@@ -62,12 +66,21 @@ const ORANGE = "#e86a17";
 
 const cap = (t: string) => (t ? t[0].toUpperCase() + t.slice(1) : t);
 
+// Runs on one machine before the walkthrough calls a technician.
+const MAX_RUNS = 3;
+
 export default function RepairWalkthrough({
   files,
   issue,
   perception,
   prefetched,
   heard,
+  followUp = "",
+  machine = "",
+  attempt = 1,
+  parentId = null,
+  acceptRisk = null,
+  onRetry,
   onListen,
   onMoreViews,
   onRecheck,
@@ -75,6 +88,16 @@ export default function RepairWalkthrough({
 }: {
   files: File[];
   issue: string;
+  // Run 2 onwards: what was tried and what is still wrong.
+  followUp?: string;
+  // The item the owner named; History groups runs by it.
+  machine?: string;
+  attempt?: number;
+  parentId?: string | null;
+  // Scan-time warning the owner overrode: every step shown, their risk.
+  acceptRisk?: ScanWarning | null;
+  // "Still broken": run again with what is still wrong.
+  onRetry?: (reply: string, tried: string[], after: File | null, jobId: string | null) => void;
   perception?: unknown;
   // Diagnosis already started during the device confirmation.
   prefetched?: Promise<unknown> | null;
@@ -142,6 +165,12 @@ export default function RepairWalkthrough({
   const imgRef = useRef<HTMLImageElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileRef = useRef<File | null>(null);
+  // The re-check's "after" still: run 2 starts from it.
+  const afterRef = useRef<File | null>(null);
+  // "Still broken": what is still wrong, by voice or typed.
+  const [stillWrong, setStillWrong] = useState<string | null>(null);
+  const [hearing, setHearing] = useState<boolean>(false);
+  const askedFixed = useRef<boolean>(false);
 
   /* Indices of SAM instances that belong to a step's part. */
   function masksFor(part: string | null | undefined, list: Instance[]): number[] {
@@ -417,13 +446,17 @@ export default function RepairWalkthrough({
     setFixed(false);
     setBooking(false);
     setDone(null);
+    // What the model works on: the owner's words, plus on run 2+ what
+    // was tried and what is still wrong.
+    const ask = followUp ? `${t}. ${followUp}` : t;
+    const risk = acceptRisk?.rule || "";
     // Spoken while the analysis runs, not before it starts.
-    void say("Working out what's wrong.");
+    void say(attempt > 1 ? `Run ${attempt}. Working out what's still wrong.` : "Working out what's wrong.");
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let data: any =
         (prefetched ? await prefetched : null) ||
-        (await requestDiagnosis(base, fs, t, perception, heard?.summary || ""));
+        (await requestDiagnosis(base, fs, ask, perception, heard?.summary || "", "", false, risk));
       // Questions first: the owner looks, taps an answer, and the server
       // decides with those answers (one more diagnose, no re-perceive).
       const qs: Question[] = data.status === "ok" ? data.questions || [] : [];
@@ -447,7 +480,7 @@ export default function RepairWalkthrough({
           mark("decide ahead", `${opts.length} answers`);
           for (const o of opts) {
             const key = text([...sofar, { ask: q.ask, reply: o }]);
-            ahead.set(key, requestDiagnosis(base, fs, t, persp, sound, key, true).catch(() => null));
+            ahead.set(key, requestDiagnosis(base, fs, ask, persp, sound, key, true, risk).catch(() => null));
           }
         });
         if (myRun !== runSeq.current) return;
@@ -456,7 +489,7 @@ export default function RepairWalkthrough({
         const key = text(replies);
         const pre = (await ahead.get(key)) as typeof data;
         const usable = pre && pre.status === "ok";
-        data = usable ? pre : await requestDiagnosis(base, fs, t, persp, sound, key);
+        data = usable ? pre : await requestDiagnosis(base, fs, ask, persp, sound, key, false, risk);
         mark("decided", usable ? "from ahead" : "fresh");
       }
       mark("walkthrough analyze returned", `${data.status} trace=${(data.trace || []).length} calls`);
@@ -573,6 +606,10 @@ export default function RepairWalkthrough({
           finding: v.headline || foundCauses[0] || "",
           sound: heard ? heard.summary : null,
           media: {},
+          machine: machine || data.perception?.appliance || data.device || "device",
+          attempt,
+          parentId,
+          riskAccepted: acceptRisk ? { rule: acceptRisk.rule, title: acceptRisk.title } : null,
         });
         void putMedia(id, "before", fs[0]);
         void putMedia(id, "clip", heard?.clip);
@@ -699,6 +736,7 @@ export default function RepairWalkthrough({
     hush();
     const seconds = Math.round(turnElapsed());
     const after = onRecheck ? await onRecheck(part) : null;
+    afterRef.current = after;
     if (!after) {
       setDone({ afterURL: "", state: "error", looksFixed: null, seen: "", next: null, seconds });
       return;
@@ -741,14 +779,64 @@ export default function RepairWalkthrough({
     if (jobId.current) updateJob(jobId.current, { outcome: "called a pro" });
   }
 
+  // After the run's re-check: ask out loud whether it is fixed.
+  useEffect(() => {
+    if (!done || done.state === "checking" || askedFixed.current) return;
+    askedFixed.current = true;
+    void say("Is it fixed now?");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [done?.state]);
+
   async function confirmFixed(yes: boolean): Promise<void> {
     if (jobId.current) updateJob(jobId.current, { outcome: yes ? "fixed" : "still broken" });
     if (yes) {
       setFixed(true);
-    } else {
-      setBooking(true);
-      await say("Sorry. Here's who can help nearby.");
+      void say("Great. It's fixed.");
+      return;
     }
+    if (attempt >= MAX_RUNS || !onRetry) {
+      // Enough runs on this machine: a technician is the answer now.
+      setBooking(true);
+      if (jobId.current) updateJob(jobId.current, { outcome: "called a pro" });
+      await say(`That's ${attempt} tries. Leave it to a ${verdict?.trade || "technician"}. Here's who can help nearby.`);
+      return;
+    }
+    setStillWrong("");
+    await say("What's still not right?");
+  }
+
+  // One spoken answer to "What's still not right?".
+  function hearStillWrong(): void {
+    const SR = getSpeechRecognition();
+    if (!SR) return;
+    hush();
+    const r = new SR();
+    r.lang = "en-US";
+    r.interimResults = false;
+    r.onresult = (e) => {
+      const text = String(e.results[0][0].transcript || "").trim();
+      if (text) setStillWrong(text);
+    };
+    r.onend = () => setHearing(false);
+    r.onerror = () => setHearing(false);
+    try {
+      r.start();
+      setHearing(true);
+    } catch (_) {
+      setHearing(false);
+    }
+  }
+
+  function sendStillWrong(): void {
+    const reply = (stillWrong || "").trim();
+    if (!reply || !onRetry) return;
+    hush();
+    onRetry(
+      reply,
+      steps.map((st) => st.check),
+      afterRef.current,
+      jobId.current
+    );
   }
 
 
@@ -908,8 +996,18 @@ export default function RepairWalkthrough({
       {verdict && (
         <section className={`verdict-card ${verdict.verdict}`}>
           <p className="verdict-title">
-            {verdict.verdict === "diy" ? "You can fix this" : "Call a pro"}
+            {verdict.verdict === "pro"
+              ? "Call a pro"
+              : acceptRisk
+                ? "At your own risk"
+                : "You can fix this"}
           </p>
+          {acceptRisk && verdict.verdict === "diy" && (
+            <p className="callout callout-caution own-risk">
+              You chose to go on: {acceptRisk.title}
+            </p>
+          )}
+          {attempt > 1 && <p className="sheet-label">Run {attempt} of {MAX_RUNS}</p>}
           {verdict.verdict === "diy" && verdict.headline && (
             <p className="verdict-finding">{verdict.headline}</p>
           )}
@@ -1094,7 +1192,7 @@ export default function RepairWalkthrough({
             <div><strong>₹0</strong><span>spent</span></div>
             <div><strong>{steps.length}</strong><span>steps done</span></div>
           </div>
-          {!fixed && !booking && done.state !== "checking" && (
+          {!fixed && !booking && stillWrong === null && done.state !== "checking" && (
             <div className="row" style={{ marginTop: 12 }}>
               <button type="button" className="btn-success" onClick={() => void confirmFixed(true)}>
                 It works now
@@ -1105,6 +1203,33 @@ export default function RepairWalkthrough({
             </div>
           )}
           {fixed && <p className="done-result">Fixed. Close this and point the camera at the next thing.</p>}
+          {stillWrong !== null && !booking && (
+            <form
+              className="still-wrong"
+              onSubmit={(e) => {
+                e.preventDefault();
+                sendStillWrong();
+              }}
+            >
+              <label className="sheet-label" htmlFor="still-wrong">What&apos;s still not right?</label>
+              <input
+                id="still-wrong"
+                className="text-input"
+                value={stillWrong}
+                onChange={(e) => setStillWrong(e.target.value)}
+                placeholder="e.g. still blowing warm air"
+                autoComplete="off"
+              />
+              <div className="row" style={{ marginTop: 8 }}>
+                <button type="button" className="btn-outline" onClick={hearStillWrong} disabled={hearing}>
+                  {hearing ? "Listening…" : "Say it"}
+                </button>
+                <button type="submit" className="btn-primary" disabled={!stillWrong.trim()}>
+                  Try again (run {attempt + 1})
+                </button>
+              </div>
+            </form>
+          )}
         </section>
       )}
 

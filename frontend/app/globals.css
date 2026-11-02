@@ -1024,3 +1024,29 @@ html, body {
 .live-tag-scan { border-color: var(--line-faint); color: var(--line-muted); }
 .live-tag-scan .live-tag-dot { animation: pulse 1s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .live-tag-scan .live-tag-dot { animation: none; } }
+
+/* Scan-time warning card (before any diagnosis). */
+.warn-card { display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
+.warn-card img { width: 100%; max-height: 30cqh; object-fit: cover; display: block; }
+.warn-why { margin: 0; color: var(--line); font-size: 15px; line-height: 1.4; }
+.risk-check { display: flex; gap: 10px; align-items: flex-start; font-size: 15px; line-height: 1.4; color: var(--line); }
+.risk-check input { width: 20px; height: 20px; flex: none; margin-top: 1px; accent-color: var(--primary); }
+.warn-card button:disabled { opacity: 0.45; }
+.own-risk { margin: 8px 0; }
+
+/* While the camera looks for the machine: give up on framing, or stop. */
+.seek-actions { display: flex; gap: 8px; margin-top: 8px; }
+.seek-actions button { flex: 1; }
+
+/* "What's still not right?" after a run that didn't fix it. */
+.still-wrong { margin-top: 12px; }
+
+/* History grouped by machine, every run listed under it. */
+.history-group { margin-top: 16px; }
+.history-machine {
+  display: flex; justify-content: space-between; align-items: baseline;
+  margin: 0; padding-bottom: 6px; border-bottom: 1px solid var(--line-muted);
+  font-size: 18px; font-weight: 700;
+}
+.history-machine span { font-size: 13px; font-weight: 500; color: var(--line-muted); }
+.history-risk { color: var(--primary); font-size: 13px; }

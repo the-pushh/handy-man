@@ -1,20 +1,19 @@
 "use client";
 
-/* Single flow: point the camera, tap the orb, say what you need. The
-   system captures a frame, detects the device, highlights it and asks
-   for confirmation. On yes it captures the intake stills itself and
-   opens screen #2 — the repair overlay. */
+/* Single flow: tap the orb and say what needs fixing. The camera then
+   looks for the machine you named, outlines it on the live view and
+   asks you to move until it is framed well; that frame is the picture.
+   A machine the rules say not to open is flagged first (go on at your
+   own risk, or find a technician). Then screen #2: the repair
+   walkthrough, run after run until it is fixed or a technician is
+   the answer. */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getSpeechRecognition } from "./lib/speech";
 import type { SpeechRecognitionLike } from "./lib/speech";
 import { IS_PROD, resolveApiBase } from "./lib/apiBase";
 import { kb, mark, turnStart } from "./lib/timeline";
-import { drawStill, meanLuma, TOO_DARK, shrinkPhoto } from "./lib/still";
-import { composeMasks } from "./lib/masks";
-import type { SamInstance } from "./lib/masks";
-import { requestDiagnosis } from "./lib/diagnosis";
-import { correctionFrom } from "./lib/correction";
+import { drawStill, shrinkPhoto } from "./lib/still";
 import { SOUND_WORDS, recordClip } from "./lib/recorder";
 import type { Heard } from "./lib/recorder";
 import Waveform from "./components/Waveform";
@@ -23,33 +22,55 @@ import type { OrbState } from "./components/Orb";
 import RepairWalkthrough from "./components/RepairWalkthrough";
 import History from "./components/History";
 import LiveDetect from "./components/LiveDetect";
-import type { LiveDetection } from "./components/LiveDetect";
+import type { ScanWarning, SeekResult } from "./components/LiveDetect";
+import CallAPro from "./components/CallAPro";
 
 interface Overlay {
   files: File[];
+  // What the owner said (shown, and the issue every run works on).
   text: string;
+  // Run 2 onwards: what was tried and what is still wrong.
+  followUp: string;
   key: number;
-  // The first look's Spark perception of files[0]; reused so the
-  // walkthrough goes straight to diagnosis. Null once views are added.
+  // {owner_says: the item named}, so diagnosis and the rules use the
+  // owner's word for the machine. Null once views are added.
   perception: unknown;
   prefetched: Promise<unknown> | null;
   heard: Heard | null;
+  // The item named ("air conditioner"): History groups runs by it.
+  machine: string;
+  attempt: number;
+  // The previous run's History entry (run 2 onwards).
+  parentId: string | null;
+  // The scan-time warning the owner chose to override, if any.
+  acceptRisk: ScanWarning | null;
 }
 
 const LISTEN_SECONDS = 4;
+// Failed framings before "Use this view" is offered.
+const STUCK_AFTER = 4;
 
-interface Confirm {
-  device: string;
-  overlayURL: string;
-  frameURL: string;
-  frame: File;
-  perception: unknown;
-  // Diagnosis for (frame, issue), started while the user confirms.
-  diagnosis: Promise<unknown> | null;
-  // Who drew the highlight: SAM 3.1 masks, a muse-image illustration,
-  // or nothing yet (plain photo).
-  highlight: "sam" | "illustrative" | "none";
+interface Seek {
+  tries: number;
+  lastHint: string;
+  lastHintAt: number;
+  item: string;
+  warned: boolean;
+  uploaded: boolean;
+  acceptRisk: ScanWarning | null;
+  last: SeekResult | null;
 }
+
+const freshSeek = (): Seek => ({
+  tries: 0,
+  lastHint: "",
+  lastHintAt: 0,
+  item: "",
+  warned: false,
+  uploaded: false,
+  acceptRisk: null,
+  last: null,
+});
 
 
 function apiBase(): string {
@@ -112,7 +133,7 @@ export default function Home() {
   const grabRef = useRef<HTMLCanvasElement>(null);
   const recogRef = useRef<SpeechRecognitionLike | null>(null);
   const turnRef = useRef<number>(0);
-  const confirmRef = useRef<Confirm | null>(null);
+  const seekRef = useRef<Seek>(freshSeek());
   const issueRef = useRef<string>("");
   const langRef = useRef<{ tts: string; stt: string }>({ tts: "en", stt: "en-US" });
   const uploadRef = useRef<HTMLInputElement>(null);
@@ -130,19 +151,18 @@ export default function Home() {
   // Final camera re-check: the walkthrough stays mounted (its state
   // survives) but is hidden so the camera shows while the owner aims.
   const [peek, setPeek] = useState<string>("");
-  const darkWarned = useRef<boolean>(false);
-  // The machine outlined on the live view right now (LiveDetect).
-  const liveRef = useRef<LiveDetection | null>(null);
-  const [live, setLive] = useState<LiveDetection | null>(null);
+  // What the camera is looking for (the owner's words); null = idle.
+  const [seekWant, setSeekWant] = useState<string | null>(null);
+  const [stuck, setStuck] = useState<boolean>(false);
+  // Scan-time warning, before any diagnosis.
+  const [warn, setWarn] = useState<{ w: ScanWarning; res: SeekResult; url: string } | null>(null);
+  const [riskOk, setRiskOk] = useState<boolean>(false);
+  const [warnPro, setWarnPro] = useState<boolean>(false);
   const [showHistory, setShowHistory] = useState<boolean>(false);
-  // "No" on the confirm card: name the device instead of re-pointing.
-  const [fixing, setFixing] = useState<boolean>(false);
-  const [fixText, setFixText] = useState<string>("");
   const [orb, setOrb] = useState<OrbState>("idle");
   const [listening, setListening] = useState<boolean>(false);
   const [statusMsg, setStatusMsg] = useState<string>("");
   const [transcript, setTranscript] = useState<string>("");
-  const [confirm, setConfirm] = useState<Confirm | null>(null);
   const [typeOpen, setTypeOpen] = useState<boolean>(false);
   const [beEdit, setBeEdit] = useState<boolean>(false);
   const [beHost, setBeHost] = useState<string>("");
@@ -382,7 +402,7 @@ export default function Home() {
   // Photo/video picked from the library: hold the frame, then ask for
   // the issue by voice (the type bubble stays open as backup).
   async function handleUpload(file: File | undefined) {
-    if (!file || confirmRef.current || overlay) return;
+    if (!file || seekWant || warn || overlay) return;
     setTypeOpen(true);
     setStatusMsg("Reading your photo…");
     const frame = file.type.startsWith("video")
@@ -400,223 +420,181 @@ export default function Home() {
     startListening();
   }
 
-  // First action: detect the device in a captured frame, highlight it,
-  // and ask until the user confirms it.
+  // First action: the owner said what needs fixing. Look for that
+  // machine on the live camera (or in the photo they picked).
   async function startTurn(text: string, provided: File | null = null) {
     const said = text.trim();
-    if (!said || confirmRef.current || overlay) return;
+    if (!said || seekWant || warn || overlay) return;
     stopListeningInner();
     setTranscript(said);
     issueRef.current = said;
     turnStart("turn start (issue heard)");
     // Only picks the narration voice; never blocks the look.
     void detectIssueLang(said).then(() => mark("detect-language done"));
+    seekRef.current = freshSeek();
+    setStuck(false);
+    setRiskOk(false);
+    setWarnPro(false);
     setOrb("thinking");
-    setStatusMsg("Looking at what I can see…");
-    // The frame the live view already outlined, when it is still in
-    // view: the card then shows that outline at once.
-    const seen = !provided && !pendingFrameRef.current ? liveRef.current : null;
-    const frame =
-      provided || pendingFrameRef.current || seen?.frame || (await captureStillAsync());
+    const photo = provided || pendingFrameRef.current;
     pendingFrameRef.current = null;
-    mark("frame captured", frame ? `${kb(frame.size)}${seen ? ` (live: ${seen.name})` : ""}` : "none");
-    // Bad light: say so once and let the owner fix it; a second tap in
-    // the dark goes ahead anyway (the model may still manage).
-    if (frame && !provided) {
-      const luma = await meanLuma(frame);
-      mark("brightness", luma == null ? "?" : luma.toFixed(0));
-      if (luma != null && luma < TOO_DARK && !darkWarned.current) {
-        darkWarned.current = true;
-        setStatusMsg("Too dark to see it. Turn on a light or the torch, then tap again.");
-        setOrb("idle");
-        return;
+    if (photo) {
+      // A picked photo: one look for the item and the warning, then on.
+      seekRef.current.uploaded = true;
+      setStatusMsg("Looking at your photo…");
+      try {
+        const fd = new FormData();
+        fd.append("file", photo, "frame.jpg");
+        fd.append("want", said);
+        fd.append("start", "1");
+        const d = await (await fetch(`${apiBase()}/api/detect`, { method: "POST", body: fd })).json();
+        if (d.status === "rate-limited") {
+          setStatusMsg(d.detail);
+          setOrb("idle");
+          return;
+        }
+        onSeek({
+          item: String(d.item || ""),
+          name: String(d.name || ""),
+          instance: d.instance || null,
+          framing: String(d.framing || ""),
+          ready: true, // the owner chose this photo
+          hint: "",
+          warning: d.warning || null,
+          frame: photo,
+        });
+      } catch (_) {
+        void capture(photo, "", null);
       }
-      darkWarned.current = false;
+      return;
     }
+    setStatusMsg("Looking for it…");
+    setSeekWant(said);
+  }
+
+  // Each answer from the live search: warn, take the picture, or ask the
+  // owner to move.
+  function onSeek(res: SeekResult): void {
+    const s = seekRef.current;
+    s.last = res;
+    if (res.item) s.item = res.item;
+    if (res.warning && !s.warned) {
+      s.warned = true;
+      setSeekWant(null);
+      setStuck(false);
+      setWarn({ w: res.warning, res, url: URL.createObjectURL(res.frame) });
+      setOrb("asking");
+      setStatusMsg("");
+      mark("scan warning", res.warning.rule);
+      void say(`${res.warning.spoken} Call a ${res.warning.trade}, or go on at your own risk.`);
+      return;
+    }
+    if (res.ready) {
+      setSeekWant(null);
+      setStuck(false);
+      mark("picture taken", `${res.name} (${res.framing})`);
+      void capture(res.frame, res.item, s.acceptRisk);
+      return;
+    }
+    s.tries += 1;
+    setStatusMsg(res.hint);
+    const now = Date.now();
+    if (res.hint && (res.hint !== s.lastHint || now - s.lastHintAt > 12000)) {
+      s.lastHint = res.hint;
+      s.lastHintAt = now;
+      void say(res.hint);
+    }
+    if (s.tries >= STUCK_AFTER) setStuck(true);
+  }
+  const seekCb = useRef(onSeek);
+  seekCb.current = onSeek;
+
+  // The owner gave up on framing: take the picture as the view is now.
+  async function useThisView(): Promise<void> {
+    const s = seekRef.current;
+    const frame = (await captureStillAsync()) || s.last?.frame || null;
+    setSeekWant(null);
+    setStuck(false);
     if (!frame) {
-      setStatusMsg("Camera not ready yet — try again.");
+      setStatusMsg("Camera not ready yet. Try again.");
       setOrb("idle");
       return;
     }
-    // Caption: a tiny minimal-effort call in parallel with perception,
-    // shown the moment it lands (target < 4s on prod).
-    let perceived = false;
-    const cfd = new FormData();
-    cfd.append("file", frame, "frame.jpg");
-    if (seen) setStatusMsg(`I'm looking at: ${seen.name}`);
-    else void fetch(`${apiBase()}/api/caption`, { method: "POST", body: cfd })
-      .then((cr) => cr.json())
-      .then((cd) => {
-        if (cd.status === "ok" && !perceived) {
-          mark("caption shown", JSON.stringify(cd.caption));
-          setStatusMsg(cd.caption);
-        } else mark("caption skipped", cd.status);
-      })
-      .catch(() => undefined);
-    try {
-      const fd = new FormData();
-      fd.append("file", frame, "frame.jpg");
-      fd.append("text", "");
-      const r = await fetch(`${apiBase()}/api/repair/analyze`, {
-        method: "POST",
-        body: fd,
-        signal: AbortSignal.timeout(30000),
-      });
-      const data = await r.json();
-      perceived = true;
-      if (data.status !== "ok") {
-        mark("first look failed", `${data.status}: ${data.detail || ""}`);
-        setStatusMsg(
-          data.status === "rate-limited"
-            ? data.detail
-            : data.status === "needs-api-key"
-              ? "The model isn't set up on this server."
-              : "Couldn't make it out that time. Tap the button to try again."
-        );
-        setOrb("idle");
-        return;
-      }
-      mark("analyze(1 still, no text) returned", `trace=${(data.trace || []).length} calls`);
-      // "Panasonic air conditioner": brand plus what it is, so the owner
-      // can catch a misread ("voltage stabilizer") and correct it.
-      const brand: string = data.perception?.brand || "";
-      const what: string = data.perception?.appliance || (data.components || [])[0]?.label || "";
-      const device: string =
-        (what && brand && !what.toLowerCase().includes(brand.toLowerCase()) ? `${brand} ${what}` : what) ||
-        data.device ||
-        "device";
-      const label = (data.components || [])[0]?.label || device;
-      const frameURL = URL.createObjectURL(frame);
-      const liveMask = seen?.instance ? [seen.instance] : [];
-      const curl: Confirm = {
-        device,
-        overlayURL: liveMask.length ? await composeMasks(frameURL, liveMask) : frameURL,
-        frameURL,
-        frame,
-        perception: data.perception || null,
-        // Start diagnosing now: by the time the user says yes, the
-        // verdict is mostly done. Dropped if they say no. Not when the
-        // sound is the evidence: then we listen first (confirmYes).
-        diagnosis:
-          data.perception && !SOUND_WORDS.test(said)
-            ? requestDiagnosis(apiBase(), [frame], said, data.perception).catch(() => null)
-            : null,
-        highlight: liveMask.length ? "sam" : "none",
-      };
-      // SAM 3.1 masks for the appliance arrive ~2s later in their own
-      // request; muse-image (labelled illustrative) only if SAM finds
-      // nothing. Neither delays the card or the question.
-      const swap = (patch: Partial<Confirm>) => {
-        const cur = confirmRef.current;
-        if (!cur || cur.frameURL !== frameURL) return;
-        const next = { ...cur, ...patch };
-        confirmRef.current = next;
-        setConfirm(next);
-      };
-      const segLabels: unknown[] = data.segment_labels || [];
-      void (async () => {
-        if (liveMask.length) return; // outlined live already
-        let sam: SamInstance[] = [];
-        if (segLabels.length) {
-          const sfd = new FormData();
-          sfd.append("file", frame, "frame.jpg");
-          sfd.append("labels", JSON.stringify(segLabels));
-          try {
-            const sd = await (await fetch(`${apiBase()}/api/segment`, { method: "POST", body: sfd })).json();
-            sam = sd.instances || [];
-          } catch (_) {
-            sam = [];
-          }
-        }
-        mark("sam returned", `${sam.length} masks`);
-        if (sam.length) {
-          swap({ overlayURL: await composeMasks(frameURL, sam), highlight: "sam" });
-          return;
-        }
-        const hfd = new FormData();
-        hfd.append("file", frame, "frame.jpg");
-        hfd.append("part", label);
-        mark("highlight requested", label);
-        try {
-          const hdata = await (await fetch(`${apiBase()}/api/repair/highlight`, { method: "POST", body: hfd })).json();
-          mark("highlight returned", hdata.status);
-          if (hdata.overlay?.image_b64) {
-            swap({
-              overlayURL: `data:${hdata.overlay.mime || "image/webp"};base64,${hdata.overlay.image_b64}`,
-              highlight: "illustrative",
-            });
-          }
-        } catch (_) {
-          // The plain photo stays; the question still works.
-        }
-      })();
-      confirmRef.current = curl;
-      setConfirm(curl);
-      setStatusMsg("");
-      setOrb("asking");
-      mark("confirm card rendered");
-      await say(`Is this your ${device}?`);
-      listenForConfirm();
-    } catch (e) {
-      const err = e as Error;
-      mark("first look failed", `${err.name}: ${err.message}`);
-      setStatusMsg(
-        err.name === "TimeoutError" || err.name === "AbortError"
-          ? "That took too long. Tap the button to try again."
-          : "Couldn't reach the server. Check the connection and tap again."
-      );
-      setOrb("idle");
-    }
+    mark("picture taken", "owner chose this view");
+    void capture(frame, s.item, s.acceptRisk);
   }
 
-  // `correction`: the owner said what it really is ("no, it's an
-  // inverter"). It replaces the perceived appliance for diagnose,
-  // decide and the rules, and the prefetched diagnosis is redone.
-  async function confirmYes(correction?: string) {
-    const c0 = confirmRef.current;
-    if (!c0) return;
-    const c = correction
-      ? {
-          ...c0,
-          perception: { ...((c0.perception as object) || {}), owner_says: correction },
-          diagnosis: null,
-        }
-      : c0;
-    mark(correction ? "owner corrected" : "user said yes", correction || "");
-    setFixing(false);
-    if (correction && !SOUND_WORDS.test(issueRef.current)) {
-      c.diagnosis = requestDiagnosis(apiBase(), [c.frame], issueRef.current, c.perception).catch(() => null);
-    }
-    stopListeningInner();
-    confirmRef.current = null;
-    setConfirm(null);
+  function cancelSeek(): void {
+    setSeekWant(null);
+    setStuck(false);
+    setWarn(null);
     setOrb("idle");
     setStatusMsg("");
-    // Beeps, clicks, noises: record the sound before diagnosing.
+  }
+
+  // Warning answered "go on at my own risk": resume (or take the
+  // picture that was already framed well).
+  function acceptRiskAndGo(): void {
+    const cur = warn;
+    if (!cur) return;
+    const s = seekRef.current;
+    s.acceptRisk = cur.w;
+    mark("risk accepted", cur.w.rule);
+    URL.revokeObjectURL(cur.url);
+    setWarn(null);
+    if (cur.res.ready || s.uploaded) {
+      void capture(cur.res.frame, cur.res.item, cur.w);
+      return;
+    }
+    setOrb("thinking");
+    setStatusMsg(cur.res.hint || "Looking for it…");
+    setSeekWant(issueRef.current);
+  }
+
+  // The picture is taken: listen first when the sound is the evidence,
+  // then open the walkthrough (run 1).
+  async function capture(frame: File, item: string, acceptRisk: ScanWarning | null) {
+    stopListeningInner();
+    setOrb("idle");
+    setStatusMsg("");
     let heard: Heard | null = null;
-    let prefetched = c.diagnosis;
     if (SOUND_WORDS.test(issueRef.current)) {
       heard = await listenForSound();
-      prefetched = requestDiagnosis(
-        apiBase(),
-        [c.frame],
-        issueRef.current,
-        c.perception,
-        heard?.summary || ""
-      ).catch(() => null);
     } else {
       void say("Got it.");
     }
-    // One still by default: the frame the user just confirmed, with its
-    // perception. More views only on demand (addView).
     turnRef.current += 1;
     setOverlay({
-      files: [c.frame],
+      files: [frame],
       text: issueRef.current,
+      followUp: "",
       key: turnRef.current,
-      perception: c.perception,
-      prefetched,
+      perception: item ? { owner_says: item } : null,
+      prefetched: null,
       heard,
+      machine: item,
+      attempt: 1,
+      parentId: null,
+      acceptRisk,
+    });
+  }
+
+  // "Still broken": another run on the same machine with what was tried
+  // and what is still wrong (the walkthrough calls a technician after
+  // the last allowed run).
+  function retry(prev: Overlay, reply: string, tried: string[], after: File | null, jobId: string | null) {
+    turnRef.current += 1;
+    mark("another run", `${prev.attempt + 1}: ${reply}`);
+    setOverlay({
+      ...prev,
+      files: after ? [after] : prev.files,
+      followUp:
+        `Run ${prev.attempt} already tried: ${tried.join("; ") || "nothing"}. ` +
+        `It is still not fixed: ${reply}.`,
+      key: turnRef.current,
+      prefetched: null,
+      attempt: prev.attempt + 1,
+      parentId: jobId,
     });
   }
 
@@ -660,18 +638,8 @@ export default function Home() {
     setOverlay(null);
     const heard = await listenForSound();
     turnRef.current += 1;
-    setOverlay({
-      ...prev,
-      key: turnRef.current,
-      heard,
-      prefetched: requestDiagnosis(
-        apiBase(),
-        prev.files,
-        prev.text,
-        prev.perception,
-        heard?.summary || ""
-      ).catch(() => null),
-    });
+    // The walkthrough diagnoses again with the new recording.
+    setOverlay({ ...prev, key: turnRef.current, heard, prefetched: null });
   }
 
   // On demand from the walkthrough: capture one more view of the faulty
@@ -688,15 +656,12 @@ export default function Home() {
     setOrb("idle");
     turnRef.current += 1;
     setOverlay({
+      ...prev,
       files: still ? [...prev.files, still] : prev.files,
-      text: prev.text,
       key: turnRef.current,
-      // Extra views are perceived afresh; the owner's correction stays.
-      perception: (prev.perception as { owner_says?: string } | null)?.owner_says
-        ? { owner_says: (prev.perception as { owner_says: string }).owner_says }
-        : null,
+      // Extra views are perceived afresh; the item the owner named stays.
+      perception: prev.machine ? { owner_says: prev.machine } : null,
       prefetched: null,
-      heard: prev.heard,
     });
   }
 
@@ -714,20 +679,8 @@ export default function Home() {
     return still;
   }
 
-  async function confirmNo() {
-    setFixing(false);
-    stopListeningInner();
-    confirmRef.current = null;
-    setConfirm(null);
-    setOrb("idle");
-    setStatusMsg("");
-    await say("No problem. Point at the device you mean and tap the orb.");
-  }
-
   const turnCb = useRef(startTurn);
   turnCb.current = startTurn;
-  const confirmCb = useRef({ yes: confirmYes, no: confirmNo });
-  confirmCb.current = { yes: confirmYes, no: confirmNo };
 
   function stopListeningInner(): void {
     if (recogRef.current) {
@@ -761,22 +714,7 @@ export default function Home() {
     setOrb("listening");
     recog.onresult = (e) => {
       const heard = e.results[0][0].transcript as string;
-      if (confirmRef.current) {
-        const low = heard.toLowerCase();
-        const fix = correctionFrom(heard);
-        if (/\byes\b|\byep\b|\byeah\b|\bcorrect\b|\bright\b|\bhaan\b|\bha\b/.test(low)) {
-          void confirmCb.current.yes();
-        } else if (fix) {
-          void confirmCb.current.yes(fix);
-        } else if (/\bno\b|\bnot\b|\bwrong\b|\bnahi/.test(low)) {
-          void confirmCb.current.no();
-        } else {
-          void say("Say yes if that is your device, or no to point again.");
-          listenForConfirm();
-        }
-      } else {
-        void turnCb.current(heard);
-      }
+      void turnCb.current(heard);
     };
     recog.onend = () => {
       recogRef.current = null;
@@ -797,47 +735,11 @@ export default function Home() {
     }
   }
 
-  function listenForConfirm(): void {
-    const SR = getSpeechRecognition();
-    if (!SR) return;
-    stopListeningInner();
-    const recog = new SR();
-    recog.lang = langRef.current.stt;
-    recog.interimResults = false;
-    recog.onresult = (e) => {
-      const heard = (e.results[0][0].transcript as string).toLowerCase();
-      if (/\byes\b|\byep\b|\byeah\b|\bcorrect\b|\bright\b/.test(heard)) {
-        void confirmCb.current.yes();
-      } else if (/\bno\b|\bnot\b|\bwrong\b/.test(heard)) {
-        void confirmCb.current.no();
-      } else {
-        void say("Say yes if that is your device, or no to point again.");
-        listenForConfirm();
-      }
-    };
-    recog.onend = () => {
-      recogRef.current = null;
-      setListening(false);
-    };
-    recog.onerror = () => {
-      recogRef.current = null;
-      setListening(false);
-    };
-    try {
-      recog.start();
-      listen(recog);
-    } catch (_) {
-      // Voice unavailable; the Yes/No buttons still work.
-    }
-  }
-
   const cutoutLine =
     statusMsg ||
-    (confirm
-      ? `Is this your ${confirm.device}? Say yes or no.`
-      : live
-        ? `${live.name} in view. Tap the button and tell me what's wrong.`
-        : "Point at what's broken, tap the button and tell me.");
+    (seekWant
+      ? "Looking for it…"
+      : "Tap the button and tell me what needs fixing.");
   // What the app is doing right now, always visible during a turn.
   const phase = mic || orb === "listening"
     ? "Listening"
@@ -853,7 +755,7 @@ export default function Home() {
     <main className="stage stage-camera">
       <div className="titleframe gridbars">
         HANDYMAN
-        {!overlay && !confirm && (
+        {!overlay && !seekWant && !warn && (
           <button type="button" className="history-open" onClick={() => setShowHistory(true)}>
             History
           </button>
@@ -864,10 +766,9 @@ export default function Home() {
         <video ref={videoRef} className="live" autoPlay playsInline muted />
         <LiveDetect
           videoRef={videoRef}
-          active={!overlay && !confirm && !showHistory && !peek && orb !== "thinking"}
+          want={overlay || showHistory || peek ? null : seekWant}
           apiBase={apiBase}
-          liveRef={liveRef}
-          onChange={setLive}
+          onResult={(r) => seekCb.current(r)}
         />
 
         <span className="crop tl" />
@@ -875,67 +776,66 @@ export default function Home() {
         <span className="crop bl" />
         <span className="crop br" />
 
-        {phase && !confirm && (
+        {phase && !warn && !seekWant && (
           <p className="status-chip scan-chip" role="status">
             <span className="dot" aria-hidden="true" /> {phase}
           </p>
         )}
-        {!confirm && !mic && (
+        {!warn && !mic && (
           <div className="cutout-bar" role="status">
             {cutoutLine}
           </div>
         )}
         {mic && <Waveform analyser={mic} seconds={LISTEN_SECONDS} />}
 
-        {confirm && (
-          <div className="confirm-card">
-            <p className="instruction confirm-q">Is this your {confirm.device}?</p>
+        {warn && (
+          <div className="confirm-card warn-card" role="alertdialog" aria-labelledby="warn-q">
+            <p className="sheet-label">Before you start</p>
+            <p id="warn-q" className="instruction confirm-q">{warn.w.spoken}</p>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={confirm.overlayURL} alt={`highlighted ${confirm.device}`} />
-            {confirm.highlight !== "none" && (
-              <p className="evidence-note">
-                {confirm.highlight === "sam"
-                  ? "Outlined by SAM 3.1 segmentation"
-                  : "Illustrative highlight (muse-image), not a measured outline"}
-              </p>
-            )}
-            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-              <button type="button" className="btn-success" onClick={() => void confirmYes()}>
-                Yes
-              </button>
-              <button type="button" className="btn-outline" onClick={() => setFixing(true)}>
-                No
-              </button>
-            </div>
-            {fixing && (
-              <form
-                className="typeinline"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  const name = fixText.trim();
-                  if (name) void confirmYes(name.split(/\s+/).slice(0, 4).join(" "));
-                  else void confirmNo();
-                  setFixText("");
+            <img src={warn.url} alt={warn.res.name || warn.res.item || "the machine"} />
+            <p className="warn-why">{warn.w.title}</p>
+            {warnPro ? (
+              <CallAPro
+                api={apiBase()}
+                trade={warn.w.trade}
+                brief={{
+                  device: warn.res.name || warn.res.item,
+                  issue: issueRef.current,
+                  finding: "Not opened: flagged before any repair",
+                  rule: warn.w.title,
+                  checks: [],
+                  sound: null,
+                  photo: warn.res.frame,
+                  clip: null,
                 }}
-              >
-                <label className="sheet-label" htmlFor="fix-device">What is it?</label>
-                <input
-                  id="fix-device"
-                  value={fixText}
-                  onChange={(e) => setFixText(e.target.value)}
-                  placeholder="e.g. inverter"
-                  className="text-input"
-                  autoComplete="off"
-                  autoFocus
-                />
-                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                  <button type="submit" className="btn-primary">Use this</button>
-                  <button type="button" className="btn-outline" onClick={() => void confirmNo()}>
-                    Point again
-                  </button>
-                </div>
-              </form>
+              />
+            ) : (
+              <>
+                <button type="button" className="btn-primary" onClick={() => setWarnPro(true)}>
+                  Find a {warn.w.trade}
+                </button>
+                <label className="risk-check">
+                  <input
+                    type="checkbox"
+                    checked={riskOk}
+                    onChange={(e) => setRiskOk(e.target.checked)}
+                  />
+                  I understand the risk. If I go on, it is my own risk.
+                </label>
+                <button
+                  type="button"
+                  className="btn-outline"
+                  disabled={!riskOk}
+                  onClick={acceptRiskAndGo}
+                >
+                  Continue at my own risk
+                </button>
+              </>
             )}
+            <button type="button" className="btn-outline" onClick={cancelSeek}>
+              Cancel
+            </button>
           </div>
         )}
       </div>
@@ -943,6 +843,18 @@ export default function Home() {
       <section className="panel">
         {transcript && (
           <p className="transcript">&ldquo;{transcript}&rdquo;</p>
+        )}
+        {seekWant && (
+          <div className="seek-actions">
+            {stuck && (
+              <button type="button" className="btn-primary" onClick={() => void useThisView()}>
+                Use this view
+              </button>
+            )}
+            <button type="button" className="btn-outline" onClick={cancelSeek}>
+              Cancel
+            </button>
+          </div>
         )}
         {!IS_PROD && (beEdit || !beHost) && <BackendRow
           host={beHost}
@@ -1091,6 +1003,12 @@ export default function Home() {
             key={overlay.key}
             files={overlay.files}
             issue={overlay.text}
+            followUp={overlay.followUp}
+            machine={overlay.machine}
+            attempt={overlay.attempt}
+            parentId={overlay.parentId}
+            acceptRisk={overlay.acceptRisk}
+            onRetry={(reply, tried, after, jobId) => retry(overlay, reply, tried, after, jobId)}
             perception={overlay.perception}
             prefetched={overlay.prefetched}
             heard={overlay.heard}

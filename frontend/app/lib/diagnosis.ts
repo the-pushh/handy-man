@@ -1,6 +1,5 @@
-/* The walkthrough's analysis request. Shared so the first look can start
-   it while the user is still confirming the device (the issue text and
-   the still are already known), and the walkthrough picks it up. */
+/* The walkthrough's analysis request (also the decide-ahead requests
+   while the owner answers the last question). */
 
 import { kb, mark } from "./timeline";
 
@@ -15,7 +14,10 @@ export function requestDiagnosis(
   // decides at higher effort and asks nothing more.
   answers = "",
   // Started before the owner tapped (one request per possible answer).
-  ahead = false
+  ahead = false,
+  // Rule id of a scan-time warning the owner chose to override: the
+  // rules then keep every step (the verdict says it is their risk).
+  acceptRisk = ""
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): Promise<any> {
   mark("diagnosis sent", `${files.length} stills ${kb(files.reduce((n, f) => n + f.size, 0))}`);
@@ -30,10 +32,11 @@ export function requestDiagnosis(
   }
   if (sound) fd.append("sound", sound);
   if (answers) fd.append("answers", answers);
-  // The owner's correction from the confirm card ("no, it's an inverter").
+  // The machine the owner named ("inverter"): beats a misread photo.
   const owner = (perception as { owner_says?: string } | null)?.owner_says;
   if (owner) fd.append("owner", owner);
   if (ahead) fd.append("ahead", "1");
+  if (acceptRisk) fd.append("accept_risk", acceptRisk);
   // Never a frozen screen: give up after 60s and let the owner retry
   // (the server hedges slow calls well before this).
   return fetch(`${base}/api/repair/analyze`, {

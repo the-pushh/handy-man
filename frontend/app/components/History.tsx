@@ -71,8 +71,13 @@ function JobView({ job, onBack }: { job: Job; onBack: () => void }) {
       </button>
       <header className="walk-head" style={{ marginTop: 12 }}>
         <p className="sheet-label">
-          {job.device} · {when(job.date)}
+          {job.device} · Run {job.attempt || 1} · {when(job.date)}
         </p>
+        {job.riskAccepted && (
+          <p className="callout callout-caution own-risk">
+            Done at the owner&apos;s own risk: {job.riskAccepted.title}
+          </p>
+        )}
         <p className="walk-said">&ldquo;{job.issue}&rdquo;</p>
       </header>
 
@@ -161,6 +166,22 @@ function JobView({ job, onBack }: { job: Job; onBack: () => void }) {
   );
 }
 
+/* One group per machine (the item the owner named), newest group first;
+   inside it every run, newest first. */
+function byMachine(jobs: Job[]): { key: string; title: string; jobs: Job[] }[] {
+  const groups = new Map<string, { key: string; title: string; jobs: Job[] }>();
+  for (const j of jobs) {
+    const title = (j.machine || j.device || "device").trim();
+    const key = title.toLowerCase();
+    if (!groups.has(key)) groups.set(key, { key, title: title[0].toUpperCase() + title.slice(1), jobs: [] });
+    groups.get(key)!.jobs.push(j);
+  }
+  const newest = (g: { jobs: Job[] }) => Math.max(...g.jobs.map((j) => Date.parse(j.date) || 0));
+  return [...groups.values()]
+    .map((g) => ({ ...g, jobs: [...g.jobs].sort((a, b) => Date.parse(b.date) - Date.parse(a.date)) }))
+    .sort((a, b) => newest(b) - newest(a));
+}
+
 export default function History({ onClose }: { onClose: () => void }) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [open, setOpen] = useState<Job | null>(null);
@@ -187,25 +208,38 @@ export default function History({ onClose }: { onClose: () => void }) {
           No jobs yet. Point the camera at something broken to start.
         </p>
       ) : (
-        <ol className="history-list">
-          {jobs.map((j) => (
-            <li key={j.id}>
-              <button type="button" className="history-row" onClick={() => setOpen(j)}>
-                <span className={`pill ${j.verdict || ""}`}>
-                  {j.verdict === "diy" ? "DIY" : j.verdict === "pro" ? "Pro" : "—"}
+        <div className="history-groups">
+          {byMachine(jobs).map((g) => (
+            <section key={g.key} className="history-group">
+              <h2 className="history-machine">
+                {g.title}
+                <span>
+                  {g.jobs.length} run{g.jobs.length === 1 ? "" : "s"}
                 </span>
-                <span className="history-main">
-                  <strong>{j.device}</strong>
-                  <span>{j.headline || j.issue}</span>
-                </span>
-                <span className="history-meta">
-                  {when(j.date)}
-                  {j.outcome && <em>{OUTCOME[j.outcome] || j.outcome}</em>}
-                </span>
-              </button>
-            </li>
+              </h2>
+              <ol className="history-list">
+                {g.jobs.map((j) => (
+                  <li key={j.id}>
+                    <button type="button" className="history-row" onClick={() => setOpen(j)}>
+                      <span className={`pill ${j.verdict || ""}`}>
+                        {j.verdict === "diy" ? "DIY" : j.verdict === "pro" ? "Pro" : "—"}
+                      </span>
+                      <span className="history-main">
+                        <strong>Run {j.attempt || 1}</strong>
+                        <span>{j.headline || j.issue}</span>
+                        {j.riskAccepted && <span className="history-risk">Own risk: {j.riskAccepted.rule}</span>}
+                      </span>
+                      <span className="history-meta">
+                        {when(j.date)}
+                        {j.outcome && <em>{OUTCOME[j.outcome] || j.outcome}</em>}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            </section>
           ))}
-        </ol>
+        </div>
       )}
 
       {jobs.length > 0 && (

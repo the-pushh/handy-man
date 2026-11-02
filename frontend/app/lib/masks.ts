@@ -44,19 +44,3 @@ export async function paintMasks(
     ctx.drawImage(off, b.x * W, b.y * H, b.w * W, b.h * H);
   }
 }
-
-/* Still + masks -> JPEG data URL (for cards that show a single image). */
-export async function composeMasks(
-  stillURL: string,
-  list: SamInstance[]
-): Promise<string> {
-  const base = await loadImage(stillURL);
-  const c = document.createElement("canvas");
-  c.width = base.naturalWidth;
-  c.height = base.naturalHeight;
-  const ctx = c.getContext("2d");
-  if (!ctx) return stillURL;
-  ctx.drawImage(base, 0, 0);
-  await paintMasks(ctx, list);
-  return c.toDataURL("image/jpeg", 0.85);
-}

@@ -1,29 +1,40 @@
 "use client";
 
-/* Live machine detection on the camera view.
+/* Looks for the machine the owner named, on the live camera.
 
-   While the owner points the phone, every time the view settles on a
-   new scene one frame goes to /api/detect: Muse Spark names the machine,
-   SAM 3.1 outlines it. The outline is drawn over the live stream until
-   the view moves away, then it clears and the next settled view is
-   checked. The turn's photo is that same frame (see `liveRef`), so the
-   "Is this your…?" card shows the outline at once.
+   After the owner says what is wrong ("my AC is not cooling"), each
+   settled view goes to /api/detect: Muse Spark finds the item they mean
+   and judges the framing, SAM 3.1 outlines it, the safety rules check
+   the machine. The outline is drawn over the live stream; the page
+   decides what to do with each result (take the picture, ask the owner
+   to move, warn). Inactive (no calls) whenever `want` is null.
 
-   Calls happen only on a settled, changed view, never on a timer, so a
-   phone held still costs one call. */
+   A call goes out when the view has settled and either changed or sat
+   unchanged for a while, never faster than MIN_GAP_MS. */
 
 import { useEffect, useRef, useState } from "react";
-import type { MutableRefObject, RefObject } from "react";
+import type { RefObject } from "react";
 import { drawStill } from "../lib/still";
 import { mark } from "../lib/timeline";
 import { ORANGE } from "../lib/masks";
 import type { SamInstance } from "../lib/masks";
 
-export interface LiveDetection {
+export interface ScanWarning {
+  rule: string;
+  title: string;
+  spoken: string;
+  trade: string;
+}
+
+export interface SeekResult {
+  item: string;
   name: string;
   instance: SamInstance | null;
+  framing: string;
+  ready: boolean;
+  hint: string;
+  warning: ScanWarning | null;
   frame: File;
-  at: number;
 }
 
 // Scene signature: 32x24 grey thumbnail, compared by mean absolute
@@ -32,16 +43,15 @@ export interface LiveDetection {
 const SIG_W = 32;
 const SIG_H = 24;
 const SETTLED = 8; // frame-to-frame change below this = holding still
-const SETTLE_MS = 600; // ...for this long before asking
-const MOVED = 22; // change vs the detected frame above this = new scene
+const SETTLE_MS = 500; // ...for this long before asking
+const MOVED = 22; // the outline's scene is gone: clear it
+const RESEEK = 12; // enough change (closer, further) to ask again
+const REASK_MS = 6000; // or the same view, asked again after this
 const SAMPLE_MS = 250;
-const MIN_GAP_MS = 2500; // between detect calls
-const MAX_CALLS = 120; // per page load; the turn still works after
+const MIN_GAP_MS = 2000; // between detect calls
+const MAX_CALLS = 30; // per search; the page offers "use this view"
 
-function signature(
-  video: HTMLVideoElement,
-  ctx: CanvasRenderingContext2D
-): Uint8Array {
+function signature(video: HTMLVideoElement, ctx: CanvasRenderingContext2D): Uint8Array {
   ctx.drawImage(video, 0, 0, SIG_W, SIG_H);
   const px = ctx.getImageData(0, 0, SIG_W, SIG_H).data;
   const out = new Uint8Array(SIG_W * SIG_H);
@@ -68,38 +78,28 @@ function loadImage(src: string): Promise<HTMLImageElement> {
 
 export default function LiveDetect({
   videoRef,
-  active,
+  want,
   apiBase,
-  liveRef,
-  onChange,
+  onResult,
 }: {
   videoRef: RefObject<HTMLVideoElement | null>;
-  // False during a turn, the confirm card, the walkthrough or History.
-  active: boolean;
+  // What the owner said; null = not searching (no calls, nothing drawn).
+  want: string | null;
   apiBase: () => string;
-  // Current detection for the page (null once the view moves away).
-  liveRef: MutableRefObject<LiveDetection | null>;
-  onChange: (d: LiveDetection | null) => void;
+  onResult: (r: SeekResult) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [det, setDet] = useState<LiveDetection | null>(null);
-  const [scanning, setScanning] = useState<boolean>(false);
-  const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
+  const [shown, setShown] = useState<SeekResult | null>(null);
+  const [item, setItem] = useState<string>("");
+  const onResultRef = useRef(onResult);
+  onResultRef.current = onResult;
   const apiRef = useRef(apiBase);
   apiRef.current = apiBase;
 
-  // Sampling + detect loop.
   useEffect(() => {
-    if (!active) {
-      setScanning(false);
-      return;
-    }
-    // Back on the camera after a turn: whatever was outlined before may
-    // be gone, so start from nothing.
-    liveRef.current = null;
-    setDet(null);
-    onChangeRef.current(null);
+    setShown(null);
+    setItem("");
+    if (!want) return;
     const sig = document.createElement("canvas");
     sig.width = SIG_W;
     sig.height = SIG_H;
@@ -107,19 +107,12 @@ export default function LiveDetect({
     if (!sctx) return;
     let alive = true;
     let prev: Uint8Array | null = null;
-    let stillSince = 0;
-    let detSig: Uint8Array | null = null; // scene of the current outline
-    let checkedSig: Uint8Array | null = null; // last scene asked about
+    let stillSince = performance.now();
+    let shownSig: Uint8Array | null = null; // scene of the drawn outline
+    let askedSig: Uint8Array | null = null; // last scene asked about
     let inFlight = false;
     let lastCall = 0;
     let calls = 0;
-
-    const clear = () => {
-      detSig = null;
-      liveRef.current = null;
-      setDet(null);
-      onChangeRef.current(null);
-    };
 
     const ask = async (now: Uint8Array) => {
       const video = videoRef.current;
@@ -127,13 +120,14 @@ export default function LiveDetect({
       inFlight = true;
       lastCall = performance.now();
       calls++;
-      checkedSig = now;
-      setScanning(true);
+      askedSig = now;
       try {
         const frame = await drawStill(video, video.videoWidth, video.videoHeight, "live.jpg");
         if (!frame) return;
         const fd = new FormData();
         fd.append("file", frame, "frame.jpg");
+        fd.append("want", want);
+        if (calls === 1) fd.append("start", "1");
         const t0 = performance.now();
         const r = await fetch(`${apiRef.current()}/api/detect`, {
           method: "POST",
@@ -142,34 +136,37 @@ export default function LiveDetect({
         });
         const d = await r.json();
         mark(
-          "live detect",
-          `${d.status} "${d.name || ""}" ${d.instance ? `outlined ${Math.round((d.instance.score || 0) * 100)}%` : "no outline"} in ${((performance.now() - t0) / 1000).toFixed(1)}s`
+          "seek",
+          `${d.status} item="${d.item || ""}" name="${d.name || ""}" ${d.framing || ""}${d.instance ? ` outlined ${Math.round((d.instance.score || 0) * 100)}%` : ""}${d.warning ? ` WARN ${d.warning.rule}` : ""} in ${((performance.now() - t0) / 1000).toFixed(1)}s`
         );
-        if (!alive || d.status !== "ok") return;
-        // Still the same view? Otherwise the answer is stale.
-        const v = videoRef.current;
-        if (!v?.videoWidth) return;
-        const cur = signature(v, sctx);
-        if (distance(cur, now) > MOVED) return;
-        if (!d.name) {
-          clear();
+        if (!alive) return;
+        if (d.status !== "ok") {
+          // Rate limit or model error: tell the page once, stop asking.
+          if (d.status === "rate-limited") calls = MAX_CALLS;
           return;
         }
-        const next: LiveDetection = {
-          name: String(d.name),
+        const res: SeekResult = {
+          item: String(d.item || ""),
+          name: String(d.name || ""),
           instance: d.instance || null,
+          framing: String(d.framing || "not_visible"),
+          ready: !!d.ready,
+          hint: String(d.hint || ""),
+          warning: d.warning || null,
           frame,
-          at: Date.now(),
         };
-        detSig = now;
-        liveRef.current = next;
-        setDet(next);
-        onChangeRef.current(next);
+        setItem(res.item);
+        // Draw only if the view is still the one that was sent.
+        const v = videoRef.current;
+        if (v?.videoWidth && distance(signature(v, sctx), now) <= MOVED) {
+          shownSig = res.name ? now : null;
+          setShown(res.name ? res : null);
+        }
+        onResultRef.current(res);
       } catch (_) {
         // Network or timeout: the next settled view tries again.
       } finally {
         inFlight = false;
-        if (alive) setScanning(false);
       }
     };
 
@@ -182,20 +179,22 @@ export default function LiveDetect({
       const motion = prev ? distance(now, prev) : 0;
       prev = now;
       if (motion > SETTLED) stillSince = t;
-      if (detSig && distance(now, detSig) > MOVED) clear();
-      const settled = t - stillSince >= SETTLE_MS;
-      const fresh = !checkedSig || distance(now, checkedSig) > MOVED;
-      if (settled && fresh && !detSig && !inFlight && calls < MAX_CALLS && t - lastCall >= MIN_GAP_MS) {
-        void ask(now);
+      if (shownSig && distance(now, shownSig) > MOVED) {
+        shownSig = null;
+        setShown(null);
       }
+      if (inFlight || calls >= MAX_CALLS || t - lastCall < MIN_GAP_MS) return;
+      const first = calls === 0;
+      const settled = t - stillSince >= SETTLE_MS;
+      const changed = !askedSig || distance(now, askedSig) > RESEEK;
+      if (first || (settled && (changed || t - lastCall >= REASK_MS))) void ask(now);
     };
-    stillSince = performance.now();
     const id = window.setInterval(tick, SAMPLE_MS);
     return () => {
       alive = false;
       window.clearInterval(id);
     };
-  }, [active, videoRef, liveRef]);
+  }, [want, videoRef]);
 
   // Paint the outline over the live video (object-fit: cover mapping).
   useEffect(() => {
@@ -215,7 +214,7 @@ export default function LiveDetect({
       canvas.height = Math.round(ch * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, cw, ch);
-      const inst = det?.instance;
+      const inst = shown?.instance;
       if (!inst || !video.videoWidth) return;
       const scale = Math.max(cw / video.videoWidth, ch / video.videoHeight);
       const dw = video.videoWidth * scale;
@@ -227,16 +226,20 @@ export default function LiveDetect({
       const w = inst.box.w * dw;
       const h = inst.box.h * dh;
       if (maskTint) ctx.drawImage(maskTint, x, y, w, h);
-      // Corner brackets around the box.
-      const k = Math.max(10, Math.min(w, h) * 0.18);
-      ctx.strokeStyle = ORANGE;
-      ctx.lineWidth = 2;
+      // Corner brackets, kept inside the visible frame.
+      const bx = Math.max(4, x);
+      const by = Math.max(4, y);
+      const bw = Math.min(cw - 4, x + w) - bx;
+      const bh = Math.min(ch - 4, y + h) - by;
+      const k = Math.max(10, Math.min(bw, bh) * 0.18);
+      ctx.strokeStyle = shown?.ready ? ORANGE : "#e8dfc4";
+      ctx.lineWidth = 3;
       ctx.beginPath();
       for (const [px, py, dx, dy] of [
-        [x, y, 1, 1],
-        [x + w, y, -1, 1],
-        [x, y + h, 1, -1],
-        [x + w, y + h, -1, -1],
+        [bx, by, 1, 1],
+        [bx + bw, by, -1, 1],
+        [bx, by + bh, 1, -1],
+        [bx + bw, by + bh, -1, -1],
       ]) {
         ctx.moveTo(px + dx * k, py);
         ctx.lineTo(px, py);
@@ -246,7 +249,7 @@ export default function LiveDetect({
     };
 
     (async () => {
-      const inst = det?.instance;
+      const inst = shown?.instance;
       if (inst) {
         try {
           const m = await loadImage(`data:image/png;base64,${inst.mask_png_b64}`);
@@ -275,29 +278,28 @@ export default function LiveDetect({
       ro.disconnect();
       video.removeEventListener("loadedmetadata", draw);
     };
-  }, [det, videoRef]);
+  }, [shown, videoRef]);
 
-  if (!active) return null;
-  const box = det?.instance?.box;
+  if (!want) return null;
   return (
     <>
       <canvas ref={canvasRef} className="live-detect" aria-hidden="true" />
-      {det ? (
+      {shown ? (
         <p className="live-tag" role="status">
           <span className="live-tag-dot" aria-hidden="true" />
-          {det.name}
+          {shown.name}
           <span className="live-tag-src">
-            {box
-              ? `Spark · SAM 3.1 ${Math.round((det.instance?.score || 0) * 100)}%`
+            {shown.instance
+              ? `Spark · SAM 3.1 ${Math.round((shown.instance.score || 0) * 100)}%`
               : "Spark"}
           </span>
         </p>
-      ) : scanning ? (
+      ) : (
         <p className="live-tag live-tag-scan" role="status">
           <span className="live-tag-dot" aria-hidden="true" />
-          Scanning…
+          {item ? `Looking for the ${item}…` : "Looking…"}
         </p>
-      ) : null}
+      )}
     </>
   );
 }

@@ -33,6 +33,13 @@ export interface Job {
   recheck?: { looksFixed: boolean | null; seen: string } | null;
   seconds?: number | null;
   media: Partial<Record<MediaKind, boolean>>;
+  // The item the owner named ("air conditioner"): runs group under it.
+  machine?: string;
+  // Run number on that machine, and the run before it.
+  attempt?: number;
+  parentId?: string | null;
+  // A scan-time warning the owner overrode, at their own risk.
+  riskAccepted?: { rule: string; title: string } | null;
 }
 
 function read(): Job[] {
