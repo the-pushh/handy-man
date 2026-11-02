@@ -13,7 +13,10 @@ const STORE = "media";
 const THUMB_SIDE = 320;
 
 export type Outcome = "fixed" | "still broken" | "called a pro";
-export type MediaKind = "before" | "after" | "clip";
+// Step pictures: the photo with that step's part outlined (SAM) or the
+// illustrated highlight, as the owner saw it, under "step0", "step1"…
+export type MediaKind = "before" | "after" | "clip" | `step${number}`;
+const MAX_STEPS = 12;
 
 export interface Job {
   id: string;
@@ -25,7 +28,7 @@ export interface Job {
   ruleTitle: string | null; // in plain words
   headline: string;
   trade: string | null;
-  steps: { check: string; how: string; caution?: string | null }[];
+  steps: { check: string; how: string; caution?: string | null; part?: string | null }[];
   answers: { ask: string; reply: string }[];
   outcome: Outcome | null;
   finding: string;
@@ -145,10 +148,10 @@ async function tx<T>(
 }
 
 /* Downscale an image to a small JPEG thumbnail (longest side 320px). */
-async function thumbnail(blob: Blob): Promise<Blob | null> {
+async function thumbnail(blob: Blob, side = THUMB_SIDE): Promise<Blob | null> {
   try {
     const bmp = await createImageBitmap(blob);
-    const scale = Math.min(1, THUMB_SIDE / Math.max(bmp.width, bmp.height));
+    const scale = Math.min(1, side / Math.max(bmp.width, bmp.height));
     const c = document.createElement("canvas");
     c.width = Math.max(1, Math.round(bmp.width * scale));
     c.height = Math.max(1, Math.round(bmp.height * scale));
@@ -161,7 +164,7 @@ async function thumbnail(blob: Blob): Promise<Blob | null> {
 
 export async function putMedia(id: string, kind: MediaKind, blob: Blob | null | undefined): Promise<void> {
   if (!blob) return;
-  const data = kind === "clip" ? blob : await thumbnail(blob);
+  const data = kind === "clip" ? blob : await thumbnail(blob, kind.startsWith("step") ? 480 : THUMB_SIDE);
   if (!data) return;
   const ok = await tx("readwrite", (s) => s.put(data, `${id}:${kind}`));
   if (ok !== null) updateJob(id, { media: { [kind]: true } });
@@ -174,7 +177,8 @@ export async function getMedia(id: string, kind: MediaKind): Promise<Blob | null
 
 async function deleteMedia(id: string): Promise<void> {
   await tx("readwrite", (s) => {
-    for (const kind of ["before", "after", "clip"]) s.delete(`${id}:${kind}`);
+    const kinds = ["before", "after", "clip", ...Array.from({ length: MAX_STEPS }, (_, i) => `step${i}`)];
+    for (const kind of kinds) s.delete(`${id}:${kind}`);
     return null;
   });
 }

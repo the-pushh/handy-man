@@ -12,6 +12,7 @@ import type { Heard } from "../lib/recorder";
 import CallAPro from "./CallAPro";
 import Busy from "./Busy";
 import type { ScanWarning } from "./LiveDetect";
+import { paintMasks } from "../lib/masks";
 import { getSpeechRecognition } from "../lib/speech";
 import { newJobId, putMedia, saveJob, updateJob } from "../lib/history";
 
@@ -177,6 +178,7 @@ export default function RepairWalkthrough({
   const lastQuestion = useRef<((sofar: { ask: string; reply: string }[]) => void) | null>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const drawToken = useRef<number>(0);
   const fileRef = useRef<File | null>(null);
   // SAM's outlines for this run (a step waits for them instead of
   // racing them), and Muse Image fallbacks prepared ahead per part.
@@ -218,10 +220,14 @@ export default function RepairWalkthrough({
     const canvas = canvasRef.current;
     const img = imgRef.current;
     if (!canvas || !img) return;
+    // Only the latest drawing may paint: an older one still waiting for
+    // the image must not finish last and bring back other parts' masks.
+    const token = ++drawToken.current;
     await new Promise<void>((res) => {
       if (img.complete && img.naturalWidth) res();
-      else img.onload = () => res();
+      else img.addEventListener("load", () => res(), { once: true });
     });
+    if (token !== drawToken.current) return;
     canvas.width = img.naturalWidth;
     canvas.height = img.naturalHeight;
     const ctx = canvas.getContext("2d");
@@ -592,6 +598,11 @@ export default function RepairWalkthrough({
           // Steps SAM missed: illustrated highlights, one after another in
           // the background, so a step rarely waits for one.
           for (const part of missed) void fetchHighlight(part, still, base, data.legend || []);
+          // History keeps each step's picture as the owner saw it.
+          foundSteps.forEach((st: { part: string | null }, i: number) => {
+            const mine = masksFor(st.part, sam).map((k) => sam[k]);
+            if (mine.length) void saveStepPicture(i, still, mine, "");
+          });
         });
       } else {
         samRef.current = Promise.resolve([]);
@@ -614,10 +625,11 @@ export default function RepairWalkthrough({
           ruleTitle: v.title,
           headline: v.headline,
           trade: v.trade,
-          steps: foundSteps.map((st: { check: string; how: string; caution?: string | null }) => ({
+          steps: foundSteps.map((st: { check: string; how: string; caution?: string | null; part: string | null }) => ({
             check: st.check,
             how: st.how,
             caution: st.caution || null,
+            part: st.part,
           })),
           answers: answeredRef.current,
           outcome: null,
@@ -740,6 +752,35 @@ export default function RepairWalkthrough({
     return job;
   }
 
+  /* One step's picture for History: the photo with the part's SAM
+     outline painted on, or the illustrated highlight as shown. */
+  async function saveStepPicture(i: number, still: File, masks: Instance[], illustrated: string): Promise<void> {
+    const id = jobId.current;
+    if (!id) return;
+    try {
+      let blob: Blob | null = null;
+      if (illustrated) {
+        blob = await (await fetch(illustrated)).blob();
+      } else if (masks.length) {
+        const bmp = await createImageBitmap(still);
+        const c = document.createElement("canvas");
+        c.width = bmp.width;
+        c.height = bmp.height;
+        const ctx = c.getContext("2d");
+        if (!ctx) return;
+        ctx.drawImage(bmp, 0, 0);
+        await paintMasks(ctx, masks);
+        ctx.strokeStyle = ORANGE;
+        ctx.lineWidth = Math.max(2, c.width / 200);
+        for (const m of masks) ctx.strokeRect(m.box.x * c.width, m.box.y * c.height, m.box.w * c.width, m.box.h * c.height);
+        blob = await new Promise<Blob | null>((r) => c.toBlob(r, "image/jpeg", 0.8));
+      }
+      if (blob) await putMedia(id, `step${i}`, blob);
+    } catch (_) {
+      // History just shows the plain photo for this step.
+    }
+  }
+
   async function goStep(i: number): Promise<void> {
     if (i < 0 || i >= steps.length || !fileRef.current) return;
     hush(); // the previous step never talks over this one
@@ -760,7 +801,10 @@ export default function RepairWalkthrough({
     } else if (st.part) {
       setOverlayURL("");
       const url = await fetchHighlight(st.part, fileRef.current, API, legend);
-      if (url) setOverlayURL(url);
+      if (url) {
+        setOverlayURL(url);
+        void saveStepPicture(i, fileRef.current, [], url);
+      }
       mark("step highlight", `${i + 1}: ${url ? "illustrated" : "none"} for ${st.part}`);
     }
     setStepLoading(false);

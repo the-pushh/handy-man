@@ -4,10 +4,10 @@
    verdict, steps, before/after and the "what to tell them" card.
    Everything comes from lib/history.ts (localStorage + IndexedDB). */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { BriefCard } from "./CallAPro";
 import { clearHistory, getMedia, listJobs } from "../lib/history";
-import type { Job } from "../lib/history";
+import type { Job, MediaKind } from "../lib/history";
 
 function when(iso: string): string {
   try {
@@ -28,142 +28,188 @@ const OUTCOME: Record<string, string> = {
   "called a pro": "Called a pro",
 };
 
+/* One past run, the same way the walkthrough showed it: a summary
+   first (verdict, outcome, before/after), the steps one at a time with
+   the picture the owner saw, and the diagnosis to share on request. */
 function JobView({ job, onBack }: { job: Job; onBack: () => void }) {
-  const [media, setMedia] = useState<{ before?: File; after?: File; clip?: File }>({});
-  const [loaded, setLoaded] = useState(false);
+  const [urls, setUrls] = useState<Record<string, string>>({});
+  const [files, setFiles] = useState<{ before?: File; clip?: File }>({});
+  const [screen, setScreen] = useState<"summary" | "steps" | "share">("summary");
+  const [idx, setIdx] = useState<number>(0);
 
   useEffect(() => {
     let live = true;
+    const made: string[] = [];
     void (async () => {
-      const [b, a, c] = await Promise.all([
-        job.media.before ? getMedia(job.id, "before") : null,
-        job.media.after ? getMedia(job.id, "after") : null,
-        job.media.clip ? getMedia(job.id, "clip") : null,
-      ]);
+      const kinds = ["before", "after", "clip", ...job.steps.map((_, i) => `step${i}`)] as MediaKind[];
+      const blobs = await Promise.all(kinds.map((k) => (job.media[k] ? getMedia(job.id, k) : null)));
       if (!live) return;
-      setMedia({
-        before: b ? new File([b], "before.jpg", { type: b.type || "image/jpeg" }) : undefined,
-        after: a ? new File([a], "after.jpg", { type: a.type || "image/jpeg" }) : undefined,
-        clip: c ? new File([c], "sound.wav", { type: c.type || "audio/wav" }) : undefined,
+      const out: Record<string, string> = {};
+      blobs.forEach((b, i) => {
+        if (b && kinds[i] !== "clip") {
+          const u = URL.createObjectURL(b);
+          made.push(u);
+          out[kinds[i]] = u;
+        }
       });
-      setLoaded(true);
+      const before = blobs[0];
+      const clip = blobs[2];
+      setUrls(out);
+      setFiles({
+        before: before ? new File([before], "before.jpg", { type: before.type || "image/jpeg" }) : undefined,
+        clip: clip ? new File([clip], "sound.wav", { type: clip.type || "audio/wav" }) : undefined,
+      });
     })();
     return () => {
       live = false;
+      made.forEach((u) => URL.revokeObjectURL(u));
     };
   }, [job]);
 
-  const [beforeURL, afterURL] = useMemo(
-    () => [media.before, media.after].map((f) => (f ? URL.createObjectURL(f) : "")),
-    [media]
-  );
-  useEffect(
-    () => () => {
-      for (const u of [beforeURL, afterURL]) if (u) URL.revokeObjectURL(u);
-    },
-    [beforeURL, afterURL]
-  );
+  const title = job.verdict === "pro" ? "Call a pro" : job.riskAccepted ? "At your own risk" : "You can fix this";
+  const step = job.steps[idx];
+  const stepPicture = urls[`step${idx}`] || urls.before || "";
+  const back = () => (screen === "summary" ? onBack() : setScreen("summary"));
 
   return (
-    <section className="walk">
-      <button type="button" className="btn-outline" onClick={onBack}>
-        ← All jobs
-      </button>
-      <header className="walk-head" style={{ marginTop: 12 }}>
-        <p className="sheet-label">
-          {job.device} · Run {job.attempt || 1} · {when(job.date)}
-        </p>
-        {job.riskAccepted && (
-          <p className="callout callout-caution own-risk">
-            Done at the owner&apos;s own risk: {job.riskAccepted.title}
+    <section className="walk screened">
+      <header className="walk-bar">
+        <button type="button" className="walk-icon" onClick={back} aria-label="Back">
+          ←
+        </button>
+        <div className="walk-title">
+          <p className="sheet-label">
+            {job.machine || job.device} · run {job.attempt || 1} · {when(job.date)}
           </p>
-        )}
-        <p className="walk-said">&ldquo;{job.issue}&rdquo;</p>
+          <p className="walk-said">&ldquo;{job.issue}&rdquo;</p>
+        </div>
+        <span className="walk-icon-space" />
       </header>
 
-      {job.verdict && (
-        <section className={`verdict-card ${job.verdict}`}>
-          <p className="verdict-title">
-            {job.verdict === "pro" ? "Call a pro" : job.riskAccepted ? "At your own risk" : "You can fix this"}
-          </p>
-          <p className="verdict-finding">{job.verdict === "pro" ? job.ruleTitle : job.headline}</p>
-          {job.rule && <p className="evidence-note">Safety rule: {job.rule}</p>}
-          {job.outcome && <p className="sheet-label">Outcome: {OUTCOME[job.outcome] || job.outcome}</p>}
-        </section>
-      )}
-
-      {job.answers.length > 0 && (
-        <ul className="checklist" style={{ marginTop: 12 }}>
-          {job.answers.map((a, i) => (
-            <li key={i} className="done">
-              <span aria-hidden="true">✓</span> {a.ask} <strong>{a.reply}</strong>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {job.steps.length > 0 && (
-        <section className="step-card">
-          <p className="sheet-label">{job.verdict === "pro" ? "Safe checks" : "Steps"}</p>
-          <ol className="history-steps">
-            {job.steps.map((s, i) => (
-              <li key={i}>
-                <strong>{s.check}</strong>
-                {s.how && <p>{s.how}</p>}
-                {s.caution && <p className="history-caution">Careful: {s.caution}</p>}
-              </li>
-            ))}
-          </ol>
-        </section>
-      )}
-
-      {(beforeURL || afterURL) && (
-        <section className="done-card">
-          <div className="before-after">
-            <figure>
-              {beforeURL ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={beforeURL} alt="before" />
-              ) : (
-                <div className="after-missing">No photo</div>
-              )}
-              <figcaption>Before</figcaption>
-            </figure>
-            <figure>
-              {afterURL ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={afterURL} alt="after" />
-              ) : (
-                <div className="after-missing">Not checked</div>
-              )}
-              <figcaption>After</figcaption>
-            </figure>
+      {screen !== "share" && (stepPicture || urls.before) && (
+        <figure className="walk-photo">
+          <div className="photo-box">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={screen === "steps" ? stepPicture : urls.before} alt={job.device} />
           </div>
-          {job.recheck && (
-            <p className="done-result">
-              {job.recheck.looksFixed === true ? "✓ " : job.recheck.looksFixed === false ? "✗ " : ""}
-              {job.recheck.seen}
-            </p>
-          )}
-        </section>
+          <figcaption>
+            {screen === "steps"
+              ? urls[`step${idx}`]
+                ? `Highlighted: ${step?.part || "this step"}`
+                : "No highlight was saved for this step"
+              : "Before"}
+          </figcaption>
+        </figure>
       )}
 
-      {loaded && (
-        <div style={{ marginTop: 12 }}>
+      <div className="walk-body">
+        {screen === "summary" && (
+          <>
+            <section className={`verdict-card ${job.verdict || ""}`}>
+              <p className="verdict-title">{title}</p>
+              <p className="verdict-finding">{job.verdict === "pro" ? job.ruleTitle : job.headline}</p>
+              {job.outcome && <p className="verdict-line">Outcome: {OUTCOME[job.outcome] || job.outcome}</p>}
+              {job.riskAccepted && (
+                <p className="verdict-line">Done at the owner&apos;s own risk.</p>
+              )}
+            </section>
+            {urls.after && (
+              <section className="history-card">
+                <div className="before-after">
+                  <figure>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={urls.before} alt="before" />
+                    <figcaption>Before</figcaption>
+                  </figure>
+                  <figure>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={urls.after} alt="after" />
+                    <figcaption>After</figcaption>
+                  </figure>
+                </div>
+                {job.recheck && (
+                  <p className="verdict-line">
+                    {job.recheck.looksFixed === true ? "✓ " : job.recheck.looksFixed === false ? "✗ " : ""}
+                    {job.recheck.seen}
+                  </p>
+                )}
+              </section>
+            )}
+          </>
+        )}
+
+        {screen === "steps" && step && (
+          <section className="step-card">
+            <div className="step-top">
+              <p className="sheet-label">
+                {job.verdict === "pro" ? "Safe check" : "Step"} {idx + 1} of {job.steps.length}
+              </p>
+              <div className="ticks">
+                {job.steps.map((_, i) => (
+                  <span key={i} className={i < idx ? "tick done" : i === idx ? "tick active" : "tick"} />
+                ))}
+              </div>
+            </div>
+            <p className="instruction">{step.check}</p>
+            {step.how && <p className="step-how">{step.how}</p>}
+            {step.caution && (
+              <div className="callout callout-dont-touch">
+                <p className="sheet-label">Careful</p>
+                <p>{step.caution}</p>
+              </div>
+            )}
+          </section>
+        )}
+
+        {screen === "share" && (
           <BriefCard
             brief={{
               device: job.device,
               issue: job.issue,
               finding: job.finding || job.headline,
               rule: job.verdict === "pro" ? job.ruleTitle : null,
-              checks: [...job.answers.map((a) => `${a.ask} ${a.reply}`), ...job.steps.map((s) => s.check)],
+              checks: [...job.answers.map((a) => `${a.ask} ${a.reply}`), ...job.steps.map((st) => st.check)],
               sound: job.sound,
-              photo: media.before || null,
-              clip: media.clip || null,
+              photo: files.before || null,
+              clip: files.clip || null,
             }}
           />
-        </div>
-      )}
+        )}
+      </div>
+
+      <div className="walk-cta">
+        {screen === "summary" && job.steps.length > 0 && (
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={() => {
+              setIdx(0);
+              setScreen("steps");
+            }}
+          >
+            See the {job.steps.length} step{job.steps.length === 1 ? "" : "s"}
+          </button>
+        )}
+        {screen === "summary" && (
+          <button type="button" className="btn-outline" onClick={() => setScreen("share")}>
+            Share diagnosis
+          </button>
+        )}
+        {screen === "steps" && (
+          <>
+            <button type="button" className="btn-outline" onClick={() => (idx === 0 ? setScreen("summary") : setIdx(idx - 1))}>
+              Back
+            </button>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => (idx < job.steps.length - 1 ? setIdx(idx + 1) : setScreen("summary"))}
+            >
+              {idx < job.steps.length - 1 ? "Next step" : "Done"}
+            </button>
+          </>
+        )}
+      </div>
     </section>
   );
 }
@@ -196,22 +242,23 @@ export default function History({ onClose }: { onClose: () => void }) {
   if (open) return <JobView job={open} onBack={() => setOpen(null)} />;
 
   return (
-    <section className="walk">
-      <div className="row" style={{ marginTop: 0, alignItems: "center" }}>
-        <h1 className="history-title">History</h1>
-        <button type="button" className="btn-outline" style={{ flex: "0 0 auto" }} onClick={onClose}>
-          Close
+    <section className="walk screened">
+      <header className="walk-bar">
+        <span className="walk-icon-space" />
+        <div className="walk-title">
+          <p className="history-title">History</p>
+          <p className="sheet-label">On this phone only</p>
+        </div>
+        <button type="button" className="walk-icon" onClick={onClose} aria-label="Close">
+          ✕
         </button>
-      </div>
-      <p className="evidence-note">History stays on this device only.</p>
+      </header>
 
-      {jobs.length === 0 ? (
-        <p className="instruction" style={{ marginTop: 16 }}>
-          No jobs yet. Point the camera at something broken to start.
-        </p>
-      ) : (
-        <div className="history-groups">
-          {byMachine(jobs).map((g) => (
+      <div className="walk-body">
+        {jobs.length === 0 ? (
+          <p className="instruction">No fixes yet. Tap the button on the camera screen and say what&apos;s broken.</p>
+        ) : (
+          byMachine(jobs).map((g) => (
             <section key={g.key} className="history-group">
               <h2 className="history-machine">
                 {g.title}
@@ -222,45 +269,45 @@ export default function History({ onClose }: { onClose: () => void }) {
               <ol className="history-list">
                 {g.jobs.map((j) => (
                   <li key={j.id}>
-                    <button type="button" className="history-row" onClick={() => setOpen(j)}>
-                      <span className={`pill ${j.verdict || ""}`}>
-                        {j.verdict === "diy" ? "DIY" : j.verdict === "pro" ? "Pro" : "—"}
-                      </span>
-                      <span className="history-main">
+                    <button type="button" className="history-card history-row" onClick={() => setOpen(j)}>
+                      <span className="history-top">
+                        <span className={`pill ${j.verdict || ""}`}>
+                          {j.verdict === "diy" ? (j.riskAccepted ? "Own risk" : "DIY") : j.verdict === "pro" ? "Pro" : "—"}
+                        </span>
                         <strong>Run {j.attempt || 1}</strong>
-                        <span>{j.headline || j.issue}</span>
-                        {j.riskAccepted && <span className="history-risk">Own risk: {j.riskAccepted.rule}</span>}
+                        <span className="history-when">{when(j.date)}</span>
                       </span>
-                      <span className="history-meta">
-                        {when(j.date)}
-                        {j.outcome && <em>{OUTCOME[j.outcome] || j.outcome}</em>}
+                      <span className="history-finding">{j.headline || j.issue}</span>
+                      <span className="history-outcome">
+                        {j.outcome ? OUTCOME[j.outcome] || j.outcome : "No outcome yet"}
                       </span>
                     </button>
                   </li>
                 ))}
               </ol>
             </section>
-          ))}
-        </div>
-      )}
+          ))
+        )}
+      </div>
 
       {jobs.length > 0 && (
-        <button
-          type="button"
-          className={confirming ? "btn-primary" : "btn-outline"}
-          style={{ marginTop: 16, width: "100%" }}
-          onClick={async () => {
-            if (!confirming) {
-              setConfirming(true);
-              return;
-            }
-            await clearHistory();
-            setJobs([]);
-            setConfirming(false);
-          }}
-        >
-          {confirming ? "Tap again to clear all history" : "Clear history"}
-        </button>
+        <div className="walk-cta">
+          <button
+            type="button"
+            className={confirming ? "btn-primary" : "btn-outline"}
+            onClick={async () => {
+              if (!confirming) {
+                setConfirming(true);
+                return;
+              }
+              await clearHistory();
+              setJobs([]);
+              setConfirming(false);
+            }}
+          >
+            {confirming ? "Tap again to clear all history" : "Clear history"}
+          </button>
+        </div>
       )}
     </section>
   );
