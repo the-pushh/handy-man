@@ -672,6 +672,29 @@ FRAMINGS = ("good", "too_far", "too_close", "cut_off", "not_visible",
             "blurry", "too_dark")
 
 
+# Phase 0 matters: most "broken" machines turn out to be something
+# trivial the owner missed. The diagnosis only starts once these are
+# ruled out, so the checks have to cover the obvious, not the clever.
+QUICK_CHECKS_SYSTEM = (
+    "You run phase 0 of a home repair app, before any real diagnosis. "
+    "This phase is important: most machines reported as broken have a "
+    "trivial cause the owner missed, and the diagnosis that follows "
+    "assumes these were ruled out. Given the machine and what the owner "
+    "says, list the 2 to 4 most common trivial things anyone should rule "
+    "out first on this kind of machine for this kind of problem, most "
+    "likely first: power reaching it (plugged in, switch on, the socket "
+    "works, the charger's light), a restart or reset, a setting or mode "
+    "(volume, brightness, timer, eco mode, child lock), a door, lid or "
+    "tray not fully closed, a remote's batteries, a supply (water tap "
+    "open, paper loaded, fuel, network cable in). Fit them to the problem "
+    "the owner describes; skip checks that what they said already rules "
+    "out. Each must take under a minute, need no tools, and never open "
+    "anything or touch wiring, gas or a battery. Reply with only compact "
+    'JSON: {"checks": [{"check": "at most 7 words", "how": "one short '
+    'sentence, exactly what to do and what to look for"}]}'
+)
+
+
 def quick_checks(machine: str, issue: str, model: str | None = None) -> list:
     """Phase 0: the common first things anyone tries on this kind of
     machine before a real diagnosis (laptop: charger plugged in and its
@@ -681,21 +704,15 @@ def quick_checks(machine: str, issue: str, model: str | None = None) -> list:
     rules screen them afterwards like any step.
     """
     url, key, default_model = _config()
-    prompt = (
-        "You help an owner with a household machine before any real "
-        f"diagnosis. Machine: {machine or 'unknown'}. The owner says: "
-        f"{issue.strip()[:300]}. List the 2 to 4 most common quick things "
-        "anyone tries first on this kind of machine for this kind of "
-        "problem, most likely fix first: power and plug, a restart or "
-        "reset, a setting, a switch, a remote's batteries. Each must take "
-        "under a minute, need no tools, and never open anything or touch "
-        "wiring. Reply with only compact JSON: "
-        '{"checks": [{"check": "at most 7 words", "how": "one short '
-        'sentence, exactly what to do and what to look for"}]}'
-    )
     payload = {
         "model": model or default_model,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [
+            {"role": "system", "content": QUICK_CHECKS_SYSTEM},
+            {"role": "user", "content": (
+                f"Machine: {machine or 'unknown'}. The owner says: "
+                f"{issue.strip()[:300]}"
+            )},
+        ],
         "max_tokens": 1500,
         "reasoning_effort": "low",
         "response_format": {"type": "json_object"},
