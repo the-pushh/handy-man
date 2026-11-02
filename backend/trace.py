@@ -102,7 +102,23 @@ def call(model: str, purpose: str, image: bytes | None = None,
                if u else "")
         print(f"[trace {tr.id if tr else '-'}] +{rec['start_s']:6.2f}s "
               f"{rec['latency_ms'] / 1000:6.2f}s  {model}  {purpose}  "
-              f"{rec['status']}  {tok}", flush=True)
+              f"{rec['status']}  {tok}  {_brief(rec)}", flush=True)
+
+
+def _brief(rec: dict) -> str:
+    """What a call found, in a few words, for the log line."""
+    if rec.get("error"):
+        return f"error: {rec['error'][:120]}"
+    p = rec.get("parsed")
+    if not isinstance(p, dict):
+        return ""
+    if "matches" in p:
+        top = max((i.get("score") or 0 for i in p.get("instances") or []),
+                  default=0)
+        return f"-> {p['matches']} match(es)" + (f", top {top:.2f}" if top else "")
+    if "framing" in p:
+        return f"-> {p.get('name') or '(not seen)'} [{p.get('framing')}]"
+    return ""
 
 
 def export() -> list:
@@ -138,3 +154,19 @@ def log_usage(tr: Trace, calls: list) -> None:
             f"{k}: {v['calls']} call(s) {v['input_tokens']}->{v['output_tokens']} tok"
             for k, v in per_model.items()),
     }), flush=True)
+
+
+def log_outcome(what: str, **data) -> None:
+    """One JSON line per request saying what was decided (not just which
+    models ran): found item and framing, verdict and the rule that fired,
+    each step's part, what SAM matched. Read with
+    `modal app logs handyman-backend --since 1h | grep outcome`."""
+    import json
+
+    tr = current()
+    info = request_info.get() or {}
+    print(json.dumps({
+        "severity": "INFO", "kind": "outcome", "what": what,
+        "trace": tr.id if tr else None, "path": info.get("path"),
+        "client": info.get("client"), **data,
+    }, ensure_ascii=False, default=str), flush=True)

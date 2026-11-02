@@ -301,6 +301,23 @@ async def repair_analyze(request: Request,
                                   components, model, prior, sound,
                                   answers, bool(ahead.strip()),
                                   accept_risk.strip())
+    v = out.get("verdict") or {}
+    trace.log_outcome(
+        "analyze", status=out.get("status"), said=text[:200],
+        owner=owner.strip() or None, answers=answers[:300] or None,
+        sound=sound[:120] or None, ahead=bool(ahead.strip()),
+        accept_risk=accept_risk.strip() or None,
+        appliance=(out.get("perception") or {}).get("appliance"),
+        device=out.get("device"),
+        questions=[q.get("ask") for q in out.get("questions") or []],
+        verdict=v.get("verdict"), rule=v.get("rule"), fired=v.get("fired"),
+        overridden=v.get("overridden"), headline=v.get("headline"),
+        removed_steps=v.get("removed"),
+        steps=[f"{st.get('check')} [part: {st.get('part')}]"
+               for st in out.get("steps") or [] if isinstance(st, dict)],
+        segment_labels=[x.get("label") if isinstance(x, dict) else x
+                        for x in out.get("segment_labels") or []],
+        detail=out.get("detail"))
     out["trace"] = trace.export()
     return out
 
@@ -552,6 +569,8 @@ async def pros(req: ProsRequest, request: Request):
     try:
         found = await run_in_threadpool(places.nearby, req.trade,
                                         req.lat, req.lng)
+        trace.log_outcome("pros", trade=req.trade, results=len(found),
+                          with_phone=sum(1 for p in found if p.get("phone")))
         return {"status": "ok", "pros": found, "trade": req.trade,
                 "trace": trace.export()}
     except LookupError as exc:
@@ -600,6 +619,9 @@ async def listen(file: UploadFile = File(...)):
         return {"status": "listen-error", "detail": str(exc)[:300],
                 "trace": trace.export()}
     from .audiofeat import summary
+    trace.log_outcome("listen", beeps=(feats or {}).get("beeps"),
+                      wonder_beeps=(ear or {}).get("beeps"), agree=agree,
+                      wonder_error=ear_error)
     return {"status": "ok", "features": feats, "wonder": ear,
             "wonder_error": ear_error, "agree": agree,
             # Disagreement on the count, or Wonder unavailable: ask the
@@ -629,6 +651,9 @@ async def segment(file: UploadFile = File(...), labels: str = Form(...)):
                   else str(w).strip())]
     try:
         instances = await run_in_threadpool(sam31.segment, image, wanted)
+        trace.log_outcome("segment", asked=[
+            w.get("label") if isinstance(w, dict) else w for w in wanted],
+            found=[f"{i['label']} {i['score']}" for i in instances])
         return {"status": "ok", "instances": instances,
                 "trace": trace.export()}
     except Exception as exc:
@@ -648,6 +673,9 @@ async def recheck(before: UploadFile = File(...),
     try:
         out = await run_in_threadpool(spark.recheck, b, a, fix,
                                       part.strip() or None)
+        trace.log_outcome("recheck", part=part or None,
+                          looks_fixed=out.get("looks_fixed"),
+                          seen=out.get("seen"), next=out.get("next"))
         return {"status": "ok", **out, "trace": trace.export()}
     except Exception as exc:
         return {"status": "recheck-error", "detail": str(exc),
@@ -697,6 +725,23 @@ def framing_from_box(box: dict | None, said: str) -> str:
     return "good"
 
 
+class ClientEvents(BaseModel):
+    session: str = ""
+    events: list = []
+
+
+@app.post("/api/event")
+def client_events(req: ClientEvents):
+    """The app's own timeline (picture taken, verdict shown, buttons
+    tapped), batched, into the same logs as the server's outcomes, so a
+    phone test can be checked afterwards. Nothing is stored."""
+    events = [{"t": e.get("t"), "hop": str(e.get("hop", ""))[:80],
+               "detail": str(e.get("detail", ""))[:200]}
+              for e in req.events[:60] if isinstance(e, dict)]
+    trace.log_outcome("client", session=req.session[:40], events=events)
+    return {"status": "ok"}
+
+
 @app.post("/api/detect")
 async def detect_machine(request: Request, file: UploadFile = File(...),
                          want: str = Form(""), start: str = Form("")):
@@ -741,6 +786,13 @@ async def detect_machine(request: Request, file: UploadFile = File(...),
     # The machine the owner named is enough to warn: no need to wait
     # until it is framed.
     warning = scan_check(f"{seen['item']} {seen['name']}", want)
+    trace.log_outcome(
+        "detect", want=want[:200], item=item, name=seen["name"],
+        look=seen["look"], framing=framing, ready=ready,
+        outline=(f"{instance['score']} box "
+                 + ",".join(f"{v:.2f}" for v in instance["box"].values())
+                 if instance else None),
+        warning=(warning or {}).get("rule"))
     return {"status": "ok", "item": item, "name": seen["name"],
             "look": seen["look"], "instance": instance,
             "framing": framing, "ready": ready,
@@ -769,6 +821,8 @@ async def repair_highlight(file: UploadFile = File(...),
     try:
         overlay = await run_in_threadpool(
             muse_image.highlight, image, [part.strip()], fixed=fixed)
+        trace.log_outcome("highlight", part=part.strip(),
+                          drawn=bool((overlay or {}).get("image_b64")))
         return {"status": "ok", "overlay": overlay,
                 "trace": trace.export()}
     except Exception as exc:
