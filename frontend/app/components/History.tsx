@@ -244,7 +244,6 @@ export default function History({ onClose }: { onClose: () => void }) {
   return (
     <section className="walk screened">
       <header className="walk-bar">
-        <span className="walk-icon-space" />
         <div className="walk-title">
           <p className="history-title">History</p>
           <p className="sheet-label">On this phone only</p>
@@ -259,17 +258,19 @@ export default function History({ onClose }: { onClose: () => void }) {
           <p className="instruction">No fixes yet. Tap the button on the camera screen and say what&apos;s broken.</p>
         ) : (
           byMachine(jobs).map((g) => (
+            // One card per machine: its name heads the card, its runs are
+            // rows inside it, newest first.
             <section key={g.key} className="history-group">
-              <h2 className="history-machine">
-                {g.title}
-                <span>
+              <header className="history-machine">
+                <span className="history-machine-name">{g.title}</span>
+                <span className="history-machine-count">
                   {g.jobs.length} run{g.jobs.length === 1 ? "" : "s"}
                 </span>
-              </h2>
+              </header>
               <ol className="history-list">
                 {g.jobs.map((j) => (
                   <li key={j.id}>
-                    <button type="button" className="history-card history-row" onClick={() => setOpen(j)}>
+                    <button type="button" className="history-row" onClick={() => setOpen(j)}>
                       <span className="history-top">
                         <span className={`pill ${j.verdict || ""}`}>
                           {j.verdict === "diy" ? (j.riskAccepted ? "Own risk" : "DIY") : j.verdict === "pro" ? "Pro" : "—"}
