@@ -22,6 +22,7 @@ Model routing (Meta's hosted Model API, one gateway):
 import base64
 import json
 import os
+import re
 import time
 
 from dotenv import load_dotenv
@@ -176,6 +177,19 @@ def detect(req: DetectRequest):
     return detect_language(req.text)
 
 
+_DEVANAGARI = re.compile(r"[\u0900-\u097F]")
+
+
+def voice_for(text: str, code: str) -> str:
+    """The Hindi MMS voice reads Devanagari only: Latin-script text
+    (Hinglish typed in English letters, or the app's English lines) made
+    it fail and fall back to the browser voice. Such text goes to the
+    English voice; Devanagari keeps the Hindi one."""
+    if code == "hin" and not _DEVANAGARI.search(text or ""):
+        return "eng"
+    return code
+
+
 @app.post("/api/tts")
 def tts(req: TTSRequest):
     """Speak `text` in the given MMS language (detected when omitted).
@@ -195,6 +209,7 @@ def tts(req: TTSRequest):
     else:
         detected = detect_language(req.text)
         code = detected["code"] or "eng"
+    code = voice_for(req.text, code)
     checkpoint = f"facebook/mms-tts-{code}"
     trace.begin()
     try:

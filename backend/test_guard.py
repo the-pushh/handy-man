@@ -71,6 +71,30 @@ def test_places_capped_per_session():
     assert c.post("/api/pros", json=body, headers=h).status_code == 429
 
 
+def test_starting_a_search_counts_as_a_fix():
+    # The same per-IP "fixes per hour" budget covers the live search's
+    # first frame; once used up, no model is called.
+    h = {**OK, "x-client-ip": "10.0.0.4"}
+    jpeg = io.BytesIO()
+    from PIL import Image
+    Image.new("RGB", (8, 8)).save(jpeg, "JPEG")
+    for _ in range(2):
+        c.post("/api/repair/analyze", headers=h,
+               files={"file": ("f.jpg", jpeg.getvalue(), "image/jpeg")},
+               data={"components": "fan"})
+    r = c.post("/api/detect", headers=h,
+               files={"file": ("f.jpg", jpeg.getvalue(), "image/jpeg")},
+               data={"want": "my AC is not cooling", "start": "1"})
+    assert r.status_code == 429 and r.json()["status"] == "rate-limited"
+
+
+def test_latin_text_never_goes_to_the_hindi_voice():
+    assert server.voice_for("Filter saaf karo.", "hin") == "eng"
+    assert server.voice_for("Quiet please, listening.", "hin") == "eng"
+    assert server.voice_for("फ़िल्टर साफ़ करो।", "hin") == "hin"
+    assert server.voice_for("Clean the filter.", "eng") == "eng"
+
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     for name, fn in tests:
