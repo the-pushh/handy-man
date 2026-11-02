@@ -96,7 +96,9 @@ function JobView({ job, onBack }: { job: Job; onBack: () => void }) {
             {screen === "steps"
               ? urls[`step${idx}`]
                 ? `Highlighted: ${step?.part || "this step"}`
-                : "No highlight was saved for this step"
+                : job.steps.some((_, i) => job.media[`step${i}` as MediaKind])
+                  ? "No part to highlight on this step"
+                  : "This run was saved before step pictures were kept"
               : "Before"}
           </figcaption>
         </figure>

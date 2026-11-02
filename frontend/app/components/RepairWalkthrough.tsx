@@ -597,7 +597,16 @@ export default function RepairWalkthrough({
           mark("sam masks shown", `${sam.length} masks; preparing ${missed.length} illustrated highlight(s): ${missed.join(", ")}`);
           // Steps SAM missed: illustrated highlights, one after another in
           // the background, so a step rarely waits for one.
-          for (const part of missed) void fetchHighlight(part, still, base, data.legend || []);
+          // Steps SAM missed: their illustrations are saved to History as
+          // they arrive, whether or not the owner opens those steps.
+          for (const part of missed) {
+            void fetchHighlight(part, still, base, data.legend || []).then((url) => {
+              if (!url || myRun !== runSeq.current) return;
+              foundSteps.forEach((st: { part: string | null }, i: number) => {
+                if (st.part && st.part.toLowerCase() === part.toLowerCase()) void saveStepPicture(i, still, [], url);
+              });
+            });
+          }
           // History keeps each step's picture as the owner saw it.
           foundSteps.forEach((st: { part: string | null }, i: number) => {
             const mine = masksFor(st.part, sam).map((k) => sam[k]);
