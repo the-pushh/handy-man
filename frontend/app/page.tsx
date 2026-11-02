@@ -61,6 +61,9 @@ interface Seek {
   last: SeekResult | null;
 }
 
+// "a mechanic", "an electrician".
+const aOrAn = (word: string) => (/^[aeiou]/i.test(word) ? `an ${word}` : `a ${word}`);
+
 const freshSeek = (): Seek => ({
   tries: 0,
   lastHint: "",
@@ -486,7 +489,7 @@ export default function Home() {
       setOrb("asking");
       setStatusMsg("");
       mark("scan warning", res.warning.rule);
-      void say(`${res.warning.spoken} Call a ${res.warning.trade}, or go on at your own risk.`);
+      void say(`${res.warning.spoken} Call ${aOrAn(res.warning.trade)}, or go on at your own risk.`);
       return;
     }
     if (res.ready) {
@@ -792,8 +795,10 @@ export default function Home() {
           <div className="confirm-card warn-card" role="alertdialog" aria-labelledby="warn-q">
             <p className="sheet-label">Before you start</p>
             <p id="warn-q" className="instruction confirm-q">{warn.w.spoken}</p>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={warn.url} alt={warn.res.name || warn.res.item || "the machine"} />
+            {warn.res.name && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={warn.url} alt={warn.res.name} />
+            )}
             <p className="warn-why">{warn.w.title}</p>
             {warnPro ? (
               <CallAPro
@@ -813,7 +818,7 @@ export default function Home() {
             ) : (
               <>
                 <button type="button" className="btn-primary" onClick={() => setWarnPro(true)}>
-                  Find a {warn.w.trade}
+                  Find {aOrAn(warn.w.trade)}
                 </button>
                 <label className="risk-check">
                   <input

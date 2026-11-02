@@ -798,7 +798,7 @@ export default function RepairWalkthrough({
       // Enough runs on this machine: a technician is the answer now.
       setBooking(true);
       if (jobId.current) updateJob(jobId.current, { outcome: "called a pro" });
-      await say(`That's ${attempt} tries. Leave it to a ${verdict?.trade || "technician"}. Here's who can help nearby.`);
+      await say(`That's ${attempt} tries. Leave it to ${/^[aeiou]/i.test(verdict?.trade || "technician") ? "an" : "a"} ${verdict?.trade || "technician"}. Here's who can help nearby.`);
       return;
     }
     setStillWrong("");
@@ -1050,7 +1050,7 @@ export default function RepairWalkthrough({
           )}
           {verdict.verdict === "pro" && !booking && (
             <button type="button" className="btn-primary" onClick={openPro}>
-              Find a {verdict.trade || "pro"}
+              Find {/^[aeiou]/i.test(verdict.trade || "pro") ? "an" : "a"} {verdict.trade || "pro"}
             </button>
           )}
         </section>
@@ -1149,7 +1149,7 @@ export default function RepairWalkthrough({
                 : stepIdx < steps.length - 1
                   ? "Next step"
                   : verdict?.verdict === "pro"
-                    ? `Find a ${verdict.trade || "pro"}`
+                    ? `Find ${/^[aeiou]/i.test(verdict.trade || "pro") ? "an" : "a"} ${verdict.trade || "pro"}`
                     : "Done, check it"}
             </button>
           </div>

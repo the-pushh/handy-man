@@ -1027,7 +1027,7 @@ html, body {
 
 /* Scan-time warning card (before any diagnosis). */
 .warn-card { display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
-.warn-card img { width: 100%; max-height: 30cqh; object-fit: cover; display: block; }
+.warn-card img { width: 100%; max-height: 20cqh; object-fit: cover; display: block; }
 .warn-why { margin: 0; color: var(--line); font-size: 15px; line-height: 1.4; }
 .risk-check { display: flex; gap: 10px; align-items: flex-start; font-size: 15px; line-height: 1.4; color: var(--line); }
 .risk-check input { width: 20px; height: 20px; flex: none; margin-top: 1px; accent-color: var(--primary); }
