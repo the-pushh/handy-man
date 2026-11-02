@@ -1457,3 +1457,39 @@ section.history-card { cursor: default; }
 .history-row { padding: 16px; }
 .history-machine .history-machine-name { font-size: 18px; line-height: 24px; font-weight: 700; color: var(--line); }
 .history-machine .history-machine-count { font-size: 13px; line-height: 16px; font-weight: 500; color: var(--line-muted); }
+
+/* ===================================================================
+   GRID FROM THE CENTRE
+   Vertical lines are counted from the middle of the screen outwards:
+   the centre line is a major line and major lines repeat every 80px to
+   both sides, so everything centred (title, camera, main button) and
+   every mirrored pair (Photo/Type, the camera's edges) sits on the grid
+   symmetrically. Horizontal lines are counted from the top.
+   =================================================================== */
+.phone::before { background-position: 50cqw 0; }
+/* Overlays sit on the 8px-snapped screen: their centre is half its width. */
+.overlay.mat { background-position: calc(round(down, 100cqw, 16px) / 2) 0; }
+
+/* On a wide screen the phone frame itself is a whole number of cells. */
+@media (min-width: 600px) {
+  .phone {
+    height: round(down, min(calc(100dvh - 32px), 932px), 8px);
+    width: round(down, calc(min(calc(100dvh - 32px), 932px) * 9 / 19.5), 16px);
+    aspect-ratio: auto;
+  }
+}
+
+/* Tooltips: a small black bubble with a pointer to its button. */
+.cb-tip {
+  width: auto; max-width: 176px; white-space: normal;
+  padding: 6px 10px; font-size: 10.5px; line-height: 14px; font-weight: 500;
+  background: #000; color: #fff; border: 0; border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+}
+.cb-tip::after {
+  content: ""; position: absolute; top: 100%;
+  border: 6px solid transparent; border-top-color: #000;
+}
+.cb-tip-left::after { left: 22px; }
+.cb-tip-right::after { right: 22px; }
+.cb-tip { white-space: nowrap; max-width: none; }
