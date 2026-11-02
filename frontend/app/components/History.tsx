@@ -83,7 +83,9 @@ function JobView({ job, onBack }: { job: Job; onBack: () => void }) {
 
       {job.verdict && (
         <section className={`verdict-card ${job.verdict}`}>
-          <p className="verdict-title">{job.verdict === "diy" ? "You can fix this" : "Call a pro"}</p>
+          <p className="verdict-title">
+            {job.verdict === "pro" ? "Call a pro" : job.riskAccepted ? "At your own risk" : "You can fix this"}
+          </p>
           <p className="verdict-finding">{job.verdict === "pro" ? job.ruleTitle : job.headline}</p>
           {job.rule && <p className="evidence-note">Safety rule: {job.rule}</p>}
           {job.outcome && <p className="sheet-label">Outcome: {OUTCOME[job.outcome] || job.outcome}</p>}
