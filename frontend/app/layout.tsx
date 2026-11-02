@@ -23,7 +23,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body>
         {/* The app is built for phones. On a wider screen it runs inside a
             phone-shaped frame, so it looks the same everywhere. */}
-        <div className="phone mat">
+        <div className="phone">
           {children}
           <TraceDrawer />
         </div>
