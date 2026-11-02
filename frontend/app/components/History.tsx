@@ -5,7 +5,8 @@
    Everything comes from lib/history.ts (localStorage + IndexedDB). */
 
 import { useEffect, useState } from "react";
-import { BriefCard, ProList } from "./CallAPro";
+import CallAPro, { BriefCard, ProList } from "./CallAPro";
+import { resolveApiBase, IS_PROD } from "../lib/apiBase";
 import CautionPin from "./CautionPin";
 import { clearHistory, getMedia, listJobs, updateJob } from "../lib/history";
 import type { Job, MediaKind } from "../lib/history";
@@ -34,6 +35,17 @@ const OUTCOME: Record<string, string> = {
 /* One past run, the same way the walkthrough showed it: a summary
    first (verdict, outcome, before/after), the steps one at a time with
    the picture the owner saw, and the diagnosis to share on request. */
+function apiBase(): string {
+  if (IS_PROD) return "";
+  let stored: string | null = null;
+  try {
+    stored = window.localStorage.getItem("handyman-api-base");
+  } catch (_) {
+    // Storage unavailable.
+  }
+  return resolveApiBase(process.env.NEXT_PUBLIC_API_BASE, stored, window.location.hostname);
+}
+
 /* What closed this run, in a few words, for the top of the run view. */
 function closedBy(job: Job, next: Job | undefined): { title: string; line: string; tone: string } {
   if (job.contacted) {
@@ -62,6 +74,8 @@ function JobView({ job, next, onBack }: { job: Job; next?: Job; onBack: () => vo
   const [files, setFiles] = useState<{ before?: File; clip?: File }>({});
   const [screen, setScreen] = useState<"summary" | "steps" | "share" | "pros" | "compare">("summary");
   const [idx, setIdx] = useState<number>(0);
+  // The technicians saved with this run (or found from here and saved).
+  const [saved, setSaved] = useState(job.pros);
 
   useEffect(() => {
     let live = true;
@@ -93,6 +107,12 @@ function JobView({ job, next, onBack }: { job: Job; next?: Job; onBack: () => vo
   }, [job]);
 
   const closed = closedBy(job, next);
+  const trade = job.prosTrade || job.trade || "technician";
+  const contact = (p: { name: string; phone: string | null }, how: "call" | "text") =>
+    updateJob(job.id, {
+      outcome: "called a pro",
+      contacted: { name: p.name, phone: p.phone, how, at: new Date().toISOString() },
+    });
   const brief = {
     device: job.device,
     issue: job.issue,
@@ -160,11 +180,9 @@ function JobView({ job, next, onBack }: { job: Job; next?: Job; onBack: () => vo
                   See the {job.steps.length} step{job.steps.length === 1 ? "" : "s"}
                 </button>
               )}
-              {(job.pros || []).length > 0 && (
-                <button type="button" className="btn-outline" onClick={() => setScreen("pros")}>
-                  {job.prosTrade ? cap(job.prosTrade) : "Technicians"} nearby ({job.pros!.length})
-                </button>
-              )}
+              <button type="button" className="btn-outline" onClick={() => setScreen("pros")}>
+                {cap(trade)} nearby{(saved || []).length ? ` (${saved!.length})` : ""}
+              </button>
               {urls.after && (
                 <button type="button" className="btn-outline" onClick={() => setScreen("compare")}>
                   Before &amp; after
@@ -200,24 +218,26 @@ function JobView({ job, next, onBack }: { job: Job; next?: Job; onBack: () => vo
           </section>
         )}
 
-        {screen === "pros" && (
+        {screen === "pros" && ((saved || []).length > 0 ? (
           <section className="call-pro">
-            <p className="sheet-label">
-              {job.prosTrade ? cap(job.prosTrade) : "Technicians"} found for this diagnosis
-            </p>
-            <ProList
-              pros={job.pros || []}
-              brief={brief}
-              onContact={(p, how) =>
-                updateJob(job.id, {
-                  outcome: "called a pro",
-                  contacted: { name: p.name, phone: p.phone, how, at: new Date().toISOString() },
-                })
-              }
-            />
+            <p className="sheet-label">{cap(trade)} found for this diagnosis</p>
+            <ProList pros={saved!} brief={brief} onContact={contact} />
             <p className="evidence-note places-credit">Listings from Google Maps, saved with this run.</p>
           </section>
-        )}
+        ) : (
+          // Never searched during the run: search now, near where the
+          // owner is, and keep the list with this run.
+          <CallAPro
+            api={apiBase()}
+            trade={trade}
+            brief={brief}
+            onFound={(pros) => {
+              updateJob(job.id, { pros, prosTrade: trade });
+              setSaved(pros);
+            }}
+            onContact={contact}
+          />
+        ))}
 
         {screen === "steps" && step && (
           <section className={`step-card${step.caution ? " has-caution" : ""}`}>
