@@ -13,6 +13,10 @@ with phone numbers and a ready-to-send description of the problem.
 
 ## How a fix goes
 
+On first use a short card explains the app: tap to speak and describe
+the problem, Type or Photo as the alternatives, and the safety note
+(advice only, at your own risk). It shows once per browser.
+
 1. **Say what's wrong, and be specific.** Tap the button and speak (or
    type) the machine and what it does or doesn't do: "my AC runs but the
    air isn't cold", "laptop won't turn on, the charger light is off".
