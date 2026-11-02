@@ -24,12 +24,11 @@ function when(iso: string): string {
   }
 }
 
-const cap = (t: string) => (t ? t[0].toUpperCase() + t.slice(1) : t);
 
 const OUTCOME: Record<string, string> = {
   fixed: "Fixed",
   "still broken": "Still broken",
-  "called a pro": "Called a pro",
+  "called a pro": "Called a handyman",
 };
 
 /* One past run, the same way the walkthrough showed it: a summary
@@ -51,7 +50,7 @@ function closedBy(job: Job, next: Job | undefined): { title: string; line: strin
   if (job.contacted) {
     return {
       title: `${job.contacted.how === "call" ? "Called" : "Texted"} ${job.contacted.name}`,
-      line: `${job.prosTrade || "Technician"} · ${when(job.contacted.at)}`,
+      line: `${job.prosTrade || "Handyman"} · ${when(job.contacted.at)}`,
       tone: "",
     };
   }
@@ -64,7 +63,7 @@ function closedBy(job: Job, next: Job | undefined): { title: string; line: strin
     };
   }
   if (job.outcome === "called a pro") {
-    return { title: "Sent to a technician", line: "Looked for someone nearby to fix it.", tone: "" };
+    return { title: "Sent to a handyman", line: "Looked for a handyman nearby.", tone: "" };
   }
   return { title: "Not finished", line: "Closed before the final check.", tone: "" };
 }
@@ -169,7 +168,7 @@ function JobView({ job, next, onBack }: { job: Job; next?: Job; onBack: () => vo
               <p className="verdict-line">{closed.line}</p>
               <p className="verdict-line">
                 <span className={`pill ${job.verdict || ""}`}>
-                  {job.verdict === "pro" ? "Pro" : job.riskAccepted ? "Own risk" : "DIY"}
+                  {job.verdict === "pro" ? "Handyman" : job.riskAccepted ? "Own risk" : "DIY"}
                 </span>{" "}
                 {job.verdict === "pro" ? job.ruleTitle : job.headline}
               </p>
@@ -181,7 +180,7 @@ function JobView({ job, next, onBack }: { job: Job; next?: Job; onBack: () => vo
                 </button>
               )}
               <button type="button" className="btn-outline" onClick={() => setScreen("pros")}>
-                {cap(trade)} nearby{(saved || []).length ? ` (${saved!.length})` : ""}
+                Handymen nearby{(saved || []).length ? ` (${saved!.length})` : ""}
               </button>
               {urls.after && (
                 <button type="button" className="btn-outline" onClick={() => setScreen("compare")}>
@@ -220,7 +219,7 @@ function JobView({ job, next, onBack }: { job: Job; next?: Job; onBack: () => vo
 
         {screen === "pros" && ((saved || []).length > 0 ? (
           <section className="call-pro">
-            <p className="sheet-label">{cap(trade)} found for this diagnosis</p>
+            <p className="sheet-label">Handymen found for this diagnosis · {trade}</p>
             <ProList pros={saved!} brief={brief} onContact={contact} />
             <p className="evidence-note places-credit">Listings from Google Maps, saved with this run.</p>
           </section>
@@ -350,7 +349,7 @@ export default function History({ onClose }: { onClose: () => void }) {
                     <button type="button" className="history-row" onClick={() => setOpen(j)}>
                       <span className="history-top">
                         <span className={`pill ${j.verdict || ""}`}>
-                          {j.verdict === "diy" ? (j.riskAccepted ? "Own risk" : "DIY") : j.verdict === "pro" ? "Pro" : "—"}
+                          {j.verdict === "diy" ? (j.riskAccepted ? "Own risk" : "DIY") : j.verdict === "pro" ? "Handyman" : "—"}
                         </span>
                         <strong>Run {j.attempt || 1}</strong>
                         <span className="history-when">{when(j.date)}</span>

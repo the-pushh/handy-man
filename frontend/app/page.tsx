@@ -71,7 +71,6 @@ interface Seek {
 }
 
 // "a mechanic", "an electrician".
-const aOrAn = (word: string) => (/^[aeiou]/i.test(word) ? `an ${word}` : `a ${word}`);
 
 const freshSeek = (): Seek => ({
   tries: 0,
@@ -498,7 +497,7 @@ export default function Home() {
       mark("vague issue nudged", said);
       setOrb("idle");
       setTip("vague");
-      void say("Tell me a bit more. What does it do, or not do? For example: it won't turn on, and the charger light is off.");
+      void say("Tell me a bit more. What does it do, or not do? For example, it won't turn on and the charger light is off.");
       return;
     }
     nudgedRef.current = false;
@@ -561,7 +560,7 @@ export default function Home() {
       setOrb("asking");
       setStatusMsg("");
       mark("scan warning", res.warning.rule);
-      void say(`${res.warning.spoken} Call ${aOrAn(res.warning.trade)}, or go on at your own risk.`);
+      void say(`${res.warning.spoken} Call a handyman, or go on at your own risk.`);
       return;
     }
     if (res.ready) {
@@ -932,7 +931,7 @@ export default function Home() {
             ) : (
               <>
                 <button type="button" className="btn-primary" onClick={() => setWarnPro(true)}>
-                  Find {aOrAn(warn.w.trade)}
+                  Find a handyman
                 </button>
                 <label className="risk-check">
                   <input
@@ -1099,7 +1098,7 @@ export default function Home() {
               <span className="cb-label cb-main">{listening ? "TAP TO STOP" : "TAP TO SPEAK"}</span>
               {tip === "vague" && (
                 <p className="cb-tip cb-tip-center cb-tip-wide" role="status">
-                  Say a bit more: what does it do, or not do? Like &ldquo;laptop won&apos;t turn on, charger light is off&rdquo;.
+                  Tell us a bit more. What does it do, or not do? Like &ldquo;it won&apos;t turn on and the charger light is off&rdquo;.
                 </p>
               )}
             </div>

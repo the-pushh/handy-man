@@ -694,7 +694,7 @@ export default function RepairWalkthrough({
       // Steps start when the owner taps "Show me the steps" (one screen
       // at a time), so the verdict screen only says what to tap.
       if (v && foundSteps.length) {
-        void say(v.verdict === "pro" ? "You can call a technician from here." : "Tap show me the steps when you're ready.");
+        void say(v.verdict === "pro" ? "You can call a handyman from here." : "Tap show me the steps when you're ready.");
       }
     } catch (e) {
       const err = e as Error;
@@ -902,7 +902,7 @@ export default function RepairWalkthrough({
       // Enough runs on this machine: a technician is the answer now.
       setBooking(true);
       if (jobId.current) updateJob(jobId.current, { outcome: "called a pro" });
-      await say(`That's the quick checks and ${attempt} tries. Leave it to ${/^[aeiou]/i.test(verdict?.trade || "technician") ? "an" : "a"} ${verdict?.trade || "technician"}. Here's who can help nearby.`);
+      await say(`That's the quick checks and ${attempt} tries. Leave it to a handyman. Here's who can help nearby.`);
       return;
     }
     setStillWrong("");
@@ -1054,7 +1054,6 @@ export default function RepairWalkthrough({
   const busy = status && !failure ? status : "";
   const name = appliance || machine || device || "your device";
   const removed = verdict?.blocked_steps.length || 0;
-  const article = (w: string) => (/^[aeiou]/i.test(w) ? "an" : "a");
   const trade = verdict?.trade || "technician";
   const screen: "quick" | "fail" | "pros" | "done" | "steps" | "verdict" | "question" | "working" =
     quick.state !== "off"
@@ -1252,7 +1251,7 @@ export default function RepairWalkthrough({
           <>
             <section className={`verdict-card ${verdict.verdict}`}>
               <p className="verdict-title">
-                {verdict.verdict === "pro" ? "Call a pro" : acceptRisk ? "At your own risk" : "You can fix this"}
+                {verdict.verdict === "pro" ? "Call a handyman" : acceptRisk ? "At your own risk" : "You can fix this"}
               </p>
               <p className="verdict-finding">
                 {verdict.verdict === "pro" ? verdict.title : verdict.headline}
@@ -1496,7 +1495,7 @@ export default function RepairWalkthrough({
         {screen === "verdict" && verdict?.verdict === "pro" && (
           <>
             <button type="button" className="btn-primary" onClick={openPro}>
-              Find {article(trade)} {trade}
+              Find a handyman
             </button>
             {steps.length > 0 && (
               <button type="button" className="btn-outline" onClick={showSteps}>
@@ -1531,7 +1530,7 @@ export default function RepairWalkthrough({
                 : stepIdx < steps.length - 1
                   ? "Next step"
                   : verdict?.verdict === "pro"
-                    ? `Find ${article(trade)} ${trade}`
+                    ? "Find a handyman"
                     : "Done, check it"}
             </button>
           </>

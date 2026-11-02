@@ -38,7 +38,7 @@ export function briefText(b: Brief): string {
     `Item: ${b.device || "not identified"}`,
     `Problem: ${b.issue}`,
     `Finding: ${b.finding}`,
-    b.rule ? `Why a pro: ${b.rule}` : "",
+    b.rule ? `Why a handyman: ${b.rule}` : "",
     b.checks.length ? `Already checked: ${b.checks.join("; ")}` : "",
     b.sound ? `Sound: ${b.sound}` : "",
     "Photo" + (b.clip ? " and sound clip" : "") + " attached.",
@@ -189,18 +189,18 @@ export default function CallAPro({
 
   return (
     <section className="call-pro">
-      <p className="sheet-label">Nearby {trade}</p>
+      <p className="sheet-label">Handymen nearby · {trade}</p>
       {state.kind === "locating" && (
         <Busy compact label="Finding where you are…" hint="Your phone's location, used only for this search." slowAfter={8} />
       )}
       {state.kind === "loading" && (
-        <Busy compact label={`Searching for ${trade} nearby…`} hint="Google Maps listings within 5 km." slowAfter={8} />
+        <Busy compact label="Searching for a handyman nearby…" hint="Google Maps listings within 5 km." slowAfter={8} />
       )}
       {state.kind === "fallback" && (
         <div className="find-nearby">
           <p className="evidence-note">{state.text}</p>
           <a className="btn-primary" href={mapsSearchURL(trade)} target="_blank" rel="noreferrer">
-            Find nearby {trade}
+            Find a handyman nearby
           </a>
         </div>
       )}
@@ -257,7 +257,7 @@ export function BriefCard({ brief }: { brief: Brief }) {
             <tr><td>Item</td><td>{brief.device || "not identified"}</td></tr>
             <tr><td>Problem</td><td>{brief.issue}</td></tr>
             <tr><td>Finding</td><td>{brief.finding}</td></tr>
-            {brief.rule && <tr><td>Why a pro</td><td>{brief.rule}</td></tr>}
+            {brief.rule && <tr><td>Why a handyman</td><td>{brief.rule}</td></tr>}
             {brief.checks.length > 0 && (
               <tr>
                 <td>Checked</td>
