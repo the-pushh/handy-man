@@ -177,7 +177,9 @@ export default function Home() {
   const [orb, setOrb] = useState<OrbState>("idle");
   const [listening, setListening] = useState<boolean>(false);
   const [statusMsg, setStatusMsg] = useState<string>("");
-  const [transcript, setTranscript] = useState<string>("");
+  // A one-time nudge toward Type or Photo when nothing happens.
+  const [tip, setTip] = useState<"type" | "photo" | null>(null);
+  const tipsShown = useRef<{ type: boolean; photo: boolean }>({ type: false, photo: false });
   const [typeOpen, setTypeOpen] = useState<boolean>(false);
   const [beEdit, setBeEdit] = useState<boolean>(false);
   const [beHost, setBeHost] = useState<string>("");
@@ -195,6 +197,30 @@ export default function Home() {
     setLogBase(apiBase());
   }, []);
 
+  // Nothing happening on the home screen: after 8 s a hint over Type
+  // ("Can't talk right now?"), 8 s later one over Photo. Each shows once,
+  // for 5 s. Any action resets the wait.
+  const idle = !overlay && !seekWant && !warn && !showHistory && !listening && !typeOpen && orb === "idle";
+  useEffect(() => {
+    if (!idle) {
+      setTip(null);
+      return;
+    }
+    const next = !tipsShown.current.type ? "type" : !tipsShown.current.photo ? "photo" : null;
+    if (!next) return;
+    let hide: ReturnType<typeof setTimeout> | undefined;
+    const show = setTimeout(() => {
+      tipsShown.current[next] = true;
+      setTip(next);
+      mark("hint shown", next);
+      hide = setTimeout(() => setTip(null), 5000);
+    }, 8000);
+    return () => {
+      clearTimeout(show);
+      if (hide) clearTimeout(hide);
+    };
+  }, [idle, tip]);
+
   useEffect(() => {
     let stream: MediaStream | undefined;
     let live = true;
@@ -208,7 +234,11 @@ export default function Home() {
         if (live && videoRef.current) videoRef.current.srcObject = stream;
         else stream?.getTracks().forEach((t) => t.stop());
       } catch (_) {
-        if (live) setStatusMsg("Camera blocked — allow camera access and reload.");
+        if (live) {
+          setStatusMsg("Camera blocked — allow camera access and reload, or upload a photo.");
+          tipsShown.current.photo = true;
+          setTip("photo");
+        }
       }
     })();
     return () => {
@@ -446,7 +476,6 @@ export default function Home() {
     const said = text.trim();
     if (!said || seekWant || warn || overlay) return;
     stopListeningInner();
-    setTranscript(said);
     issueRef.current = said;
     turnStart("turn start (issue heard)");
     // Only picks the narration voice; never blocks the look.
@@ -802,7 +831,7 @@ export default function Home() {
   }
 
   return (
-    <main className="stage stage-camera">
+    <main className="stage stage-camera mat">
       <div className="titleframe gridbars">
         HANDYMAN
         {!overlay && !seekWant && !warn && (
@@ -902,12 +931,6 @@ export default function Home() {
             </button>
           </div>
         )}
-      </div>
-
-      <section className="panel">
-        {transcript && (
-          <p className="transcript">&ldquo;{transcript}&rdquo;</p>
-        )}
         {seekWant && (
           <div className="seek-actions">
             {stuck && (
@@ -920,7 +943,11 @@ export default function Home() {
             </button>
           </div>
         )}
-        {!IS_PROD && (beEdit || !beHost) && <BackendRow
+      </div>
+
+      {!IS_PROD && (beEdit || !beHost) && (
+        <section className="panel dev-panel">
+        <BackendRow
           host={beHost}
           editing={beEdit}
           onToggle={() => {
@@ -936,8 +963,9 @@ export default function Home() {
             setBeHost(url);
             setBeEdit(false);
           }}
-        />}
-      </section>
+        />
+        </section>
+      )}
 
       <nav
         className={`controlbar gridbars${typeOpen ? " typing" : ""}`}
@@ -1029,6 +1057,9 @@ export default function Home() {
                 </svg>
               </button>
               <span className="cb-label">PHOTO</span>
+              {tip === "photo" && (
+                <p className="cb-tip cb-tip-left" role="status">Camera not working? Upload a photo instead.</p>
+              )}
             </div>
 
             <div className="cb-cell">
@@ -1039,7 +1070,7 @@ export default function Home() {
                 getHuman={getHumanLevel}
                 getAi={getAiLevel}
               />
-              <span className="cb-label cb-main">WHAT&apos;S BROKEN?</span>
+              <span className="cb-label cb-main">{listening ? "TAP TO STOP" : "TAP TO SPEAK"}</span>
             </div>
 
             <div className="cb-cell">
@@ -1056,6 +1087,9 @@ export default function Home() {
                 </svg>
               </button>
               <span className="cb-label">TYPE</span>
+              {tip === "type" && (
+                <p className="cb-tip cb-tip-right" role="status">Can&apos;t talk right now? Type it out.</p>
+              )}
             </div>
           </>
         )}
@@ -1085,7 +1119,7 @@ export default function Home() {
       )}
 
       {showHistory && (
-        <div className="overlay mat">
+        <div className="overlay mat overlay-walk">
           <History onClose={() => setShowHistory(false)} />
         </div>
       )}
