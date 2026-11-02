@@ -600,7 +600,8 @@ export default function Home() {
       files: after ? [after] : prev.files,
       followUp:
         `Run ${prev.attempt} already tried: ${tried.join("; ") || "nothing"}. ` +
-        `It is still not fixed: ${reply}.`,
+        `It is still not fixed: ${reply}. Do not repeat a fix that was ` +
+        `already tried; if no owner fix is left, say a technician is needed.`,
       key: turnRef.current,
       prefetched: null,
       attempt: prev.attempt + 1,
