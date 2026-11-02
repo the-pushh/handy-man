@@ -24,7 +24,7 @@ from pathlib import Path
 import modal
 
 # ---- Sizing: change it here, then `modal deploy backend/modal_app.py` ----
-CPU = 1.0               # cores reserved per container (can burst above)
+CPU = 2.0               # cores reserved per container (can burst above); 2 halves speech time vs 1
 MEMORY_MB = 3072        # a full turn peaks around 1.1 GB
 MIN_CONTAINERS = 1      # 1 = always warm (billed while idle); 0 after judging
 MAX_CONTAINERS = 3      # hard ceiling on parallel containers (the bill)
