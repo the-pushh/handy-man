@@ -12,7 +12,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getSpeechRecognition } from "./lib/speech";
 import type { SpeechRecognitionLike } from "./lib/speech";
 import { IS_PROD, resolveApiBase } from "./lib/apiBase";
-import { kb, mark, turnStart } from "./lib/timeline";
+import { kb, mark, setLogBase, turnStart } from "./lib/timeline";
 import { drawStill, shrinkPhoto } from "./lib/still";
 import { SOUND_WORDS, recordClip } from "./lib/recorder";
 import type { Heard } from "./lib/recorder";
@@ -184,6 +184,11 @@ export default function Home() {
     if (base !== `http://${window.location.hostname}:8000` || window.location.port === "3000") setBeHost(base);
   }, []);
   const [mic, setMic] = useState<AnalyserNode | null>(null);
+
+  // App timeline -> backend logs (see lib/timeline.ts).
+  useEffect(() => {
+    setLogBase(apiBase());
+  }, []);
 
   useEffect(() => {
     let stream: MediaStream | undefined;
