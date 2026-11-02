@@ -45,6 +45,7 @@ AC = _rx(r"air ?condition", r"\bac\b", r"split ac", r"window ac",
 INVERTER = _rx(r"inverter", r"\bups\b", r"tubular battery",
                r"lead[- ]acid", r"battery bank")
 LAPTOP = _rx(r"laptop", r"notebook", r"macbook", r"thinkpad", r"chromebook")
+CAR = _rx(r"car\b", r"sedan", r"hatchback", r"\bsuv\b", r"jeep", r"truck")
 # AC findings only a technician can fix: the sealed refrigerant circuit,
 # the compressor and its electrics.
 AC_SEALED = _rx(r"refrigerant", r"gas (?:leak|charg|refill|top)", r"low gas",
@@ -146,6 +147,18 @@ OWNER_JOBS = [
     (INVERTER, re.compile(r"\b(?:water[- ]level )?floats?\b|float indicators?"
                           r"|\bvent (?:caps?|plugs?)\b|\bdistilled water\b"
                           r"|\bwater level\b", re.I)),
+    # Any machine (not a vehicle): the parts owners are meant to open —
+    # a printer's paper tray and ink/toner door, a lid or a door, a
+    # washer's filter or drain flap, a remote's battery cover.
+    (re.compile(r"^(?!.*\b(?:scooter|motorcycle|motorbike|bike|moped|car|"
+                r"vehicle|two[- ]wheeler)\b)", re.I | re.S),
+     re.compile(r"\b(?:paper|input|output) tray(?: cover)?\b"
+                r"|\b(?:ink|toner|cartridge)(?: access)? (?:door|cover|lid)\b"
+                r"|\b(?:top |front |washer |machine )?lid\b"
+                r"|\b(?:oven |fridge |freezer |washer |machine |front |loading )?door\b"
+                r"|\b(?:lint |drain |pump )?filter (?:cover|flap|door|cap)\b"
+                r"|\bdrain (?:pump )?(?:cover|flap|cap)\b"
+                r"|\bremote(?:'s)? battery (?:cover|compartment|door)\b", re.I)),
     # Laptop: base cover screws for RAM / SSD.
     (LAPTOP, re.compile(r"\b(?:bottom|base|back) (?:panel|cover|plate|case)\b"
                         r"|\bram\b|\bmemory (?:stick|module)s?\b|\bssd\b"
@@ -264,6 +277,7 @@ PRO_RECOMMENDED = Rule(
     applies=lambda job: True)
 
 TRADE_BY_DEVICE = [
+    (CAR, "car mechanic"),
     (VEHICLE, "two-wheeler mechanic"),
     (INVERTER, "inverter / battery service"),
     (AC, "AC technician"),
@@ -279,7 +293,8 @@ def _step_text(step) -> str:
 
 
 def judge(device: str = "", issue: str = "", steps: list | None = None,
-          causes: list | None = None, finding: str = "") -> dict:
+          causes: list | None = None, finding: str = "",
+          trade_hint: str = "", needs_pro: bool = False) -> dict:
     """Decide the verdict for a proposed fix.
 
     Returns {"verdict": "diy" | "pro", "rule": id | None, "title": plain
@@ -320,6 +335,12 @@ def judge(device: str = "", issue: str = "", steps: list | None = None,
             if i not in blocked:
                 blocked.append(i)
 
+    # The model judged that the likely fix itself needs a technician
+    # (opening, wiring, sealed parts, special tools): the verdict says so,
+    # and its safe checks stay for the owner to do first.
+    if needs_pro and PRO_RECOMMENDED not in fired:
+        fired.append(PRO_RECOMMENDED)
+
     # The finding itself can force a pro even when the model only
     # proposed outside checks: on a two-wheeler the battery, starter
     # relay, fuses and wiring all sit behind body panels, so a most-
@@ -341,8 +362,12 @@ def judge(device: str = "", issue: str = "", steps: list | None = None,
     if not fired:
         # No rule fired, but if the fix fails the owner still needs the
         # right kind of pro for this device.
+        # Who fixes this kind of machine: the rules' table for the trades
+        # they know, else the model's own answer (a bicycle mechanic, a
+        # printer repair shop), else a general technician.
         trade = next((t for ctx, t in TRADE_BY_DEVICE
-                      if ctx.search(job.context)), "appliance technician")
+                      if ctx.search(job.context)),
+                     (trade_hint or "").strip() or "appliance technician")
         return {"verdict": "diy", "rule": None, "title": None,
                 "spoken": None, "trade": trade, "fired": [],
                 "allowed_steps": list(range(len(steps))),
@@ -351,13 +376,19 @@ def judge(device: str = "", issue: str = "", steps: list | None = None,
     order = RULES + [PRO_RECOMMENDED]
     head = min(fired, key=order.index)
     trade = head.trade
-    for ctx, t in TRADE_BY_DEVICE:
-        if ctx.search(job.context) and head.id not in ("danger-symptom",
-                                                      "gas-fittings",
-                                                      "mains-electricity"):
-            trade = t
-            break
-    return {"verdict": "pro", "rule": head.id, "title": head.title,
+    specific = head.id in ("danger-symptom", "gas-fittings", "mains-electricity")
+    if not specific:
+        trade = next((t for ctx, t in TRADE_BY_DEVICE if ctx.search(job.context)),
+                     (trade_hint or "").strip() or head.trade)
+    title = head.title
+    if head.id == "vehicle-body-panel":
+        noun = next((n for n in ("scooter", "motorcycle", "motorbike", "moped",
+                                 "car", "bike") if re.search(rf"\b{n}\b", job.context)),
+                    "scooter" if re.search(r"activa|jupiter|access 125|scooty|dio|"
+                                           r"pleasure|maestro|ntorq|two[- ]wheeler",
+                                           job.context) else "vehicle")
+        title = f"Opening the {noun}'s panel needs a mechanic."
+    return {"verdict": "pro", "rule": head.id, "title": title,
             "spoken": head.spoken, "trade": trade,
             "fired": [r.id for r in sorted(fired, key=order.index)],
             # Safe steps stay (before or after a blocked one): they become

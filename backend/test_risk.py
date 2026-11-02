@@ -318,6 +318,50 @@ def test_a_fallback_professional_step_stays_diy():
 
 
 
+# --- Beyond the demo machines -----------------------------------------
+
+def test_printer_paper_tray_is_an_owner_job():
+    v = judge("printer", "printer is not printing",
+              [{"check": "paper tray", "how": "open the paper tray cover and reseat the paper"}])
+    assert v["verdict"] == "diy", v
+
+
+def test_washer_drain_filter_flap_is_an_owner_job():
+    v = judge("washing machine", "not draining",
+              [{"check": "drain filter", "how": "open the drain filter flap and clean the filter"}])
+    assert v["verdict"] == "diy", v
+
+
+def test_scooter_battery_cover_still_needs_a_mechanic():
+    v = judge("scooter", "self start not working",
+              [{"check": "battery", "how": "open the battery cover under the seat"}])
+    assert v["verdict"] == "pro" and v["rule"] == "vehicle-body-panel", v
+    assert "scooter" in v["title"]
+
+
+def test_a_car_gets_a_car_mechanic():
+    v = judge("car", "car won't start", [{"check": "battery", "how": "open the battery cover"}],
+              ["dead battery"], finding="Looks like dead battery.")
+    assert v["trade"] == "car mechanic" and "car" in v["title"], v
+
+
+def test_the_models_trade_is_used_for_machines_the_table_does_not_know():
+    v = judge("bicycle", "chain slipping", [{"check": "chain", "how": "look at the chain"}],
+              trade_hint="bicycle mechanic")
+    assert v["verdict"] == "diy" and v["trade"] == "bicycle mechanic", v
+
+
+
+def test_the_model_saying_the_fix_needs_a_pro_makes_it_a_pro_job():
+    v = judge("microwave", "runs but food stays cold",
+              [{"check": "power level setting", "how": "set power to high and test a cup of water"}],
+              ["magnetron failure"], finding="Looks like a failed magnetron.",
+              trade_hint="microwave repair", needs_pro=True)
+    assert v["verdict"] == "pro" and v["trade"] == "microwave repair", v
+    assert v["allowed_steps"] == [0]  # the safe check stays for the owner
+
+
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     for name, fn in tests:
