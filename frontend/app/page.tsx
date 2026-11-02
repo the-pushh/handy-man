@@ -25,6 +25,7 @@ import LiveDetect from "./components/LiveDetect";
 import type { ScanWarning, SeekResult } from "./components/LiveDetect";
 import CallAPro from "./components/CallAPro";
 import Busy from "./components/Busy";
+import { isVague } from "./lib/vague";
 
 // Who is working during the camera-screen waits.
 const PAGE_BUSY: Record<string, string> = {
@@ -177,9 +178,13 @@ export default function Home() {
   const [orb, setOrb] = useState<OrbState>("idle");
   const [listening, setListening] = useState<boolean>(false);
   const [statusMsg, setStatusMsg] = useState<string>("");
-  // A one-time nudge toward Type or Photo when nothing happens.
-  const [tip, setTip] = useState<"type" | "photo" | null>(null);
-  const tipsShown = useRef<{ type: boolean; photo: boolean }>({ type: false, photo: false });
+  // One-time hints when nothing happens: describe the problem (over the
+  // speak button), then Type, then Photo. "vague" is the nudge after a
+  // first try that named no symptom.
+  const [tip, setTip] = useState<"describe" | "type" | "photo" | "vague" | null>(null);
+  const tipsShown = useRef<{ describe: boolean; type: boolean; photo: boolean }>({ describe: false, type: false, photo: false });
+  // The vague words already nudged once; the next try goes ahead.
+  const nudgedRef = useRef<boolean>(false);
   const [typeOpen, setTypeOpen] = useState<boolean>(false);
   const [beEdit, setBeEdit] = useState<boolean>(false);
   const [beHost, setBeHost] = useState<string>("");
@@ -197,16 +202,22 @@ export default function Home() {
     setLogBase(apiBase());
   }, []);
 
-  // Nothing happening on the home screen: after 8 s a hint over Type
-  // ("Can't talk right now?"), 8 s later one over Photo. Each shows once,
-  // for 5 s. Any action resets the wait.
+  // Nothing happening on the home screen: after 3 s a hint over the speak
+  // button (say what it does or doesn't do), then 8 s apart one over Type
+  // ("Can't talk right now?") and one over Photo. Each shows once, for
+  // 5 s. Any action resets the wait. The vague-try nudge stays 8 s.
   const idle = !overlay && !seekWant && !warn && !showHistory && !listening && !typeOpen && orb === "idle";
   useEffect(() => {
     if (!idle) {
       setTip(null);
       return;
     }
-    const next = !tipsShown.current.type ? "type" : !tipsShown.current.photo ? "photo" : null;
+    if (tip === "vague") {
+      const h = setTimeout(() => setTip(null), 8000);
+      return () => clearTimeout(h);
+    }
+    const shown = tipsShown.current;
+    const next = !shown.describe ? "describe" : !shown.type ? "type" : !shown.photo ? "photo" : null;
     if (!next) return;
     let hide: ReturnType<typeof setTimeout> | undefined;
     const show = setTimeout(() => {
@@ -214,7 +225,7 @@ export default function Home() {
       setTip(next);
       mark("hint shown", next);
       hide = setTimeout(() => setTip(null), 5000);
-    }, 8000);
+    }, next === "describe" ? 3000 : 8000);
     return () => {
       clearTimeout(show);
       if (hide) clearTimeout(hide);
@@ -476,6 +487,19 @@ export default function Home() {
     const said = text.trim();
     if (!said || seekWant || warn || overlay) return;
     stopListeningInner();
+    // "It's broken" names no symptom: ask once for what it does or doesn't
+    // do. A second vague try goes ahead (phase 0 and the questions still
+    // help), so nobody is stuck here.
+    if (!provided && !pendingFrameRef.current && isVague(said) && !nudgedRef.current) {
+      nudgedRef.current = true;
+      mark("vague issue nudged", said);
+      setOrb("idle");
+      tipsShown.current.describe = true;
+      setTip("vague");
+      void say("Tell me a bit more. What does it do, or not do? For example: it won't turn on, and the charger light is off.");
+      return;
+    }
+    nudgedRef.current = false;
     issueRef.current = said;
     turnStart("turn start (issue heard)");
     // Only picks the narration voice; never blocks the look.
@@ -1036,7 +1060,7 @@ export default function Home() {
                   }
                 }}
               >
-                <input name="issue" type="text" placeholder="Type what you need…" autoComplete="off" />
+                <input name="issue" type="text" placeholder="What does it do, or not do?" autoComplete="off" />
                 <button type="submit">Send</button>
               </form>
             </div>
@@ -1071,6 +1095,14 @@ export default function Home() {
                 getAi={getAiLevel}
               />
               <span className="cb-label cb-main">{listening ? "TAP TO STOP" : "TAP TO SPEAK"}</span>
+              {tip === "describe" && (
+                <p className="cb-tip cb-tip-center" role="status">Name the machine and what it does or doesn&apos;t do.</p>
+              )}
+              {tip === "vague" && (
+                <p className="cb-tip cb-tip-center cb-tip-wide" role="status">
+                  Say a bit more: what does it do, or not do? Like &ldquo;laptop won&apos;t turn on, charger light is off&rdquo;.
+                </p>
+              )}
             </div>
 
             <div className="cb-cell">

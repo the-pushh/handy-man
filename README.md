@@ -13,16 +13,23 @@ with phone numbers and a ready-to-send description of the problem.
 
 ## How a fix goes
 
-1. **Say what's wrong.** Tap the button and speak (or type): "my AC is not
-   cooling".
+1. **Say what's wrong, and be specific.** Tap the button and speak (or
+   type) the machine and what it does or doesn't do: "my AC runs but the
+   air isn't cold", "laptop won't turn on, the charger light is off".
+   Avoid "it's broken" or "not working": they name no symptom. The app
+   asks once for more when it hears one of those; a second try goes
+   ahead anyway.
 2. **The camera finds it.** The app looks for the machine you named in the
    live camera and outlines it on the stream.
 3. **It frames the picture with you.** If the machine isn't in view, is
    too far or is cut off, it says so ("Come closer to the air
    conditioner") and checks again when you hold still. When the framing
    is good it takes the picture itself. "Use this view" skips ahead.
-4. **Quick checks first (phase 0).** Before any diagnosis, the 2–4 things
-   most people try first on that kind of machine (laptop: charger in and
+4. **Quick checks first (phase 0).** Most machines reported broken have a
+   trivial cause the owner missed, so before any diagnosis the app lists
+   the 2–4 things to rule out first on that kind of machine for that
+   problem (its own system prompt, `QUICK_CHECKS_SYSTEM` in
+   `backend/spark.py`) (laptop: charger in and
    its light on, hold power 10 s, unplug USB devices), screened by the
    safety rules. "That fixed it" closes the job; "Still not working"
    goes on, and the diagnosis has been running in the background.

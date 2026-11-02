@@ -1532,3 +1532,8 @@ section.history-card { cursor: default; }
 .quick-list li { line-height: 24px; }
 .quick-list strong { display: block; }
 .quick-list span { display: block; color: var(--line-muted); }
+
+/* The describe hint and the vague-try nudge sit over the speak button. */
+.cb-tip-center { left: 50%; translate: -50% 0; }
+.cb-tip-center::after { left: 50%; margin-left: -6px; }
+.cb-tip-wide { white-space: normal; width: 224px; }
