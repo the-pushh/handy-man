@@ -573,29 +573,44 @@ def caption(image_bytes: bytes, model: str | None = None) -> str:
     return f"I'm looking at: {text}"
 
 
-def spot(image_bytes: bytes, model: str | None = None) -> dict:
-    """Live-view detection, step 1: name the main machine in the frame and
-    describe its look in the plain words SAM 3.1 matches.
 
-    {"name": "Panasonic air conditioner", "look": "white air conditioner"}
+def spot(image_bytes: bytes, want: str = "", model: str | None = None) -> dict:
+    """Live-view detection: find the machine the owner asked about.
+
+    `want` is what the owner said ("my AC is not cooling"). Spark names
+    the item they mean, says whether it is in the frame, how well it is
+    framed, and gives SAM 3.1 a plain visual phrase to outline it:
+    {"item": "air conditioner", "name": "Panasonic air conditioner",
+     "look": "white wall unit", "framing": "good"}
+    framing: good | too_far | too_close | cut_off | not_visible | blurry
+    | too_dark. Without `want`: the main machine in the frame.
     One call at minimal effort, no retry: the live view asks again on
-    the next frame anyway. `name` is "" when no machine is in view.
+    the next settled frame anyway.
     """
     url, key, default_model = _config()
     b64 = base64.b64encode(image_bytes).decode()
+    target = (f'The owner said: "{want.strip()[:200]}". Find the machine, '
+              "appliance, vehicle or device they mean in this photo."
+              if want.strip() else
+              "Find the main machine, appliance, vehicle or device in this "
+              "photo.")
     payload = {
         "model": model or default_model,
         "messages": [{
             "role": "user",
             "content": [
                 {"type": "text", "text": (
-                    "Is there a machine, appliance, vehicle or device in "
-                    "this photo? Reply with only compact JSON: "
-                    '{"name": "<at most 6 words, with the brand if a logo '
-                    'is readable>", "look": "<2-4 plain visual words for '
-                    "the whole object as it looks, colour plus shape, e.g. "
-                    'white wall box, black scooter, silver laptop>"}. '
-                    'If there is none, reply {"name": "", "look": ""}.')},
+                    f"{target} Reply with only compact JSON: "
+                    '{"item": "<what they mean, 1-3 words, e.g. air '
+                    'conditioner>", "name": "<that object as seen in this '
+                    "photo, at most 6 words, with the brand if a logo is "
+                    'readable; empty if it is not in the photo>", "look": '
+                    '"<2-4 plain visual words for the whole object, colour '
+                    'plus shape, e.g. white wall box>", "framing": "<good if '
+                    "the whole object is clearly in view and fills a good "
+                    "part of the photo; too_far if it is small; too_close or "
+                    "cut_off if part of it is outside the photo; not_visible "
+                    "if it is not in the photo; blurry; too_dark>\"}")},
                 {"type": "image_url",
                  "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
             ],
@@ -608,15 +623,15 @@ def spot(image_bytes: bytes, model: str | None = None) -> dict:
         parsed = _extract_json(reply)
     except RuntimeError:
         parsed = {}
-    if not parsed:
-        # Plain text instead of JSON: take the first line as the name.
-        try:
-            text = (reply["choices"][0]["message"].get("content") or "")
-        except (KeyError, IndexError, TypeError):
-            text = ""
-        first = text.strip().splitlines()[0] if text.strip() else ""
-        parsed = {"name": first.strip(" .\"'{}"), "look": ""}
-    name = str(parsed.get("name") or "").strip(" .\"'")
-    look = str(parsed.get("look") or "").strip(" .\"'")
-    reply["_trace"]["parsed"] = {"name": name, "look": look}
-    return {"name": name, "look": look}
+    clean = {k: str(parsed.get(k) or "").strip(" .\"'")
+             for k in ("item", "name", "look", "framing")}
+    if clean["framing"] not in FRAMINGS:
+        clean["framing"] = "good" if clean["name"] else "not_visible"
+    if not clean["name"]:
+        clean["framing"] = "not_visible"
+    reply["_trace"]["parsed"] = clean
+    return clean
+
+
+FRAMINGS = ("good", "too_far", "too_close", "cut_off", "not_visible",
+            "blurry", "too_dark")

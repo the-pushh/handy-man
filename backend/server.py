@@ -247,6 +247,7 @@ async def repair_analyze(request: Request,
                           answers: str = Form(""),
                           owner: str = Form(""),
                           ahead: str = Form(""),
+                          accept_risk: str = Form(""),
                           model: str | None = Form(None)):
     """Analyze, then attach every model call's trace record.
 
@@ -283,13 +284,14 @@ async def repair_analyze(request: Request,
         prior = {**(prior or {}), "owner_says": owner.strip()}
     out = await run_in_threadpool(_repair_analyze, images, text,
                                   components, model, prior, sound,
-                                  answers, bool(ahead.strip()))
+                                  answers, bool(ahead.strip()),
+                                  accept_risk.strip())
     out["trace"] = trace.export()
     return out
 
 
 def _repair_analyze(images, text, components, model, prior=None,
-                    sound="", answers="", ahead=False):
+                    sound="", answers="", ahead=False, accept_risk=""):
     """Repair flow: image in -> Muse Spark analysis + overlay highlights.
 
     One hosted gateway (MUSE_SPARK_API_URL/KEY): Spark
@@ -409,6 +411,13 @@ def _repair_analyze(images, text, components, model, prior=None,
     # so a finding only a pro can fix ("low refrigerant") forces "pro".
     verdict = judge(f"{device} {analysis.get('appliance') or ''}".strip(),
                     text, steps, causes, finding=headline)
+    if accept_risk and verdict["verdict"] == "pro":
+        # The owner was warned and chose to go on at their own risk: every
+        # proposed step stays, and the verdict says which rule they took on.
+        verdict.update({"verdict": "diy", "overridden": verdict["rule"],
+                        "allowed_steps": list(range(len(steps))),
+                        "blocked_steps": [], "blocked_step": None})
+    verdict["accepted_risk"] = accept_risk or None
     proposed = len(steps)
     verdict["removed"] = [steps[i].get("check", "") + (
         f": {steps[i].get('how')}" if steps[i].get("how") else "")
@@ -436,7 +445,8 @@ def _repair_analyze(images, text, components, model, prior=None,
         # Every question was dropped by the rules or the cap, and pass 1
         # left the steps for after the answers: decide with no answers.
         return _repair_analyze(images, text, components, model, analysis,
-                               sound, "Nothing checked yet.", ahead)
+                               sound, "Nothing checked yet.", ahead,
+                               accept_risk)
     verdict.update(meta)
     verdict["final"] = not questions
     # The part the final camera re-check looks at: the issue-relevant
@@ -644,21 +654,57 @@ async def caption(file: UploadFile = File(...)):
                 "trace": trace.export()}
 
 
-@app.post("/api/detect")
-async def detect_machine(file: UploadFile = File(...)):
-    """Live-view detection: Muse Spark names the machine in the frame,
-    then SAM 3.1 outlines it. The camera view draws the outline over the
-    live stream; the photo taken for the turn reuses it.
+# What the owner hears while the camera looks for the machine they named.
+FRAMING_HINTS = {
+    "not_visible": "I can't see the {item}. Point the camera at it.",
+    "too_far": "Come closer to the {item}.",
+    "too_close": "Move back a little so all of the {item} is in view.",
+    "cut_off": "Move back a little so all of the {item} is in view.",
+    "blurry": "Hold the phone still for a moment.",
+    "too_dark": "It's too dark. Turn on a light or the torch.",
+}
 
-    One instance (the best SAM match) or none; `name` is "" when Spark
-    sees no machine.
+
+def framing_from_box(box: dict | None, said: str) -> str:
+    """The outline settles what Spark guessed: a small box is too far, a
+    box pressed against both sides is cut off."""
+    if not box or said != "good":
+        return said
+    area = box["w"] * box["h"]
+    edge = 0.01
+    touches = sum([box["x"] <= edge, box["y"] <= edge,
+                   box["x"] + box["w"] >= 1 - edge,
+                   box["y"] + box["h"] >= 1 - edge])
+    if area < 0.06:
+        return "too_far"
+    if touches >= 3:
+        return "too_close"
+    return "good"
+
+
+@app.post("/api/detect")
+async def detect_machine(request: Request, file: UploadFile = File(...),
+                         want: str = Form(""), start: str = Form("")):
+    """Live-view detection of the machine the owner named.
+
+    Muse Spark finds the item in the frame and judges the framing, SAM
+    3.1 outlines it, and the safety rules check the machine before any
+    diagnosis. `start` marks the first frame of a fix: that is what the
+    per-IP "fixes per hour" limit counts.
+    Returns {item, name, instance, framing, ready, hint, warning}.
     """
     from . import sam31, spark
+    from .risk import scan_check
 
+    if start.strip():
+        wait = _turns.take(request.state.ip)
+        if wait:
+            return _slow_down(wait, f"started {config.RATE_TURNS_PER_HOUR} "
+                              "fixes this hour")
     trace.begin()
     image = images_normalized([await file.read()])[0]
     try:
-        seen = await run_in_threadpool(spark.spot, image)
+        seen = await run_in_threadpool(spark.spot, image, want)
     except Exception as exc:
         return {"status": "detect-error", "detail": str(exc),
                 "trace": trace.export()}
@@ -669,8 +715,19 @@ async def detect_machine(file: UploadFile = File(...)):
                 sam31.find_object, image, seen["name"], seen["look"])
         except Exception:
             instance = None  # the name alone still shows
-    return {"status": "ok", "name": seen["name"], "look": seen["look"],
-            "instance": instance, "trace": trace.export()}
+    framing = framing_from_box(instance["box"] if instance else None,
+                               seen["framing"])
+    item = seen["item"] or seen["name"] or "machine"
+    ready = framing == "good" and bool(seen["name"])
+    # The machine the owner named is enough to warn: no need to wait
+    # until it is framed.
+    warning = scan_check(f"{seen['item']} {seen['name']}", want)
+    return {"status": "ok", "item": item, "name": seen["name"],
+            "look": seen["look"], "instance": instance,
+            "framing": framing, "ready": ready,
+            "hint": "" if ready else FRAMING_HINTS.get(
+                framing, FRAMING_HINTS["not_visible"]).format(item=item),
+            "warning": warning, "trace": trace.export()}
 
 
 @app.post("/api/repair/highlight")
