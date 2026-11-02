@@ -6,6 +6,7 @@
 
 import { useEffect, useState } from "react";
 import { BriefCard } from "./CallAPro";
+import CautionPin from "./CautionPin";
 import { clearHistory, getMedia, listJobs } from "../lib/history";
 import type { Job, MediaKind } from "../lib/history";
 
@@ -141,7 +142,7 @@ function JobView({ job, onBack }: { job: Job; onBack: () => void }) {
         )}
 
         {screen === "steps" && step && (
-          <section className="step-card">
+          <section className={`step-card${step.caution ? " has-caution" : ""}`}>
             <div className="step-top">
               <p className="sheet-label">
                 {job.verdict === "pro" ? "Safe check" : "Step"} {idx + 1} of {job.steps.length}
@@ -154,12 +155,7 @@ function JobView({ job, onBack }: { job: Job; onBack: () => void }) {
             </div>
             <p className="instruction">{step.check}</p>
             {step.how && <p className="step-how">{step.how}</p>}
-            {step.caution && (
-              <div className="callout callout-dont-touch">
-                <p className="sheet-label">Careful</p>
-                <p>{step.caution}</p>
-              </div>
-            )}
+            {step.caution && <CautionPin text={step.caution} />}
           </section>
         )}
 

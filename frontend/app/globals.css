@@ -1493,3 +1493,29 @@ section.history-card { cursor: default; }
 .cb-tip-left::after { left: 22px; }
 .cb-tip-right::after { right: 22px; }
 .cb-tip { white-space: nowrap; max-width: none; }
+
+/* Step caution: a 32px warning pin in the card's bottom-right corner
+   (8px in), the bubble opening above it. The card keeps one grid row
+   free at the bottom for the pin. */
+.step-card { position: relative; }
+.step-card.has-caution { padding-bottom: 47px; }
+.caution-pin { position: absolute; right: 8px; bottom: 8px; z-index: 3; }
+.caution-btn {
+  width: 32px; height: 32px; display: grid; place-items: center; padding: 0;
+  background: var(--error-container); color: var(--warning);
+  border: 0; border-radius: 50%; cursor: pointer;
+}
+.caution-btn.open { background: var(--warning); color: #000; }
+.caution-bubble {
+  position: absolute; right: 0; bottom: 40px; width: 256px; margin: 0;
+  padding: 8px 12px; font-size: 13px; line-height: 16px;
+  background: #000; color: #fff; border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+  animation: tip-in 0.2s ease-out;
+}
+.caution-bubble strong { color: var(--warning); }
+.caution-bubble::after {
+  content: ""; position: absolute; top: 100%; right: 10px;
+  border: 6px solid transparent; border-top-color: #000;
+}
+.caution-pin { right: 7px; bottom: 7px; } /* 8px from the card edge, counting its 1px border */

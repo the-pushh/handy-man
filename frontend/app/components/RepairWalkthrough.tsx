@@ -11,6 +11,7 @@ import { requestDiagnosis } from "../lib/diagnosis";
 import type { Heard } from "../lib/recorder";
 import CallAPro from "./CallAPro";
 import Busy from "./Busy";
+import CautionPin from "./CautionPin";
 import type { ScanWarning } from "./LiveDetect";
 import { paintMasks } from "../lib/masks";
 import { getSpeechRecognition } from "../lib/speech";
@@ -1222,7 +1223,7 @@ export default function RepairWalkthrough({
         )}
 
         {screen === "steps" && step && (
-          <section className="step-card">
+          <section className={`step-card${step.caution ? " has-caution" : ""}`}>
             <div className="step-top">
               <p className="sheet-label">
                 {verdict?.verdict === "pro" ? "Safe check" : "Step"} {stepIdx + 1} of {steps.length}
@@ -1235,12 +1236,7 @@ export default function RepairWalkthrough({
             </div>
             <p className="instruction">{step.check}</p>
             {step.how && <p className="step-how">{step.how}</p>}
-            {step.caution && (
-              <div className="callout callout-dont-touch">
-                <p className="sheet-label">Careful</p>
-                <p>{step.caution}</p>
-              </div>
-            )}
+            {step.caution && <CautionPin text={step.caution} />}
             {stepLoading && (
               <Busy
                 compact
