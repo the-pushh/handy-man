@@ -122,8 +122,19 @@ python backend/test_risk.py        # safety rules
 python backend/test_audiofeat.py   # beep measurement
 python backend/test_limits.py      # rate limits
 python backend/test_guard.py       # proxy secret, limits, voice choice
-SPARK_MODEL=prod python -m eval.run   # demo cases, live models
+SPARK_MODEL=prod python -m eval.run      # demo cases, live models
+SPARK_MODEL=prod python -m eval.breadth  # 21 everyday cases beyond the demo
 ```
+
+`eval/breadth.py` checks the app holds beyond the three demo machines:
+washing machine, fridge, fan, TV, router, printer, phone charger, mixer,
+water purifier, car, bicycle, lamp, the hazards (geyser, gas stove,
+microwave, a sparking socket, an e-scooter battery, smoke), Hinglish and
+vague input. For each it runs the scan warning, the quick checks and the
+diagnosis through the safety rules, and checks that hazards warn and
+everyday machines don't, that quick checks are safe, that the verdict and
+the finding agree, and that the trade fits the machine. Latest run: 21 of
+21.
 
 `eval/run.py` sends each case in `eval/specs.json` through the real
 backend (camera search, diagnosis, answers) and prints a pass/fail table.
