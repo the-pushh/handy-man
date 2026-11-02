@@ -21,26 +21,31 @@ with phone numbers and a ready-to-send description of the problem.
    too far or is cut off, it says so ("Come closer to the air
    conditioner") and checks again when you hold still. When the framing
    is good it takes the picture itself. "Use this view" skips ahead.
-4. **The fix.** The picture opens large; the app asks at most one or two
+4. **Quick checks first (phase 0).** Before any diagnosis, the 2–4 things
+   most people try first on that kind of machine (laptop: charger in and
+   its light on, hold power 10 s, unplug USB devices), screened by the
+   safety rules. "That fixed it" closes the job; "Still not working"
+   goes on, and the diagnosis has been running in the background.
+5. **The fix (phase 1).** The picture opens large; the app asks at most one or two
    look-only questions, gives its verdict, then speaks each step while
    highlighting the part it is talking about. The model decides how many
    steps.
-5. **"Is it fixed now?"** After the last step it takes an after photo,
+6. **"Is it fixed now?"** After the last step it takes an after photo,
    compares it with the before photo, and asks.
-6. **Still broken?** It asks what's still wrong and runs again with that,
-   without repeating a fix already tried. After three runs, or as soon as
-   the model or the rules say a technician is needed, it shows nearby
-   technicians.
-7. **DIY or pro.** Easy fixes are walked through. When a fix needs a
+7. **Still broken? (phase 2)** It asks what's still wrong and runs once
+   more with that, without repeating a fix already tried. After that
+   second try, or as soon as the model or the rules say a technician is
+   needed, it shows nearby technicians.
+8. **DIY or pro.** Easy fixes are walked through. When a fix needs a
    technician (opening a scooter's panel, refrigerant, wiring), the
    verdict names the safety rule, keeps the look-only checks and shows
    who to call.
-8. **Warning before you start.** For machines an owner shouldn't open
+9. **Warning before you start.** For machines an owner shouldn't open
    (microwave, gas appliance, geyser, switchboard or wiring, EV battery,
    TV) or a danger sign (smoke, sparks, a swollen battery), the app warns
    right after the scan. You can call a technician, or tick "I understand
    the risk" and go on at your own risk; that run is labelled as such.
-9. **History.** Every run is kept on the phone, grouped by machine, with
+10. **History.** Every run is kept on the phone, grouped by machine, with
    each attempt listed under it (photos, steps, verdict, outcome).
 
 While a model works, the screen says what is happening, who is doing it
