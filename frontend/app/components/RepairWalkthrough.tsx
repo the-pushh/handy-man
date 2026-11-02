@@ -79,8 +79,9 @@ const BUSY: Record<string, { hint: string; slowAfter: number }> = {
   "Outlining parts…": { hint: "SAM 3.1 is outlining the parts on your photo. A few seconds.", slowAfter: 10 },
 };
 
-// Runs on one machine before the walkthrough calls a technician.
-const MAX_RUNS = 3;
+// Phases on one machine: 0 = quick checks, then up to MAX_RUNS rounds of
+// diagnosis and fix (phase 1, phase 2); after that, a technician.
+const MAX_RUNS = 2;
 
 export default function RepairWalkthrough({
   files,
@@ -154,6 +155,15 @@ export default function RepairWalkthrough({
     other?: string[];
   }>({});
   const [stepIdx, setStepIdx] = useState<number>(0);
+  // Phase 0 (first run only): the common quick checks for this machine.
+  // While the owner tries them, phase 1's diagnosis is already running
+  // (told which checks were tried), so "Still not working" is fast.
+  const [quick, setQuick] = useState<{
+    state: "off" | "loading" | "ready" | "fixed";
+    checks: { check: string; how: string }[];
+  }>({ state: "off", checks: [] });
+  const earlyRef = useRef<Promise<unknown> | null>(null);
+  const quickTried = useRef<string>("");
   // One screen at a time: the verdict (main), then the steps on tap.
   const [view, setView] = useState<"main" | "steps">("main");
   const [stepLoading, setStepLoading] = useState<boolean>(false);
@@ -421,7 +431,8 @@ export default function RepairWalkthrough({
     fileRef.current = last;
     setImgURL(URL.createObjectURL(last));
     setStillURLs(files.map((f) => URL.createObjectURL(f)));
-    void run(files, issue, API);
+    if (attempt === 1 && !followUp) void startQuick();
+    else void run(files, issue, API);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -479,7 +490,7 @@ export default function RepairWalkthrough({
     setView("main");
     // What the model works on: the owner's words, plus on run 2+ what
     // was tried and what is still wrong.
-    const ask = followUp ? `${t}. ${followUp}` : t;
+    const ask = followUp ? `${t}. ${followUp}` : quickTried.current ? `${t}. ${quickTried.current}` : t;
     const risk = acceptRisk?.rule || "";
     // Spoken while the analysis runs, not before it starts.
     void say(attempt > 1 ? `Run ${attempt}. Working out what's still wrong.` : "Working out what's wrong.");
@@ -487,7 +498,9 @@ export default function RepairWalkthrough({
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let data: any =
         (prefetched ? await prefetched : null) ||
+        (earlyRef.current ? await earlyRef.current.catch(() => null) : null) ||
         (await requestDiagnosis(base, fs, ask, perception, heard?.summary || "", "", false, risk));
+      earlyRef.current = null; // used once; "Try again" asks afresh
       // Questions first: the owner looks, taps an answer, and the server
       // decides with those answers (one more diagnose, no re-perceive).
       const qs: Question[] = data.status === "ok" ? data.questions || [] : [];
@@ -889,7 +902,7 @@ export default function RepairWalkthrough({
       // Enough runs on this machine: a technician is the answer now.
       setBooking(true);
       if (jobId.current) updateJob(jobId.current, { outcome: "called a pro" });
-      await say(`That's ${attempt} tries. Leave it to ${/^[aeiou]/i.test(verdict?.trade || "technician") ? "an" : "a"} ${verdict?.trade || "technician"}. Here's who can help nearby.`);
+      await say(`That's the quick checks and ${attempt} tries. Leave it to ${/^[aeiou]/i.test(verdict?.trade || "technician") ? "an" : "a"} ${verdict?.trade || "technician"}. Here's who can help nearby.`);
       return;
     }
     setStillWrong("");
@@ -943,6 +956,84 @@ export default function RepairWalkthrough({
   }
 
 
+  /* Phase 0: fetch the quick checks, show and say them, and start phase
+     1's diagnosis in the background. Without checks, straight to phase 1. */
+  async function startQuick(): Promise<void> {
+    setQuick({ state: "loading", checks: [] });
+    let checks: { check: string; how: string }[] = [];
+    try {
+      const r = await fetch(`${API}/api/quick-checks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ machine: machine || "", issue }),
+        signal: AbortSignal.timeout(20000),
+      });
+      const d = await r.json();
+      checks = d.status === "ok" ? d.checks || [] : [];
+    } catch (_) {
+      checks = [];
+    }
+    mark("quick checks", `${checks.length}: ${checks.map((c) => c.check).join(" | ")}`);
+    if (!checks.length) {
+      setQuick({ state: "off", checks: [] });
+      void run(files, issue, API);
+      return;
+    }
+    quickTried.current =
+      `Quick checks already tried, still not working: ${checks.map((c) => c.check).join("; ")}. ` +
+      "Do not repeat them.";
+    earlyRef.current = requestDiagnosis(
+      API,
+      files,
+      `${issue}. ${quickTried.current}`,
+      perception,
+      heard?.summary || "",
+      "",
+      false,
+      acceptRisk?.rule || ""
+    ).catch(() => null);
+    setQuick({ state: "ready", checks });
+    void say("Before we dig in, try these quick checks.");
+    checks.forEach((c, i) => void say(`${i + 1}. ${c.check}. ${c.how}`));
+  }
+
+  function quickResult(fixedIt: boolean): void {
+    hush();
+    mark("tap", fixedIt ? "quick check fixed it" : "still not working after quick checks");
+    if (!fixedIt) {
+      setQuick((q) => ({ ...q, state: "off" }));
+      void run(files, issue, API);
+      return;
+    }
+    earlyRef.current = null;
+    setQuick((q) => ({ ...q, state: "fixed" }));
+    const id = newJobId();
+    jobId.current = id;
+    saveJob({
+      id,
+      date: new Date().toISOString(),
+      device: machine || "device",
+      issue,
+      verdict: "diy",
+      rule: null,
+      ruleTitle: null,
+      headline: "Fixed by a quick check.",
+      trade: null,
+      steps: quick.checks.map((c) => ({ check: c.check, how: c.how, caution: null, part: null })),
+      answers: [],
+      outcome: "fixed",
+      finding: "Fixed by a quick check",
+      sound: heard ? heard.summary : null,
+      media: {},
+      machine: machine || "device",
+      attempt: 1,
+      parentId,
+      riskAccepted: acceptRisk ? { rule: acceptRisk.rule, title: acceptRisk.title } : null,
+    });
+    void putMedia(id, "before", files[0]);
+    void say("Great. Fixed with a quick check.");
+  }
+
   function showSteps(): void {
     mark("tap", "show me the steps");
     setView("steps");
@@ -961,11 +1052,14 @@ export default function RepairWalkthrough({
   }
 
   const busy = status && !failure ? status : "";
-  const name = appliance || device || "your device";
+  const name = appliance || machine || device || "your device";
   const removed = verdict?.blocked_steps.length || 0;
   const article = (w: string) => (/^[aeiou]/i.test(w) ? "an" : "a");
   const trade = verdict?.trade || "technician";
-  const screen: "fail" | "pros" | "done" | "steps" | "verdict" | "question" | "working" = failure
+  const screen: "quick" | "fail" | "pros" | "done" | "steps" | "verdict" | "question" | "working" =
+    quick.state !== "off"
+    ? "quick"
+    : failure
     ? "fail"
     : booking
       ? "pros"
@@ -997,7 +1091,9 @@ export default function RepairWalkthrough({
         <div className="walk-title">
           <p className="sheet-label">
             {name}
-            {attempt > 1 ? ` · run ${attempt} of ${MAX_RUNS}` : ""}
+            {screen === "quick"
+              ? " · quick checks"
+              : ` · ${attempt === 1 ? "fix" : `try ${attempt} of ${MAX_RUNS}`}`}
           </p>
           <p className="walk-said">&ldquo;{issue}&rdquo;</p>
         </div>
@@ -1080,6 +1176,34 @@ export default function RepairWalkthrough({
       )}
 
       <div className="walk-body">
+        {screen === "quick" && quick.state === "loading" && (
+          <Busy
+            label="Finding the usual quick checks…"
+            hint="Muse Spark lists what most people try first for this. A few seconds."
+            slowAfter={12}
+          />
+        )}
+        {screen === "quick" && quick.state === "ready" && (
+          <section className="step-card quick-card">
+            <p className="sheet-label">Quick checks first</p>
+            <p className="instruction">Try these before we dig in</p>
+            <ol className="quick-list">
+              {quick.checks.map((c, i) => (
+                <li key={i}>
+                  <strong>{c.check}</strong>
+                  {c.how && <span>{c.how}</span>}
+                </li>
+              ))}
+            </ol>
+          </section>
+        )}
+        {screen === "quick" && quick.state === "fixed" && (
+          <section className="verdict-card diy">
+            <p className="verdict-title">Fixed</p>
+            <p className="verdict-finding">A quick check did it. Saved to History.</p>
+          </section>
+        )}
+
         {screen === "working" && busy && (
           <Busy
             label={busy === "Working it out…" && attempt > 1 ? `Run ${attempt}: working out what's still wrong…` : busy}
@@ -1339,6 +1463,21 @@ export default function RepairWalkthrough({
 
       {/* One clear next action per screen, always in reach. */}
       <div className="walk-cta">
+        {screen === "quick" && quick.state === "ready" && (
+          <>
+            <button type="button" className="btn-success" onClick={() => quickResult(true)}>
+              That fixed it
+            </button>
+            <button type="button" className="btn-primary" onClick={() => quickResult(false)}>
+              Still not working
+            </button>
+          </>
+        )}
+        {screen === "quick" && quick.state === "fixed" && (
+          <button type="button" className="btn-primary" onClick={onClose}>
+            Done
+          </button>
+        )}
         {screen === "fail" && (
           <>
             <button type="button" className="btn-primary" onClick={() => void run(files, issue, API)}>
@@ -1413,7 +1552,7 @@ export default function RepairWalkthrough({
               {hearing ? "Listening…" : "Say it"}
             </button>
             <button type="button" className="btn-primary" onClick={sendStillWrong} disabled={!stillWrong.trim()}>
-              Try again (run {attempt + 1})
+              Try again (try {attempt + 1} of {MAX_RUNS})
             </button>
           </>
         )}

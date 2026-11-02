@@ -1526,3 +1526,9 @@ section.history-card { cursor: default; }
 .run-actions button { width: 100%; }
 .verdict-card.diy .verdict-title { color: var(--success); }
 .verdict-card .pill { vertical-align: 1px; }
+
+/* Phase 0: the quick checks as a numbered list, 16 apart. */
+.quick-list { margin: 16px 0 0; padding: 0 0 0 24px; display: grid; gap: 16px; }
+.quick-list li { line-height: 24px; }
+.quick-list strong { display: block; }
+.quick-list span { display: block; color: var(--line-muted); }
