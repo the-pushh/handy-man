@@ -380,7 +380,7 @@ def diagnose(appliance: str, device: str | None, labels: list,
              user_text: str, model: str | None = None,
              sound: str = "", answers: str = "",
              markings: list | None = None, ahead: bool = False,
-             effort: str | None = None) -> dict:
+             effort: str | None = None, priors: str = "") -> dict:
     """Call 2 (text-only): causes, relevant parts, steps, safety, fix check.
 
     Split from perception so neither reply hits the token ceiling.
@@ -427,8 +427,9 @@ def diagnose(appliance: str, device: str | None, labels: list,
         f"Exact device: {device or 'unknown'}. "
         f"Visible parts: {', '.join(labels) or 'none listed'}. "
         + (f"Printed on the device: {'; '.join(markings)}. "
-           if markings else "") +
-        f"The user wants: {user_text.strip()} "
+           if markings else "")
+        + (f"{priors} " if priors else "")
+        + f"The user wants: {user_text.strip()} "
         + (f"Measured sound evidence (deterministic, trust these "
            f"numbers): {sound.strip()} " if sound.strip() else "")
         + (f"The owner already checked: {answers.strip()} Base the "
@@ -759,6 +760,12 @@ def quick_checks(machine: str, issue: str, model: str | None = None) -> list:
     rules screen them afterwards like any step.
     """
     url, key, default_model = _config()
+    # Feedback loop: checks that fixed this before (backend/feedback.py).
+    try:
+        from .feedback import quick_fix_text
+        learned = quick_fix_text(machine, issue)
+    except Exception:
+        learned = ""
     payload = {
         "model": model or default_model,
         "messages": [
@@ -766,6 +773,7 @@ def quick_checks(machine: str, issue: str, model: str | None = None) -> list:
             {"role": "user", "content": (
                 f"Machine: {machine or 'unknown'}. The owner says: "
                 f"{issue.strip()[:300]}"
+                + (f"\n{learned}" if learned else "")
             )},
         ],
         "max_tokens": 1500,

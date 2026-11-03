@@ -214,8 +214,14 @@ def step(machine: str, issue: str, *, image: bytes | None = None,
     first = not history
     n = len(history)  # tests already run
     if first:
+        from .feedback import priors_text
+        try:
+            priors = priors_text(machine, issue)
+        except Exception:
+            priors = ""
         text = (f"Machine: {machine or 'unknown'}. The owner says: "
-                f"{issue.strip()[:300]}\nFirst look: describe what the photo "
+                f"{issue.strip()[:300]}\n" + (f"{priors}\n" if priors else "")
+                + "First look: describe what the photo "
                 "shows in seen, list the hypotheses, choose the first test.")
     else:
         latest = history[-1]
