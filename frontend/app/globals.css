@@ -1642,3 +1642,10 @@ section.history-card { cursor: default; }
 @media (prefers-reduced-motion: reduce) { .hyp-bar { transition: none; } .hyp-pulse { animation: none; } }
 .agent-ask { margin: 0; padding: 15px; border: 1px solid var(--primary); }
 
+/* Ranked handymen: info on top, a 2-column button grid below. */
+.pro-row.ranked, .pro-more .pro-row { display: flex; flex-direction: column; gap: 8px; }
+.pro-actions.pro-actions-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; flex: none; width: 100%; }
+.pro-rank { display: inline-block; min-width: 32px; margin-right: 8px; color: var(--primary); font-variant-numeric: tabular-nums; }
+.btn-whatsapp { border-color: #25d366; color: #25d366; }
+.pro-more summary { cursor: pointer; padding: 8px 0; color: var(--line-muted); }
+.pro-rank-note { margin: 8px 0 0; }

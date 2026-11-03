@@ -47,7 +47,7 @@ export interface Job {
   // and who the owner called or texted from the list.
   pros?: SavedPro[];
   prosTrade?: string | null;
-  contacted?: { name: string; phone: string | null; how: "call" | "text"; at: string } | null;
+  contacted?: { name: string; phone: string | null; how: "call" | "text" | "whatsapp"; at: string } | null;
 }
 
 export interface SavedPro {

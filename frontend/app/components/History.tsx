@@ -49,7 +49,7 @@ function apiBase(): string {
 function closedBy(job: Job, next: Job | undefined): { title: string; line: string; tone: string } {
   if (job.contacted) {
     return {
-      title: `${job.contacted.how === "call" ? "Called" : "Texted"} ${job.contacted.name}`,
+      title: `${job.contacted.how === "call" ? "Called" : job.contacted.how === "whatsapp" ? "Sent on WhatsApp to" : "Texted"} ${job.contacted.name}`,
       line: `${job.prosTrade || "Handyman"} · ${when(job.contacted.at)}`,
       tone: "",
     };
@@ -107,7 +107,7 @@ function JobView({ job, next, onBack }: { job: Job; next?: Job; onBack: () => vo
 
   const closed = closedBy(job, next);
   const trade = job.prosTrade || job.trade || "technician";
-  const contact = (p: { name: string; phone: string | null }, how: "call" | "text") =>
+  const contact = (p: { name: string; phone: string | null }, how: "call" | "text" | "whatsapp") =>
     updateJob(job.id, {
       outcome: "called a pro",
       contacted: { name: p.name, phone: p.phone, how, at: new Date().toISOString() },
@@ -357,7 +357,7 @@ export default function History({ onClose }: { onClose: () => void }) {
                       <span className="history-finding">{j.headline || j.issue}</span>
                       <span className="history-outcome">
                         {j.contacted
-                          ? `${j.contacted.how === "call" ? "Called" : "Texted"} ${j.contacted.name}`
+                          ? `${j.contacted.how === "call" ? "Called" : j.contacted.how === "whatsapp" ? "WhatsApp to" : "Texted"} ${j.contacted.name}`
                           : j.outcome
                             ? OUTCOME[j.outcome] || j.outcome
                             : "No outcome yet"}

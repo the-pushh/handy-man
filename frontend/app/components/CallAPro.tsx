@@ -9,6 +9,7 @@
 import { useEffect, useState } from "react";
 import Busy from "./Busy";
 import { sessionId } from "../lib/apiBase";
+import { rankPros, whatsappURL, type Ranked } from "../lib/rankPros";
 
 export interface Pro {
   id: string;
@@ -71,10 +72,13 @@ type State =
   | { kind: "ok"; pros: Pro[] }
   | { kind: "fallback"; text: string };
 
-export type ContactHow = "call" | "text";
+export type ContactHow = "call" | "text" | "whatsapp";
 
-/* The technicians found, each with Call / Text (the diagnosis prefilled)
-   / Map. Used live (after a search) and in History (the saved list). */
+/* The handymen found, best first: the top three by open now, distance
+   and rating (lib/rankPros.ts) with the reasons, the rest under "More
+   nearby". Each has Call, WhatsApp and Text (the diagnosis card as the
+   message; the owner presses send) and Map. Used live (after a search)
+   and in History (the saved list). */
 export function ProList({
   pros,
   brief,
@@ -84,52 +88,79 @@ export function ProList({
   brief: Brief;
   onContact?: (p: Pro, how: ContactHow) => void;
 }) {
+  const ranked = rankPros(pros);
+  const top = ranked.slice(0, 3);
+  const rest = ranked.slice(3);
+  const row = (r: Ranked<Pro>, i: number | null) => {
+    const p = r.pro;
+    const tel = p.phone ? p.phone.replace(/[^\d+]/g, "") : "";
+    const wa = whatsappURL(p.phone, briefText(brief));
+    return (
+      <li key={p.id} className={`pro-row${i !== null ? " ranked" : ""}`}>
+        <div className="pro-main">
+          <p className="pro-name">
+            {i !== null && <span className="pro-rank">#{i + 1}</span>}
+            {p.name}
+          </p>
+          <p className="pro-meta">
+            {r.why.map((w, k) => (
+              <span key={k} className={w === "open now" ? "open" : w === "closed now" ? "closed" : ""}>
+                {k ? " · " : ""}
+                {w}
+              </span>
+            ))}
+          </p>
+          <p className="pro-addr">{p.address}</p>
+          {p.phone && <p className="pro-phone">{p.phone}</p>}
+        </div>
+        <div className="pro-actions pro-actions-grid">
+          {p.phone ? (
+            <a className="btn-primary" href={`tel:${tel}`} onClick={() => onContact?.(p, "call")}>
+              Call
+            </a>
+          ) : (
+            <span className="evidence-note">No phone listed</span>
+          )}
+          {wa && (
+            <a
+              className="btn-outline btn-whatsapp"
+              href={wa}
+              target="_blank"
+              rel="noreferrer"
+              onClick={() => onContact?.(p, "whatsapp")}
+            >
+              WhatsApp
+            </a>
+          )}
+          {p.phone && (
+            <a
+              className="btn-outline"
+              href={`sms:${tel}?&body=${encodeURIComponent(briefText(brief))}`}
+              onClick={() => onContact?.(p, "text")}
+            >
+              Text
+            </a>
+          )}
+          {p.maps_url && (
+            <a className="btn-outline" href={p.maps_url} target="_blank" rel="noreferrer">
+              Map
+            </a>
+          )}
+        </div>
+      </li>
+    );
+  };
   return (
-    <ol className="pro-list">
-      {pros.map((p) => (
-        <li key={p.id} className="pro-row">
-          <div className="pro-main">
-            <p className="pro-name">{p.name}</p>
-            <p className="pro-meta">
-              {p.distance_km.toFixed(1)} km
-              {p.open_now === true && <span className="open"> · Open now</span>}
-              {p.open_now === false && <span className="closed"> · Closed</span>}
-              {p.rating ? ` · ★ ${p.rating.toFixed(1)}${p.ratings ? ` (${p.ratings})` : ""}` : ""}
-            </p>
-            <p className="pro-addr">{p.address}</p>
-            {p.phone && <p className="pro-phone">{p.phone}</p>}
-          </div>
-          <div className="pro-actions">
-            {p.phone ? (
-              <>
-                <a
-                  className="btn-primary"
-                  href={`tel:${p.phone.replace(/[^\d+]/g, "")}`}
-                  onClick={() => onContact?.(p, "call")}
-                >
-                  Call
-                </a>
-                {/* The diagnosis card as the message, ready to send. */}
-                <a
-                  className="btn-outline"
-                  href={`sms:${p.phone.replace(/[^\d+]/g, "")}?&body=${encodeURIComponent(briefText(brief))}`}
-                  onClick={() => onContact?.(p, "text")}
-                >
-                  Text
-                </a>
-              </>
-            ) : (
-              <span className="evidence-note">No phone listed</span>
-            )}
-            {p.maps_url && (
-              <a className="btn-outline" href={p.maps_url} target="_blank" rel="noreferrer">
-                Map
-              </a>
-            )}
-          </div>
-        </li>
-      ))}
-    </ol>
+    <>
+      <ol className="pro-list">{top.map((r, i) => row(r, i))}</ol>
+      {rest.length > 0 && (
+        <details className="pro-more">
+          <summary>More nearby ({rest.length})</summary>
+          <ol className="pro-list">{rest.map((r) => row(r, null))}</ol>
+        </details>
+      )}
+      <p className="evidence-note pro-rank-note">Ranked by open now, distance and rating.</p>
+    </>
   );
 }
 
