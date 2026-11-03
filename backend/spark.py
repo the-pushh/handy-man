@@ -498,7 +498,10 @@ def diagnose(appliance: str, device: str | None, labels: list,
     payload = {
         "model": model or default_model,
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 8000,
+        # A normal answer is 600-1,100 tokens at minimal effort (~1,700 at
+        # low). The cap stops a rare runaway (seen once in ~500 calls:
+        # 8,000 tokens, 97 s) at ~33 s; the hedge answers long before.
+        "max_tokens": 3000,
         # The answers pass is the verdict: it gets more reasoning.
         # DIAGNOSE_EFFORT (e.g. "high" on a test backend) overrides
         # everything; otherwise the caller's choice, else minimal.
