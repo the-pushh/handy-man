@@ -49,6 +49,7 @@ jobs:
           python backend/test_audiofeat.py
           python backend/test_limits.py
           python backend/test_guard.py
+          python backend/test_agent.py
 
       - uses: actions/setup-node@v4
         with:

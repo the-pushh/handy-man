@@ -904,3 +904,37 @@ async def repair_highlight(file: UploadFile = File(...),
     except Exception as exc:
         return {"status": "highlight-error", "detail": str(exc),
                 "trace": trace.export()}
+
+
+@app.post("/api/agent/step")
+async def agent_step(machine: str = Form(""), issue: str = Form(...),
+                     state: str = Form("{}"),
+                     file: UploadFile | None = File(None)):
+    """One round of the diagnostic agent loop (backend/agent.py).
+
+    `state` is the client's copy: {"seen", "hypotheses", "history":
+    [{"action", "result"}]}. `file` is the photo: the first look's still,
+    or the close photo a look_closer test just took.
+    """
+    from . import agent
+
+    trace.begin()
+    try:
+        st = json.loads(state or "{}")
+        if not isinstance(st, dict):
+            raise ValueError
+    except (json.JSONDecodeError, ValueError):
+        st = {}
+    image = images_normalized([await file.read()])[0] if file else None
+    try:
+        out = await run_in_threadpool(
+            agent.step, machine, issue, image=image, seen=st.get("seen", ""),
+            hypotheses=st.get("hypotheses") or [],
+            history=st.get("history") or [])
+    except Exception as exc:
+        return {"status": "agent-error", "detail": str(exc)[:300],
+                "trace": trace.export()}
+    if out["stop"]:
+        out["findings"] = agent.findings(
+            out["seen"], out["hypotheses"], st.get("history") or [])
+    return {"status": "ok", **out, "trace": trace.export()}

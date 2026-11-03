@@ -59,8 +59,37 @@ HEDGE_AFTER_S = {"perceive": 7.0, "diagnose": 8.0, "decide": 12.0,
                  "spot": 5.0}
 
 
+# Agent loop rounds have an 8 s budget: three identical requests race
+# from the start and the first good answer wins (a round is ~1k tokens,
+# so the extra calls are cheap next to a 10 s straggler).
+AGENT_RACE = 3
+
+
+def _race(url: str, key: str, payload: dict, timeout: int, purpose: str,
+          image: bytes | None, n: int) -> dict:
+    from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+    pool = ThreadPoolExecutor(max_workers=n)
+    try:
+        futs = {trace.run_in(pool, _post_once, url, key, payload, timeout,
+                             purpose if i == 0 else f"{purpose} (race {i + 1})",
+                             image) for i in range(n)}
+        pending = set(futs)
+        first_error = None
+        while pending:
+            done, pending = wait(pending, return_when=FIRST_COMPLETED)
+            for fut in done:
+                if fut.exception() is None:
+                    return fut.result()
+                first_error = first_error or fut.exception()
+        raise first_error
+    finally:
+        pool.shutdown(wait=False)
+
+
 def _post(url: str, key: str, payload: dict, timeout: int = 120,
           purpose: str = "spark", image: bytes | None = None) -> dict:
+    if purpose.startswith("agent"):
+        return _race(url, key, payload, timeout, purpose, image, AGENT_RACE)
     hedge = HEDGE_AFTER_S.get(purpose)
     if not hedge:
         return _post_once(url, key, payload, timeout, purpose, image)
