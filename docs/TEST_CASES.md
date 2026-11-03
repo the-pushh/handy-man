@@ -63,7 +63,7 @@ run on words alone. Result: 28 of 31 as expected (2026-11-03, muse-spark-1.3).
 | E1 | "fridge thanda nahi kar raha" | Quick checks first. Understood as a fridge that is not cooling; spoken replies in Hindi when the words are Hindi. | handyman (refrigerator technician): Looks like evaporator fan failure. [investigate, 3 test(s)] |
 | E2 | "AC se paani tapak raha hai" | Quick checks first. A fix you can do, step by step. | fix it yourself: Looks like clogged drain tray. [investigate, 5 test(s)] |
 | E3 | "my lapotp wont charge evn when plugged in" | Quick checks first. Typos are fine: understood as a laptop that will not charge (charger, port or battery). | handyman (laptop repair): Looks like internal charging fault. [investigate, 5 test(s)] |
-| E4 | "it's broken" | Quick checks first. The app first asks you to say what it does or doesn't do; say it again to go on anyway. Then tests first, since anything could be wrong. | handyman (laptop repair): Looks like failed display. [investigate, 3 test(s)] |
+| E4 | "it's broken" | The app first asks you to say what it does or doesn't do; say it again to go on anyway. Then quick checks, and tests first, since anything could be wrong. | handyman (laptop repair): Looks like failed display. [investigate, 3 test(s)] |
 
 ## Edge cases
 

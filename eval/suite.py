@@ -138,7 +138,7 @@ CASES = [
          see="Typos are fine: understood as a laptop that will not charge (charger, port or battery).",
          truth="Charger light on, laptop charging icon does not appear, tried another socket, the charging port feels loose.", expect=dict(warning=None)),
     dict(id="E4", cat="Language and input", machine="laptop", said="it's broken",
-         see="The app first asks you to say what it does or doesn't do; say it again to go on anyway. Then tests first, since anything could be wrong.",
+         see="The app first asks you to say what it does or doesn't do; say it again to go on anyway. Then quick checks, and tests first, since anything could be wrong.",
          truth="Owner does not know much; the laptop shows a black screen but the power light is on.", expect=dict(warning=None, route="investigate")),
     # F. Edge cases
     dict(id="F1", cat="Edge cases", machine="bicycle", said="the bicycle chain keeps slipping when I pedal hard",
@@ -328,7 +328,8 @@ WARN_TITLE = {
 
 def expected_text(c: dict) -> str:
     if c.get("see"):
-        return "Quick checks first. " + c["see"]
+        # Some cases have a step before the quick checks (the vague-words prompt).
+        return c["see"] if c["see"].startswith("The app first") else "Quick checks first. " + c["see"]
     e = c["expect"]
     if e.get("warning"):
         return (f"A warning before any fix ({WARN_TITLE.get(e['warning'], e['warning'])}). "
