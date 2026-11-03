@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import "./globals.css";
 import TraceDrawer from "./components/TraceDrawer";
+import OrientationGuard from "./components/OrientationGuard";
 
 export const metadata: Metadata = {
   title: "HandyMan — point, describe, repair",
@@ -27,6 +28,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           {children}
           <TraceDrawer />
         </div>
+        <OrientationGuard />
       </body>
     </html>
   );
