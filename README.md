@@ -78,7 +78,19 @@ flow.
 
 - **Turn it on:** build the frontend with `NEXT_PUBLIC_AGENT_LOOP=1`, or
   open the app with `?agent=1` (remembered in that browser; `?agent=0`
-  turns it off).
+  turns it off, `?agent=always` sends every case to the agent).
+- **When it is used:** only for unclear cases, so a simple fix is not
+  tested into doubt. The first diagnosis pass already runs during the
+  quick checks, and it also says `route`.
+  - **direct:** one common cause stands out (a flat laptop battery, AC
+    filters not cleaned in months). The regular fix runs, with no wait.
+  - **investigate:** several causes fit about equally, or the symptom is
+    unusual (scooter self-start, inverter beeping, a fridge not cooling,
+    "laptop not starting"). The agent's tests run first.
+  - **Test (12 phrasings, two runs):** clear and unclear cases split as
+    expected in both runs. "Remote dead" and "paper jam" went to
+    investigate. In the app that is right: those cases reach the router
+    only after the quick checks (batteries, clear the jam) failed.
 - **What it does:** after the quick checks, Muse Spark keeps 3 to 4
   possible causes with probabilities and runs one test per round, the
   one that best separates the leading causes, and says why in one line:
