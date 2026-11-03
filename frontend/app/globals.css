@@ -1649,3 +1649,5 @@ section.history-card { cursor: default; }
 .btn-whatsapp { border-color: #25d366; color: #25d366; }
 .pro-more summary { cursor: pointer; padding: 8px 0; color: var(--line-muted); }
 .pro-rank-note { margin: 8px 0 0; }
+.hyp-note { margin: -8px 0 0; font-size: 14px; line-height: 24px; color: var(--line-muted); }
+

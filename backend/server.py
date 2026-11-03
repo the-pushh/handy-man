@@ -446,7 +446,7 @@ def _repair_analyze(images, text, components, model, prior=None,
             diag_questions = bool(questions)
             meta = {k: diag.get(k) for k in ("difficulty", "minutes",
                                              "tools", "confidence",
-                                             "based_on")}
+                                             "based_on", "route")}
             diag_rel = [r.lower() for r in diag["relevant"]]
             relevant = [w for w in wanted if w.lower() in diag_rel]
         else:

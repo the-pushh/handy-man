@@ -18,7 +18,7 @@ import { getSpeechRecognition } from "../lib/speech";
 import { newJobId, putMedia, saveJob, updateJob } from "../lib/history";
 import { getSpeech, prefetchSpeech } from "../lib/tts";
 import { fetchJSON } from "../lib/net";
-import { agentEnabled } from "../lib/agentFlag";
+import { agentMode, wantsAgent } from "../lib/agentFlag";
 import HypothesisBoard, { toolLabel, type AgentRound, type Hyp } from "./HypothesisBoard";
 
 /* The rules layer's decision (backend/risk.py): the model proposes
@@ -748,7 +748,28 @@ export default function RepairWalkthrough({
       // regular diagnosis turns its findings into steps. Any failure
       // falls through to the regular flow below.
       let viaAgent = false;
-      if (agentEnabled() && attempt === 1 && !followUp && !prefetched) {
+      let goAgent = false;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let firstPass: any = null;
+      const mode = agentMode();
+      if (mode !== "off" && attempt === 1 && !followUp && !prefetched) {
+        // The router: the first pass (already running since the quick
+        // checks) says whether one cause stands out. Clear cases keep it
+        // and take the regular fix; unclear ones go to the agent's tests.
+        const first = mode === "auto" && earlyRef.current ? await earlyRef.current.catch(() => null) : null;
+        firstPass = first;
+        if (myRun !== runSeq.current) return;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const pick = wantsAgent(mode, first as any);
+        mark("route", `${pick.agent ? "agent" : "regular"}: ${pick.why}`);
+        goAgent = pick.agent;
+        if (!goAgent) {
+          data = first; // null (the first pass failed) asks afresh below
+        } else {
+          earlyRef.current = null;
+        }
+      }
+      if (goAgent) {
         const res = await agentLoop(fs, ask, base, myRun);
         if (myRun !== runSeq.current) return;
         if (res?.kind === "escalate") {
@@ -763,6 +784,7 @@ export default function RepairWalkthrough({
         } else {
           mark("agent loop fell back to the regular flow");
           setAgent(null);
+          if (firstPass?.status === "ok") data = firstPass;
         }
       }
       if (!data) {
@@ -1594,7 +1616,12 @@ export default function RepairWalkthrough({
         )}
 
         {screen === "agent" && agent && (
-          <HypothesisBoard hyps={agent.hyps} rounds={agent.rounds} thinking={agent.thinking}>
+          <HypothesisBoard
+            hyps={agent.hyps}
+            rounds={agent.rounds}
+            thinking={agent.thinking}
+            note={agent.rounds.length === 0 ? "More than one cause fits, so a few quick tests first." : ""}
+          >
             {agent.asking && (
               <section className="question-card agent-ask" aria-live="polite">
                 <p className="question">{agent.asking.question}</p>

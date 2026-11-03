@@ -416,6 +416,7 @@ def diagnose(appliance: str, device: str | None, labels: list,
         '"difficulty": "easy", "minutes": 20, '
         '"tools": ["soft brush", "bucket of water"], '
         '"confidence": "high", '
+        '"route": "direct", '
         '"needs_pro": false, '
         '"trade": "who repairs this kind of machine when the owner '
         'cannot, 1-4 words: bicycle mechanic, printer repair, AC '
@@ -475,11 +476,18 @@ def diagnose(appliance: str, device: str | None, labels: list,
         "difficulty is easy, medium or hard for an untrained owner; "
         "minutes is the owner's time for the steps; tools are what they "
         "need at home (empty if none); confidence is high, medium or low "
-        "in the finding; based_on is 2-3 short pieces of evidence FOR "
+        "in the finding; route is direct when the words and the photo "
+        "point to one common cause that the owner's own fix steps would "
+        "confirm on the way (a flat battery, a dirty filter, a wrong "
+        "setting, a tripped switch), and investigate when two or more "
+        "causes are about equally likely and need different fixes, or the "
+        "symptom is unusual, so tests should come before any fix; "
+        "based_on is 2-3 short pieces of evidence FOR "
         "THE FINDING, each starting with 'photo:', 'you said:', "
         "'you checked:' or 'sound:', taken only from what is given here "
         "(never brand names, labels or background that do not bear on "
-        "the finding). Leave these out when steps are empty. "
+        "the finding). Leave these out when steps are empty, except "
+        "route, which is always given. "
         "headline is the likely fault as one spoken sentence of at most "
         "5 words in total, starting with \"Looks like\" and naming the "
         "fault itself (Looks like a weak capacitor), never who should "
@@ -552,6 +560,11 @@ def diagnose(appliance: str, device: str | None, labels: list,
             in ("high", "medium", "low") else None,
             "based_on": [str(b).strip() for b in parsed.get("based_on") or []
                          if str(b).strip()][:3],
+            # Which flow suits the case (the app's router, agentFlag.ts):
+            # direct = the regular fix, investigate = the agent's tests.
+            "route": str(parsed.get("route") or "").strip().lower()
+            if str(parsed.get("route") or "").strip().lower()
+            in ("direct", "investigate") else None,
             "resolution": str(parsed.get("resolution", "")).strip()}
 
 

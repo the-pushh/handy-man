@@ -37,6 +37,7 @@ export default function HypothesisBoard({
   thinking,
   threshold = 0.75,
   compact = false,
+  note = "",
   children,
 }: {
   hyps: Hyp[];
@@ -44,6 +45,8 @@ export default function HypothesisBoard({
   thinking: boolean;
   threshold?: number;
   compact?: boolean;
+  // One line under the title (why the tests run at all).
+  note?: string;
   // The current test (a question, "Show me the filter"), shown between
   // the bars and the log so it is always in view.
   children?: ReactNode;
@@ -71,6 +74,7 @@ export default function HypothesisBoard({
               : `Round ${rounds.length + (rounds.length && rounds[rounds.length - 1].result ? 1 : 0) || 1}`}
         </p>
       </div>
+      {note && <p className="hyp-note">{note}</p>}
       <ul className="hyp-list">
         {rows.map((h) => {
           const pct = Math.round(h.p * 100);
