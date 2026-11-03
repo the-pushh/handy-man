@@ -190,6 +190,12 @@ def voice_for(text: str, code: str) -> str:
     return code
 
 
+# Lines already spoken ("Is it fixed now?", a step read twice) come back
+# from memory instead of the model: same text, voice and length, same WAV.
+_SPOKEN: dict = {}
+_SPOKEN_MAX = 300
+
+
 @app.post("/api/tts")
 def tts(req: TTSRequest):
     """Speak `text` in the given MMS language (detected when omitted).
@@ -213,9 +219,15 @@ def tts(req: TTSRequest):
     checkpoint = f"facebook/mms-tts-{code}"
     trace.begin()
     try:
-        with trace.call(checkpoint + " (local)", "speak", kind="hop"):
-            wav = tts_local.synthesize(req.text, checkpoint,
-                                       max_seconds=req.max_seconds)
+        key = (req.text, checkpoint, req.max_seconds)
+        wav = _SPOKEN.get(key)
+        if wav is None:
+            with trace.call(checkpoint + " (local)", "speak", kind="hop"):
+                wav = tts_local.synthesize(req.text, checkpoint,
+                                           max_seconds=req.max_seconds)
+            _SPOKEN[key] = wav
+            while len(_SPOKEN) > _SPOKEN_MAX:
+                _SPOKEN.pop(next(iter(_SPOKEN)))
         recs = trace.export()
         for r in recs:
             r["parsed"] = {"text": req.text, "lang": code,
