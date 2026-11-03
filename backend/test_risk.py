@@ -362,6 +362,14 @@ def test_the_model_saying_the_fix_needs_a_pro_makes_it_a_pro_job():
 
 
 
+def test_cabinet_under_sink_is_furniture():
+    v = judge("kitchen sink", "the kitchen sink drains very slowly",
+              [{"check": "look at the trap", "how": "open the cabinet under the sink and look at the pipe"}])
+    assert v["verdict"] == "diy" and not v["blocked_steps"], v
+    # A machine's own cabinet is still a casing.
+    v = judge("washing machine", "loud noise", [{"check": "check motor", "how": "remove the cabinet panel and look at the motor"}])
+    assert v["blocked_steps"], v
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     for name, fn in tests:

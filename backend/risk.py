@@ -158,7 +158,12 @@ OWNER_JOBS = [
                 r"|\b(?:oven |fridge |freezer |washer |machine |front |loading )?door\b"
                 r"|\b(?:lint |drain |pump )?filter (?:cover|flap|door|cap)\b"
                 r"|\bdrain (?:pump )?(?:cover|flap|cap)\b"
-                r"|\bremote(?:'s)? battery (?:cover|compartment|door)\b", re.I)),
+                r"|\bremote(?:'s)? battery (?:cover|compartment|door)\b"
+                # Furniture, not a machine's casing: the cupboard under a
+                # sink or a kitchen/bathroom cabinet.
+                r"|\b(?:sink|kitchen|bathroom|vanity) cabinet\b"
+                r"|\bcabinet(?: doors?)? (?:under|below|beneath) the (?:\w+ )?sink\b",
+                re.I)),
     # Laptop: base cover screws for RAM / SSD.
     (LAPTOP, re.compile(r"\b(?:bottom|base|back) (?:panel|cover|plate|case)\b"
                         r"|\bram\b|\bmemory (?:stick|module)s?\b|\bssd\b"
