@@ -216,6 +216,17 @@ def _complete(url: str, key: str, payload: dict,
     return parsed
 
 
+def _effort(env: str, default: str) -> str:
+    """Reasoning effort for a call: the env override, else the default.
+
+    Measured on muse-spark-1.3 (2026-11-03): the model writes ~90 tokens/s
+    and at "low" spends 1,100-1,900 of them thinking, so perceive took
+    ~11 s and each diagnosis 12-15 s. "minimal" halves both (perceive
+    ~6 s, diagnosis 6-8 s) with the same findings and steps on the demo
+    cases; set the env var to "low" or higher to trade speed back."""
+    return (os.environ.get(env) or default).strip()
+
+
 def analyze_image(image_bytes: bytes, user_text: str = "",
                   model: str | None = None) -> dict:
     """Ask Muse Spark what components are in the image.
@@ -277,7 +288,7 @@ def analyze_image(image_bytes: bytes, user_text: str = "",
             ],
         }],
         "max_tokens": 4000,
-        "reasoning_effort": "low",
+        "reasoning_effort": _effort("PERCEIVE_EFFORT", "minimal"),
         "response_format": {"type": "json_object"},
     }
     # Only `components` is required: a photo with no appliance in it
@@ -480,10 +491,9 @@ def diagnose(appliance: str, device: str | None, labels: list,
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 8000,
         # The answers pass is the verdict: it gets more reasoning.
-        # DIAGNOSE_EFFORT (e.g. "high" on a test backend) trades seconds
-        # for a more careful diagnosis; unset keeps the tuned defaults.
-        "reasoning_effort": effort or os.environ.get("DIAGNOSE_EFFORT")
-        or ("medium" if answers.strip() else "low"),
+        # DIAGNOSE_EFFORT (e.g. "high" on a test backend) overrides
+        # everything; otherwise the caller's choice, else minimal.
+        "reasoning_effort": _effort("DIAGNOSE_EFFORT", effort or "minimal"),
         "response_format": {"type": "json_object"},
     }
     parsed = _complete(url, key, payload, ["causes", "steps"],

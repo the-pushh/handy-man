@@ -420,12 +420,12 @@ def _repair_analyze(images, text, components, model, prior=None,
                     notes.replace("The appliance is ", "").rstrip("."),
                     device or None, wanted, text, model=model,
                     sound=sound, answers=answers, ahead=ahead,
-                    # Answers pass: medium where the call is subtle
-                    # (inverter floats vs terminals), low elsewhere
-                    # (same AC findings, ~1.5s faster).
-                    effort=(("medium" if INVERTER.search(
+                    # One notch more where the call is subtle (inverter
+                    # floats vs terminals); minimal elsewhere (same
+                    # findings and steps, ~2x faster; see spark._effort).
+                    effort=("low" if INVERTER.search(
                         f"{device} {analysis.get('appliance') or ''} {text}")
-                        else "low") if answers.strip() else None),
+                        else None),
                     markings=(details.get("markings", [])
                               + details.get("other", []))[:10])
             except Exception as exc:
