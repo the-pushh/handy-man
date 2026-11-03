@@ -133,6 +133,39 @@ flow.
   the rest sit under "More nearby". Each listing with an international
   number gets a WhatsApp button: a wa.me link with the diagnosis card
   filled in. The owner presses send.
+- **History and the learning loop** (`backend/history_store.py`,
+  `backend/feedback.py`): one Postgres database (`DATABASE_URL`; Vercel
+  Postgres / Neon on the deployed backend, SQLite or a local Postgres in
+  tests). The tables are created on first use. Without a database both
+  features are off and the app works as on `main`.
+  - **History per browser:** runs and their small images, under a random
+    ID kept in the browser. The server keeps up to 500 runs per browser
+    (the phone keeps 20). A run or image missing on the phone is fetched
+    from the server.
+  - **Outcomes** (opt-in, words only): the route, the tests and answers,
+    the finding, how it ended (fixed at which step, fixed by which quick
+    check, still broken, handyman), the owner's "Was it …?" and the
+    after-photo check.
+  - **What it learns:** the model's weights don't change (the Meta API
+    serves models, it does not train them). The system around the model
+    learns:
+    - counts of confirmed causes per machine and symptom, used once a
+      cause has 3 confirmations;
+    - a few recent confirmed cases, given as worked examples to the
+      agent's first look and the first diagnosis pass;
+    - quick checks that fixed a machine and symptom before are listed
+      first.
+
+    The trace shows when learned context was used. The safety rules
+    never read this data.
+  - **Misses become tests:** `python -m eval.from_feedback` exports runs
+    that ended "still broken" and were then fixed another way;
+    `python -m eval.suite --feedback` runs them.
+  - **Turn it on:**
+    1. Create the Neon database in Vercel (Storage).
+    2. Put its connection string in the Modal secret as `DATABASE_URL`.
+    3. Build the frontend with `NEXT_PUBLIC_FEEDBACK=1` to show the
+       opt-in, or open the app with `?feedback=1`.
 - **A separate backend for the branch:**
   `HANDYMAN_APP=handyman-agent DIAGNOSE_EFFORT=high modal deploy backend/modal_app.py`
   deploys beside production under its own URL.
@@ -222,6 +255,8 @@ python backend/test_audiofeat.py   # beep measurement
 python backend/test_limits.py      # rate limits
 python backend/test_guard.py       # proxy secret, limits, voice choice
 python backend/test_agent.py       # agent loop rules (no model calls)
+python backend/test_feedback.py    # history and learning store (SQLite; TEST_DATABASE_URL for Postgres)
+python backend/test_prompts.py     # every prompt builds, with each optional part on and off
 SPARK_MODEL=prod python -m eval.run      # demo cases, live models
 SPARK_MODEL=prod python -m eval.breadth  # 21 everyday cases beyond the demo
 SPARK_MODEL=prod python -m eval.suite    # 31 test cases for judges and users
@@ -286,10 +321,21 @@ Backend on [Modal](https://modal.com), frontend on Vercel. No database.
   technician searches per session and per IP per day, at most 3 Modal
   containers, and one JSON usage line per request in the Modal logs
   (`"kind": "usage"`).
-- **Privacy:** history stays in the browser (localStorage for the facts,
-  IndexedDB for small photos and the sound clip, last 20 runs). Nothing
-  is stored on the server. Location goes in a request body, never in a
-  URL, and only when the technician list opens.
+- **Privacy:**
+  - **On `main`:** history stays in the browser (localStorage for the
+    facts, IndexedDB for small photos and the sound clip, last 20 runs).
+    Nothing is stored on the server.
+  - **On `feat/agent-loop`, when the backend has a `DATABASE_URL`:** each
+    browser also gets a random ID (no login; one browser is one user).
+    Under it the server keeps that browser's runs: the History record,
+    the handymen found and contacted, and the small before, after and
+    step pictures and highlights. "Delete my history" in History removes
+    them from the phone and the server.
+  - **Learning data:** separate from History, and only when the owner
+    ticks "Help improve Handyman". It is words only: no photos, sound,
+    location or IP.
+  - **Location:** it goes in a request body, never in a URL, and only
+    when the handyman list opens.
 - **Unused:** `infra/setup.sh` (an earlier Google Cloud Run setup) is kept
   for reference only. `backend/Dockerfile` is for running locally.
 

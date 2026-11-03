@@ -54,8 +54,8 @@ export default function Intro({ onClose }: { onClose: () => void }) {
         </ul>
 
         <p className="intro-note">
-          Risky jobs get a warning first, and you can still go ahead at your own risk. Your history stays
-          on your phone.
+          Risky jobs get a warning first, and you can still go ahead at your own risk. Your history is
+          saved for this browser, no login, and you can delete it any time.
         </p>
 
         <button ref={okRef} type="button" className="btn-primary" onClick={close}>

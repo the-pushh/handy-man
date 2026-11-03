@@ -50,6 +50,8 @@ jobs:
           python backend/test_limits.py
           python backend/test_guard.py
           python backend/test_agent.py
+          python backend/test_feedback.py
+          python backend/test_prompts.py
 
       - uses: actions/setup-node@v4
         with:
