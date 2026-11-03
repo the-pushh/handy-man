@@ -1663,3 +1663,10 @@ section.history-card { cursor: default; }
   .rotate-guard span { font-size: 14px; line-height: 24px; color: var(--line-muted); }
   .rotate-guard svg { color: var(--primary); }
 }
+
+/* Feedback loop: the opt-in and "was it the finding?" on closing screens. */
+.share-result { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+.was-it-q { margin: 0; font-size: 15px; line-height: 24px; color: var(--line); }
+.share-check { font-size: 13px; line-height: 16px; color: var(--line-muted); }
+.chip.on { border-color: var(--primary); color: var(--primary); }
+.which-check { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; }
