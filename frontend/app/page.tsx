@@ -154,6 +154,13 @@ export default function Home() {
   // TTS-element analyser (or a stand-in oscillation for the browser
   // voice) for the AI layer.
   const micStreamRef = useRef<MediaStream | null>(null);
+  // Torch (flashlight) for dark corners: only where the camera supports
+  // it (Android Chrome does; iPhone Safari does not expose it, so the
+  // button never shows there). It pulses when the scan says "too dark".
+  const camTrackRef = useRef<MediaStreamTrack | null>(null);
+  const [torchOK, setTorchOK] = useState<boolean>(false);
+  const [torchOn, setTorchOn] = useState<boolean>(false);
+  const [torchNudge, setTorchNudge] = useState<boolean>(false);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const micAnalyserRef = useRef<AnalyserNode | null>(null);
   const aiAnalyserRef = useRef<AnalyserNode | null>(null);
@@ -259,6 +266,15 @@ export default function Home() {
         micStreamRef.current = stream;
         if (live && videoRef.current) videoRef.current.srcObject = stream;
         else stream?.getTracks().forEach((t) => t.stop());
+        const track = stream.getVideoTracks()[0] || null;
+        camTrackRef.current = track;
+        // Some phones report the torch only once the camera is running.
+        const probe = () => {
+          const caps = (track?.getCapabilities?.() || {}) as { torch?: boolean };
+          if (live && caps.torch) setTorchOK(true);
+        };
+        probe();
+        setTimeout(probe, 800);
       } catch (_) {
         if (live) {
           setStatusMsg("Camera blocked — allow camera access and reload, or upload a photo.");
@@ -575,6 +591,7 @@ export default function Home() {
     }
     s.tries += 1;
     setStatusMsg(res.hint);
+    if (/too dark/i.test(res.hint || "")) setTorchNudge(true);
     const now = Date.now();
     if (res.hint && (res.hint !== s.lastHint || now - s.lastHintAt > 12000)) {
       s.lastHint = res.hint;
@@ -774,6 +791,53 @@ export default function Home() {
     });
   }
 
+  // Too dark to see? Measure it on the phone (a 16x12 copy of the frame,
+  // every 1.5 s): in real darkness the model often says "can't see it"
+  // rather than "too dark", so the brightness decides the torch nudge.
+  useEffect(() => {
+    if (!torchOK || torchOn) return;
+    const c = document.createElement("canvas");
+    c.width = 16;
+    c.height = 12;
+    const ctx = c.getContext("2d", { willReadFrequently: true });
+    const id = window.setInterval(() => {
+      const v = videoRef.current;
+      if (!ctx || !v || !v.videoWidth || document.hidden) return;
+      ctx.drawImage(v, 0, 0, 16, 12);
+      const d = ctx.getImageData(0, 0, 16, 12).data;
+      let sum = 0;
+      for (let i = 0; i < d.length; i += 4) sum += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+      const mean = sum / (d.length / 4);
+      setTorchNudge((was) => {
+        const dark = mean < 45;
+        if (dark && !was) mark("dark view", `brightness ${Math.round(mean)}`);
+        return dark;
+      });
+    }, 1500);
+    return () => window.clearInterval(id);
+  }, [torchOK, torchOn]);
+
+  // The camera is covered (walkthrough, History): the torch goes off.
+  useEffect(() => {
+    if (torchOn && ((overlay && !peek) || showHistory)) void setTorch(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [overlay, peek, showHistory]);
+
+  async function setTorch(on: boolean): Promise<void> {
+    const track = camTrackRef.current;
+    if (!track) return;
+    try {
+      await track.applyConstraints({ advanced: [{ torch: on } as MediaTrackConstraintSet] });
+      setTorchOn(on);
+      setTorchNudge(false);
+      mark("tap", `torch ${on ? "on" : "off"}`);
+    } catch (e) {
+      mark("torch failed", (e as Error).message);
+      setTorchOK(false);
+      setTorchOn(false);
+    }
+  }
+
   // The walkthrough's after-fix check, run like the first scan: say what
   // to do, find the machine on the live view, ask to move if needed,
   // hold the outline, flash the shutter, then hand the picture back.
@@ -856,6 +920,7 @@ export default function Home() {
     }
     c.tries += 1;
     if (res.hint) setStatusMsg(res.hint);
+    if (/too dark/i.test(res.hint || "")) setTorchNudge(true);
     const now = Date.now();
     if (res.hint && (res.hint !== c.lastHint || now - c.lastHintAt > 12000)) {
       c.lastHint = res.hint;
@@ -974,6 +1039,21 @@ export default function Home() {
 
         <span className="crop tl" />
         <span className="crop tr" />
+        {torchOK && !warn && (
+          <button
+            type="button"
+            className={`torch-btn${torchOn ? " on" : ""}${torchNudge && !torchOn ? " nudge" : ""}`}
+            onClick={() => void setTorch(!torchOn)}
+            aria-pressed={torchOn}
+            aria-label={torchOn ? "Turn the light off" : "Turn the light on"}
+          >
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+              <path d="M8 2h8l-1.5 5h-5L8 2z" />
+              <path d="M9.5 7h5v4l-1 1.5V21h-3v-8.5l-1-1.5V7z" fill={torchOn ? "currentColor" : "none"} />
+              <path d="M12 14v2" />
+            </svg>
+          </button>
+        )}
         <span className="crop bl" />
         <span className="crop br" />
 

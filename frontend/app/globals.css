@@ -1671,3 +1671,15 @@ section.history-card { cursor: default; }
 .chip.on { border-color: var(--primary); color: var(--primary); }
 .which-check { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; }
 .learn-toggle { flex: none; padding-top: 16px; }
+
+/* Torch toggle: top-right of the camera frame, 48px target. */
+.torch-btn {
+  position: absolute; top: 16px; right: 16px; z-index: 7;
+  width: 48px; height: 48px; display: grid; place-items: center;
+  border: 1px solid var(--line); background: rgba(8, 8, 8, 0.55); color: var(--line);
+  border-radius: 50%; cursor: pointer;
+}
+.torch-btn.on { background: var(--primary); border-color: var(--primary); color: #111; }
+.torch-btn.nudge { animation: torch-pulse 1.1s ease-in-out infinite; border-color: var(--primary); color: var(--primary); }
+@keyframes torch-pulse { 50% { box-shadow: 0 0 0 8px rgba(255, 106, 26, 0.25); } }
+@media (prefers-reduced-motion: reduce) { .torch-btn.nudge { animation: none; } }
