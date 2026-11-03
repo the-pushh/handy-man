@@ -63,16 +63,21 @@ the problem, Type or Photo as the alternatives, and the safety note
    TV) or a danger sign (smoke, sparks, a swollen battery), the app warns
    right after the scan. You can call a technician, or tick "I understand
    the risk" and go on at your own risk; that run is labelled as such.
-10. **History.** Every run is kept on the phone, grouped by machine, with
-   each attempt listed under it (photos, steps, verdict, outcome).
+10. **History.** Every run is kept, grouped by machine, with each attempt
+   listed under it. Each run has its photos, its step pictures with
+   highlights, verdict, outcome, the handymen found and the diagnosis to
+   share.
+   - **Where:** on the phone, and on the server for this browser when
+     the backend has a database (no login).
+   - **Deleting:** "Delete my history" removes it from both.
 
 While the models work, the screen says what is happening and for how
 long ("Looking for the air conditioner… 4s · Finding it and outlining
 it"), in one voice: the app, not the model names.
 
-## Diagnostic agent loop (on by default on `feat/agent-loop`)
+## Diagnostic agent loop (on by default)
 
-On the `feat/agent-loop` branch the router is on by default: clear cases
+The router is on by default: clear cases
 take the regular flow above, unclear ones the agent's tests. If the
 loop fails mid-run, the regular flow takes over.
 
@@ -173,11 +178,11 @@ loop fails mid-run, the regular flow takes over.
     - History has a "Learn from how my fixes turn out" switch to turn
       it off;
     - "Delete my history" removes these rows.
-- **A separate backend for the branch:**
+- **A separate test backend:**
   `HANDYMAN_APP=handyman-agent DIAGNOSE_EFFORT=high modal deploy backend/modal_app.py`
   deploys beside production under its own URL.
-  - `DIAGNOSE_EFFORT=high` makes the final diagnosis more careful, at
-    about 6 to 8 s extra. Leave it out to keep `medium`.
+  - `DIAGNOSE_EFFORT=high` makes every diagnosis more careful, at about
+    6 to 8 s extra. Leave it out to keep the fast defaults.
   - `AGENT_EFFORT` sets the effort for each round (default `minimal`).
 - **Model speed:** muse-spark-1.3 writes about 90 tokens a second, and at
   `low` effort it spends 1,100 to 1,900 tokens thinking. Perceive and
@@ -329,11 +334,11 @@ Backend on [Modal](https://modal.com), frontend on Vercel. No database.
   containers, and one JSON usage line per request in the Modal logs
   (`"kind": "usage"`).
 - **Privacy:**
-  - **On `main`:** history stays in the browser (localStorage for the
-    facts, IndexedDB for small photos and the sound clip, last 20 runs).
-    Nothing is stored on the server.
-  - **On `feat/agent-loop`, when the backend has a `DATABASE_URL`:** each
-    browser also gets a random ID (no login; one browser is one user).
+  - **Without a database:** history stays in the browser (localStorage
+    for the facts, IndexedDB for small photos and the sound clip, last 20
+    runs). Nothing is stored on the server.
+  - **When the backend has a `DATABASE_URL`:** each browser also gets a
+    random ID (no login; one browser is one user).
     Under it the server keeps that browser's runs: the History record,
     the handymen found and contacted, and the small before, after and
     step pictures and highlights. "Delete my history" in History removes

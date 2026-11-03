@@ -1,6 +1,6 @@
 """Outcome feedback: what happened after each run, in both flows.
 
-The loop (branch feat/agent-loop):
+The loop:
   1. record   the phone sends every run's outcome unless the owner turned
               learning off in History (text only: machine, words, tests,
               answers, finding, verdict, outcome; never photos, sound,

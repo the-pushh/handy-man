@@ -1301,7 +1301,7 @@ export default function RepairWalkthrough({
       ...outcomeRef.current,
       tests: (agent?.rounds || []).map((r) => `${toolLabel(r.tool)}: ${r.label} -> ${r.result || ""}`),
       answers: answered.map((a) => `${a.ask} ${a.reply}`).join(" "),
-      app: "feat/agent-loop",
+      app: "web",
     });
   }
 
