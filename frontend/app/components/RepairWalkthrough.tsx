@@ -17,6 +17,7 @@ import { paintMasks } from "../lib/masks";
 import { getSpeechRecognition } from "../lib/speech";
 import { newJobId, putMedia, saveJob, updateJob } from "../lib/history";
 import { getSpeech, prefetchSpeech } from "../lib/tts";
+import { fetchJSON } from "../lib/net";
 import { agentEnabled } from "../lib/agentFlag";
 import HypothesisBoard, { toolLabel, type AgentRound, type Hyp } from "./HypothesisBoard";
 
@@ -201,6 +202,8 @@ export default function RepairWalkthrough({
   // One screen at a time: the verdict (main), then the steps on tap.
   const [view, setView] = useState<"main" | "steps">("main");
   const viewRef = useRef<"main" | "steps">("main");
+  // The step on screen, for async results that land after a move.
+  const stepRef = useRef<number>(0);
   viewRef.current = view;
   const [stepLoading, setStepLoading] = useState<boolean>(false);
   const [fixed, setFixed] = useState<boolean>(false);
@@ -249,7 +252,10 @@ export default function RepairWalkthrough({
   // racing them), and Muse Image fallbacks prepared ahead per part.
   const samRef = useRef<Promise<Instance[]>>(Promise.resolve([]));
   const highlightRef = useRef<Map<string, Promise<string | null>>>(new Map());
-  const highlightChain = useRef<Promise<unknown>>(Promise.resolve());
+  // Illustrated highlights take ~20 s each: two run at once (two lanes),
+  // so step 2's is not stuck behind step 1's.
+  const highlightLanes = useRef<Promise<unknown>[]>([Promise.resolve(), Promise.resolve()]);
+  const highlightLane = useRef<number>(0);
   // The re-check's "after" still: run 2 starts from it.
   const afterRef = useRef<File | null>(null);
   // "Still broken": what is still wrong, by voice or typed.
@@ -267,6 +273,28 @@ export default function RepairWalkthrough({
     if (mine.length < 2) return mine;
     const best = mine.reduce((a, b) => ((list[b].score ?? 0) > (list[a].score ?? 0) ? b : a));
     return [best];
+  }
+
+  /* The closest outlined part when the step's own part has none: shares
+     a word stem with it ("caps lock key" -> "keyboard", "air filters" ->
+     "filter flap"). Shown while the illustration is on its way. */
+  function nearMask(part: string | null | undefined, list: Instance[]): number | null {
+    if (!part || !list.length) return null;
+    const stop = new Set(["the", "and", "for", "with", "its", "of", "on", "at", "to", "a", "an"]);
+    const words = (t: string) => t.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3 && !stop.has(w));
+    const mine = words(part);
+    let best: number | null = null;
+    let bestScore = 0;
+    list.forEach((inst, i) => {
+      const theirs = words(inst.label);
+      const hits = mine.filter((w) => theirs.some((x) => x.startsWith(w) || w.startsWith(x))).length;
+      const score = hits + (inst.score ?? 0) / 10;
+      if (hits && score > bestScore) {
+        best = i;
+        bestScore = score;
+      }
+    });
+    return best;
   }
 
   /* Show only the current step's SAM masks (all of them when the step
@@ -538,9 +566,8 @@ export default function RepairWalkthrough({
       const t0 = performance.now();
       let d;
       try {
-        d = await (
-          await fetch(`${base}/api/agent/step`, { method: "POST", body: fd, signal: AbortSignal.timeout(30000) })
-        ).json();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        d = await fetchJSON<any>(`${base}/api/agent/step`, { method: "POST", body: fd }, { label: "agent step", timeoutMs: 30000 });
       } catch (e) {
         mark("agent step failed", (e as Error).message);
         return null;
@@ -613,7 +640,9 @@ export default function RepairWalkthrough({
       sfd.append("labels", JSON.stringify([{ label: a.part, look: a.look || "" }]));
       let found: Instance[] = [];
       try {
-        found = ((await (await fetch(`${base}/api/segment`, { method: "POST", body: sfd })).json()).instances || []) as Instance[];
+        found = (
+          await fetchJSON<{ instances?: Instance[] }>(`${base}/api/segment`, { method: "POST", body: sfd }, { label: "agent segment", timeoutMs: 20000 })
+        ).instances || [];
       } catch (_) {
         found = [];
       }
@@ -837,8 +866,12 @@ export default function RepairWalkthrough({
           sfd.append("file", still);
           sfd.append("labels", JSON.stringify(segLabels));
           try {
-            const sd = await (await fetch(`${base}/api/segment`, { method: "POST", body: sfd })).json();
-            return (sd.instances || []) as Instance[];
+            const sd = await fetchJSON<{ instances?: Instance[] }>(
+              `${base}/api/segment`,
+              { method: "POST", body: sfd },
+              { label: "segment", timeoutMs: 20000 }
+            );
+            return sd.instances || [];
           } catch (_) {
             return [] as Instance[];
           }
@@ -1005,7 +1038,7 @@ export default function RepairWalkthrough({
   }
 
   /* Muse Image highlight for one part, made once and reused. Requests
-     run one at a time (a queue), so the next step's is not starved. */
+     run in two lanes, so the next step's is not stuck behind another. */
   function fetchHighlight(
     part: string,
     still: File,
@@ -1015,14 +1048,19 @@ export default function RepairWalkthrough({
     const key = part.toLowerCase();
     const have = highlightRef.current.get(key);
     if (have) return have;
-    const job = highlightChain.current.then(async () => {
+    const lane = highlightLane.current++ % highlightLanes.current.length;
+    const job = highlightLanes.current[lane].then(async () => {
       const fd = new FormData();
       fd.append("file", still);
       fd.append("part", part);
       fd.append("legend", JSON.stringify(leg));
       mark("highlight requested", part);
       try {
-        const d = await (await fetch(`${base}/api/repair/highlight`, { method: "POST", body: fd })).json();
+        const d = await fetchJSON<{ status: string; overlay?: { image_b64: string; mime?: string; legend?: { label: string; color: string; tag?: string }[] } }>(
+          `${base}/api/repair/highlight`,
+          { method: "POST", body: fd },
+          { label: `highlight ${part}`, timeoutMs: 60000 }
+        );
         mark("highlight returned", `${part}: ${d.status}`);
         if (!d.overlay?.image_b64) return null;
         const fresh = (d.overlay.legend || []).filter(
@@ -1034,7 +1072,7 @@ export default function RepairWalkthrough({
         return null;
       }
     });
-    highlightChain.current = job.catch(() => null);
+    highlightLanes.current[lane] = job.catch(() => null);
     highlightRef.current.set(key, job);
     return job;
   }
@@ -1072,6 +1110,7 @@ export default function RepairWalkthrough({
     if (i < 0 || i >= steps.length || !fileRef.current) return;
     hush(); // the previous step never talks over this one
     setStepIdx(i);
+    stepRef.current = i;
     const st = steps[i];
     // Speak right away; the highlight lands while the step is read.
     const spoken = speakStep(st, i, steps.length);
@@ -1086,27 +1125,62 @@ export default function RepairWalkthrough({
       setOverlayURL("");
       mark("step highlight", `${i + 1}: SAM outline of ${st.part}`);
     } else if (st.part) {
-      setOverlayURL("");
-      const url = await fetchHighlight(st.part, fileRef.current, API, legend);
-      if (url) {
-        setOverlayURL(url);
-        void saveStepPicture(i, fileRef.current, [], url);
+      const job = fetchHighlight(st.part, fileRef.current, API, legend);
+      // Ready already (prefetched while the verdict showed)?
+      const ready = await Promise.race([job, new Promise<null>((r) => setTimeout(() => r(null), 50))]);
+      if (ready) {
+        setOverlayURL(ready);
+        void saveStepPicture(i, fileRef.current, [], ready);
+        mark("step highlight", `${i + 1}: illustrated for ${st.part}`);
+      } else {
+        // Never an empty step: the nearest outlined part right away, the
+        // illustration swapped in when it lands (if still on this step).
+        const near = nearMask(st.part, sam);
+        setOverlayURL("");
+        if (near !== null) {
+          const hide = new Set<number>(sam.map((_, k) => k).filter((k) => k !== near));
+          setHidden(hide);
+          void drawMasks(sam, hide);
+          mark("step highlight", `${i + 1}: nearest outline ${sam[near].label} for ${st.part}, illustration coming`);
+          setStepLoading(false);
+        }
+        const url = await job;
+        if (stepRef.current === i && url) {
+          setOverlayURL(url);
+          void saveStepPicture(i, fileRef.current, [], url);
+        }
+        mark("step highlight", `${i + 1}: ${url ? "illustrated" : "none"} for ${st.part}`);
       }
-      mark("step highlight", `${i + 1}: ${url ? "illustrated" : "none"} for ${st.part}`);
     }
-    setStepLoading(false);
+    // A late result for a step the owner already left must not clear the
+    // loading state of the step now on screen.
+    if (stepRef.current === i) setStepLoading(false);
     await spoken;
   }
 
   /* Last step done: camera re-check of the part, then the Done card. */
-  async function finishFix(): Promise<void> {
+  /* `early`: the owner said "It's working" after this step (1-based).
+     The after photo is still taken and compared, but they are not asked
+     again: the run closes as fixed once the photo is in. */
+  async function finishFix(early: number | null = null): Promise<void> {
     const part = focus || steps.find((s) => s.part)?.part || null;
     hush();
     const seconds = Math.round(turnElapsed());
+    if (early !== null) {
+      askedFixed.current = true;
+      setFixedAt(early);
+    }
+    const closeFixed = () => {
+      if (early === null) return;
+      setFixed(true);
+      if (jobId.current) updateJob(jobId.current, { outcome: "fixed", seconds });
+      void say("Great. It's fixed.");
+    };
     const after = onRecheck ? await onRecheck(part) : null;
     afterRef.current = after;
     if (!after) {
       setDone({ afterURL: "", state: "error", looksFixed: null, seen: "", next: null, seconds });
+      closeFixed();
       return;
     }
     setDone({ afterURL: URL.createObjectURL(after), state: "checking", looksFixed: null, seen: "", next: null, seconds });
@@ -1114,11 +1188,12 @@ export default function RepairWalkthrough({
     const fd = new FormData();
     fd.append("before", files[0], "before.jpg");
     fd.append("after", after, "after.jpg");
-    const last = steps[steps.length - 1];
+    const last = steps[early !== null ? early - 1 : steps.length - 1];
     fd.append("fix", `${verdict?.headline || ""} Last step: ${last ? `${last.check}. ${last.how}` : ""}`);
     if (part) fd.append("part", part);
     try {
-      const r = await (await fetch(`${API}/api/recheck`, { method: "POST", body: fd })).json();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const r = await fetchJSON<any>(`${API}/api/recheck`, { method: "POST", body: fd }, { label: "recheck", timeoutMs: 40000 });
       mark("recheck", `${r.status} looks_fixed=${r.looks_fixed}`);
       if (jobId.current) {
         updateJob(jobId.current, {
@@ -1136,8 +1211,11 @@ export default function RepairWalkthrough({
           next: r.next || null,
         }
       );
+      closeFixed();
     } catch (_) {
       setDone((d) => d && { ...d, state: "error" });
+      closeFixed();
+      return;
     }
   }
 
@@ -1165,15 +1243,9 @@ export default function RepairWalkthrough({
       void goStep(i + 1);
       return;
     }
-    // Fixed early: close the run here, no camera check needed.
-    hush();
-    askedFixed.current = true;
-    const seconds = Math.round(turnElapsed());
-    setFixedAt(i + 1);
-    setFixed(true);
-    setDone({ afterURL: "", state: "ok", looksFixed: null, seen: "", next: null, seconds });
-    if (jobId.current) updateJob(jobId.current, { outcome: "fixed", seconds });
-    void say("Great. It's fixed.");
+    // Fixed early: still take the exit photo (the same after-fix scan
+    // as the last step), then close the run as fixed without asking again.
+    void finishFix(i + 1);
   }
 
   /* "Find a pro" from a pro verdict: that is this job's outcome. */
@@ -1874,7 +1946,7 @@ export default function RepairWalkthrough({
                 mark("tap", stepIdx < steps.length - 1 ? `next step ${stepIdx + 2}` : "finish steps");
                 if (stepIdx < steps.length - 1) nextStep();
                 else if (verdict?.verdict === "pro") openPro();
-                else void finishFix();
+                else void finishFix(null);
               }}
               disabled={stepLoading}
             >

@@ -2,6 +2,7 @@
    while the owner answers the last question). */
 
 import { kb, mark } from "./timeline";
+import { fetchJSON } from "./net";
 
 export function requestDiagnosis(
   base: string,
@@ -39,9 +40,8 @@ export function requestDiagnosis(
   if (acceptRisk) fd.append("accept_risk", acceptRisk);
   // Never a frozen screen: give up after 60s and let the owner retry
   // (the server hedges slow calls well before this).
-  return fetch(`${base}/api/repair/analyze`, {
-    method: "POST",
-    body: fd,
-    signal: AbortSignal.timeout(60000),
-  }).then((r) => r.json());
+  return fetchJSON(`${base}/api/repair/analyze`, { method: "POST", body: fd }, {
+    label: ahead ? "decide ahead" : answers ? "decide" : "diagnosis",
+    timeoutMs: 60000,
+  });
 }
