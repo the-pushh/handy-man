@@ -782,15 +782,39 @@ export default function Home() {
     const line = what
       ? `Now point the camera at the ${what} again so I can check the fix.`
       : "Now point the camera at what you fixed so I can check it.";
+    mark("recheck seek", what || part || "");
+    return seekStill(what || part || "the machine you fixed", line);
+  }
+
+  /* One picture of `want`, found and framed on the live view like the
+     first scan (the after-fix check, and the agent loop's close look). */
+  function seekStill(want: string, line: string): Promise<File | null> {
     setPeek(line);
     setStatusMsg(line);
     setStuck(false);
-    mark("recheck seek", what || part || "");
     void say(line);
     return new Promise((resolve) => {
       checkRef.current = { resolve, tries: 0, lastHint: "", lastHintAt: 0, taking: false };
-      setCheckWant(what || part || "the machine you fixed");
+      setCheckWant(want);
     });
+  }
+
+  // Agent loop tools: a close photo of one part, and 4 s of sound.
+  function lookCloser(part: string, how: string): Promise<File | null> {
+    const doIt = how && !/^(nothing|none|no action|it is (already )?(in )?view)/i.test(how.trim())
+      ? ` ${how.trim().replace(/^./, (c) => c.toUpperCase()).replace(/\.?$/, ".")}`
+      : "";
+    mark("agent look", part);
+    return seekStill(part, `Show me the ${part} up close.${doIt}`);
+  }
+
+  async function hearForAgent(): Promise<Heard | null> {
+    setPeek("Listening");
+    try {
+      return await listenForSound();
+    } finally {
+      setPeek("");
+    }
   }
 
   function endCheck(frame: File | null): void {
@@ -1220,6 +1244,8 @@ export default function Home() {
             onListen={() => void listenAgain(overlay)}
             onMoreViews={() => void addView(overlay)}
             onRecheck={recheckStill}
+            onLook={lookCloser}
+            onHear={hearForAgent}
             onClose={() => setOverlay(null)}
           />
         </div>

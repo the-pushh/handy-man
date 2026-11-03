@@ -17,6 +17,8 @@ import { paintMasks } from "../lib/masks";
 import { getSpeechRecognition } from "../lib/speech";
 import { newJobId, putMedia, saveJob, updateJob } from "../lib/history";
 import { getSpeech, prefetchSpeech } from "../lib/tts";
+import { agentEnabled } from "../lib/agentFlag";
+import HypothesisBoard, { toolLabel, type AgentRound, type Hyp } from "./HypothesisBoard";
 
 /* The rules layer's decision (backend/risk.py): the model proposes
    steps, the rules decide which an owner may do. */
@@ -66,6 +68,26 @@ interface Question {
   options: string[];
 }
 
+interface AgentAction {
+  tool: "ask_user" | "look_closer" | "listen" | "segment";
+  why: string;
+  question?: string;
+  options?: string[];
+  part?: string;
+  look?: string;
+  how?: string;
+  what?: string;
+}
+
+interface AgentStop {
+  reason: "confident" | "max-rounds" | "blocked" | "no-test";
+  rule?: string;
+  title?: string;
+  trade?: string;
+  spoken?: string;
+  fix_blocked?: { rule: string; title: string; trade: string } | null;
+}
+
 const ORANGE = "#e86a17";
 
 const cap = (t: string) => (t ? t[0].toUpperCase() + t.slice(1) : t);
@@ -83,6 +105,7 @@ const BUSY: Record<string, { hint: string; slowAfter: number }> = {
   },
   "Deciding…": { hint: "Working through your answers. Usually 10 to 20 s.", slowAfter: 25 },
   "Outlining parts…": { hint: "Marking the parts on your photo. A few seconds.", slowAfter: 10 },
+  "Working out the fix…": { hint: "Turning what the tests found into steps. Usually 10 to 20 s.", slowAfter: 25 },
 };
 
 // Phases on one machine: 0 = quick checks, then up to MAX_RUNS rounds of
@@ -104,6 +127,8 @@ export default function RepairWalkthrough({
   onListen,
   onMoreViews,
   onRecheck,
+  onLook,
+  onHear,
   onClose,
 }: {
   files: File[];
@@ -127,6 +152,9 @@ export default function RepairWalkthrough({
   onMoreViews?: () => void;
   // Final camera re-check: aim at the part, returns the "after" still.
   onRecheck?: (part: string | null) => Promise<File | null>;
+  // Agent loop tools: a close photo of one part, and 4 s of sound.
+  onLook?: (part: string, how: string) => Promise<File | null>;
+  onHear?: () => Promise<Heard | null>;
   onClose: () => void;
 }) {
   const [imgURL, setImgURL] = useState<string>("");
@@ -197,6 +225,17 @@ export default function RepairWalkthrough({
   // Look-only questions whose answer can flip the verdict, asked one at
   // a time before it; answered ones stay as a ticked checklist.
   const [questions, setQuestions] = useState<Question[]>([]);
+  // Agent loop (experimental, agentFlag.ts): the board, the test being
+  // run, and how it ended. null = the loop is not in use this run.
+  const [agent, setAgent] = useState<{
+    hyps: Hyp[];
+    rounds: AgentRound[];
+    thinking: boolean;
+    doing: string;
+    asking: { question: string; options: string[]; why: string } | null;
+    stop: AgentStop | null;
+  } | null>(null);
+  const agentAnswer = useRef<((a: string) => void) | null>(null);
   const [answered, setAnswered] = useState<{ ask: string; reply: string }[]>([]);
   const answeredRef = useRef<{ ask: string; reply: string }[]>([]);
   const answerResolve = useRef<((a: { ask: string; reply: string }[]) => void) | null>(null);
@@ -467,6 +506,181 @@ export default function RepairWalkthrough({
     }
   }
 
+  /* The diagnostic agent loop (backend/agent.py). Each round the server
+     updates the possible causes and picks one test; the phone runs it
+     (a question, a close photo, a sound, an outline) and sends the
+     result back. Returns the findings for the final diagnosis, the
+     escalation when a rule blocks the next test, or null to fall back
+     to the regular flow. */
+  async function agentLoop(
+    fs: File[],
+    ask: string,
+    base: string,
+    myRun: number
+  ): Promise<{ kind: "findings"; text: string; sound: string } | { kind: "escalate"; stop: AgentStop; hyps: Hyp[] } | null> {
+    const state: { seen: string; hypotheses: Hyp[]; history: { action: AgentAction; result: string }[] } = {
+      seen: "",
+      hypotheses: [],
+      history: [],
+    };
+    let image: File | null = fs[fs.length - 1] || null;
+    let sound = heard?.summary || "";
+    const rounds: AgentRound[] = [];
+    setAgent({ hyps: [], rounds: [], thinking: true, doing: "", asking: null, stop: null });
+    mark("agent loop start");
+    for (let guard = 0; guard < 8; guard++) {
+      const fd = new FormData();
+      fd.append("machine", machine || appliance || "");
+      fd.append("issue", ask);
+      fd.append("state", JSON.stringify(state));
+      if (image) fd.append("file", image, "still.jpg");
+      setAgent((a) => a && { ...a, thinking: true, doing: "", asking: null });
+      const t0 = performance.now();
+      let d;
+      try {
+        d = await (
+          await fetch(`${base}/api/agent/step`, { method: "POST", body: fd, signal: AbortSignal.timeout(30000) })
+        ).json();
+      } catch (e) {
+        mark("agent step failed", (e as Error).message);
+        return null;
+      }
+      if (myRun !== runSeq.current) return null;
+      mark("agent round", `${d.round} ${((performance.now() - t0) / 1000).toFixed(1)}s ${d.stop ? `stop ${d.stop.reason}` : d.action?.tool}`);
+      if (d.status !== "ok") return null;
+      state.seen = d.seen || state.seen;
+      state.hypotheses = d.hypotheses || state.hypotheses;
+      if (d.stop) {
+        const stop = d.stop as AgentStop;
+        setAgent((a) => a && { ...a, hyps: state.hypotheses, thinking: false, stop });
+        if (stop.reason === "blocked") return { kind: "escalate", stop, hyps: state.hypotheses };
+        return { kind: "findings", text: d.findings || "", sound };
+      }
+      const action = d.action as AgentAction;
+      const label =
+        action.question || (action.part ? `the ${action.part}` : action.what ? `for ${action.what}` : "");
+      rounds.push({ n: rounds.length + 1, tool: action.tool, label, why: action.why });
+      setAgent((a) => a && { ...a, hyps: state.hypotheses, rounds: [...rounds], thinking: false });
+      const res = await runAgentTool(action, fs, base);
+      if (myRun !== runSeq.current) return null;
+      if (res.sound) sound = res.sound;
+      rounds[rounds.length - 1] = { ...rounds[rounds.length - 1], result: res.shown };
+      setAgent((a) => a && { ...a, rounds: [...rounds] });
+      state.history.push({ action, result: res.text });
+      image = res.image;
+    }
+    return null;
+  }
+
+  /* Run one test on the phone. `text` goes to the model, `shown` to the
+     board; a close photo comes back as `image`. */
+  async function runAgentTool(
+    a: AgentAction,
+    fs: File[],
+    base: string
+  ): Promise<{ text: string; shown: string; image: File | null; sound?: string }> {
+    if (a.tool === "ask_user") {
+      const options = [...(a.options || []), "Not sure"].filter(
+        (o, i, all) => all.findIndex((x) => x.toLowerCase() === o.toLowerCase()) === i
+      );
+      setAgent((s) => s && { ...s, asking: { question: a.question || "", options, why: a.why } });
+      void say(a.question || "");
+      const answer = await new Promise<string>((res) => {
+        agentAnswer.current = res;
+      });
+      hush();
+      setAgent((s) => s && { ...s, asking: null });
+      return { text: answer, shown: answer, image: null };
+    }
+    if (a.tool === "look_closer" && a.part) {
+      setAgent((s) => s && { ...s, doing: `Show me the ${a.part}` });
+      const still = onLook ? await onLook(a.part, a.how || "") : null;
+      setAgent((s) => s && { ...s, doing: "" });
+      if (!still) return { text: "The owner could not take the close photo.", shown: "No photo", image: null };
+      return { text: `Close photo of the ${a.part} attached.`, shown: "Photo taken", image: still };
+    }
+    if (a.tool === "listen") {
+      setAgent((s) => s && { ...s, doing: "Listening" });
+      const h = onHear ? await onHear() : null;
+      setAgent((s) => s && { ...s, doing: "" });
+      if (!h || !h.summary) return { text: "No usable recording.", shown: "Couldn't record", image: null };
+      return { text: h.summary, shown: h.summary, image: null, sound: h.summary };
+    }
+    if (a.tool === "segment" && a.part) {
+      setAgent((s) => s && { ...s, doing: `Outlining the ${a.part}` });
+      const sfd = new FormData();
+      sfd.append("file", fs[fs.length - 1]);
+      sfd.append("labels", JSON.stringify([{ label: a.part, look: a.look || "" }]));
+      let found: Instance[] = [];
+      try {
+        found = ((await (await fetch(`${base}/api/segment`, { method: "POST", body: sfd })).json()).instances || []) as Instance[];
+      } catch (_) {
+        found = [];
+      }
+      setAgent((s) => s && { ...s, doing: "" });
+      if (!found.length) return { text: `The ${a.part} was not found on the photo.`, shown: "Not found on the photo", image: null };
+      setInstances(found);
+      showStepMasks(null, found);
+      const best = found.reduce((x, y) => ((y.score ?? 0) > (x.score ?? 0) ? y : x));
+      const b = best.box;
+      return {
+        text: `Outlined the ${a.part} (score ${(best.score ?? 0).toFixed(2)}) at x ${b.x.toFixed(2)}, y ${b.y.toFixed(2)}, size ${b.w.toFixed(2)} by ${b.h.toFixed(2)} of the photo.`,
+        shown: `Found, ${Math.round((best.score ?? 0) * 100)}% match`,
+        image: null,
+      };
+    }
+    return { text: "The test could not run.", shown: "Skipped", image: null };
+  }
+
+  /* The next test is blocked by a safety rule: stop here and send the
+     owner to a handyman, saying which rule and the most likely cause. */
+  function escalateFromAgent(stop: AgentStop, hyps: Hyp[], fs: File[], t: string): void {
+    const top = hyps[0];
+    const v: Verdict = {
+      verdict: "pro",
+      rule: stop.rule || null,
+      title: stop.title || "This needs a handyman.",
+      headline: top ? `Most likely ${top.cause.toLowerCase()} (${Math.round(top.p * 100)}%).` : "",
+      trade: stop.trade || null,
+      fired: stop.rule ? [stop.rule] : [],
+      blocked_steps: [],
+      proposed_steps: 0,
+    };
+    setStatus("");
+    setSteps([]);
+    setCauses(hyps.map((h) => h.cause));
+    if (machine || appliance) setDevice(machine || appliance);
+    setVerdict(v);
+    mark("verdict", `pro ${v.rule} (agent: next test blocked)`);
+    if (!jobId.current) {
+      const id = newJobId();
+      jobId.current = id;
+      saveJob({
+        id,
+        date: new Date().toISOString(),
+        device: machine || appliance || "device",
+        issue: t,
+        verdict: "pro",
+        rule: v.rule,
+        ruleTitle: v.title,
+        headline: v.headline,
+        trade: v.trade,
+        steps: [],
+        answers: (agent?.rounds || []).map((r) => ({ ask: r.label, reply: r.result || "" })),
+        outcome: null,
+        finding: v.headline,
+        sound: heard ? heard.summary : null,
+        media: {},
+        machine: machine || appliance || "device",
+        attempt,
+        parentId,
+        riskAccepted: null,
+      });
+      void putMedia(id, "before", fs[0]);
+    }
+    void say(`${stop.spoken || "This one needs a handyman."} You can call a handyman from here.`);
+  }
+
   async function run(fs: File[], t: string, base: string) {
     const myRun = ++runSeq.current;
     setStatus("Working it out…");
@@ -500,14 +714,39 @@ export default function RepairWalkthrough({
     void say(attempt > 1 ? `Run ${attempt}. Working out what's still wrong.` : "Working out what's wrong.");
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let data: any =
-        (prefetched ? await prefetched : null) ||
-        (earlyRef.current ? await earlyRef.current.catch(() => null) : null) ||
-        (await requestDiagnosis(base, fs, ask, perception, heard?.summary || "", "", false, risk));
+      let data: any = null;
+      // Experimental agent loop: tests until one cause is clear, then the
+      // regular diagnosis turns its findings into steps. Any failure
+      // falls through to the regular flow below.
+      let viaAgent = false;
+      if (agentEnabled() && attempt === 1 && !followUp && !prefetched) {
+        const res = await agentLoop(fs, ask, base, myRun);
+        if (myRun !== runSeq.current) return;
+        if (res?.kind === "escalate") {
+          earlyRef.current = null;
+          escalateFromAgent(res.stop, res.hyps, fs, t);
+          return;
+        }
+        if (res?.kind === "findings") {
+          viaAgent = true;
+          setStatus("Working out the fix…");
+          data = await requestDiagnosis(base, fs, ask, perception, res.sound, res.text, false, risk);
+        } else {
+          mark("agent loop fell back to the regular flow");
+          setAgent(null);
+        }
+      }
+      if (!data) {
+        data =
+          (prefetched ? await prefetched : null) ||
+          (earlyRef.current ? await earlyRef.current.catch(() => null) : null) ||
+          (await requestDiagnosis(base, fs, ask, perception, heard?.summary || "", "", false, risk));
+      }
       earlyRef.current = null; // used once; "Try again" asks afresh
       // Questions first: the owner looks, taps an answer, and the server
       // decides with those answers (one more diagnose, no re-perceive).
-      const qs: Question[] = data.status === "ok" ? data.questions || [] : [];
+      // The agent already asked its questions.
+      const qs: Question[] = data.status === "ok" && !viaAgent ? data.questions || [] : [];
       if (data.perception?.appliance) setAppliance(data.perception.appliance);
       if (qs.length && myRun === runSeq.current) {
         mark("questions shown", `${qs.length}`);
@@ -1116,7 +1355,7 @@ export default function RepairWalkthrough({
   const name = appliance || machine || device || "your device";
   const removed = verdict?.blocked_steps.length || 0;
   const trade = verdict?.trade || "technician";
-  const screen: "quick" | "fail" | "pros" | "done" | "steps" | "verdict" | "question" | "working" =
+  const screen: "quick" | "fail" | "pros" | "done" | "steps" | "verdict" | "question" | "agent" | "working" =
     quick.state !== "off"
     ? "quick"
     : failure
@@ -1129,7 +1368,9 @@ export default function RepairWalkthrough({
           ? "steps"
           : verdict
             ? "verdict"
-            : questions[answered.length]
+            : agent && !agent.stop
+              ? "agent"
+              : questions[answered.length]
               ? "question"
               : "working";
   const step = steps[stepIdx];
@@ -1280,6 +1521,36 @@ export default function RepairWalkthrough({
           </section>
         )}
 
+        {screen === "agent" && agent && (
+          <HypothesisBoard hyps={agent.hyps} rounds={agent.rounds} thinking={agent.thinking}>
+            {agent.asking && (
+              <section className="question-card agent-ask" aria-live="polite">
+                <p className="question">{agent.asking.question}</p>
+                <div className="chips">
+                  {agent.asking.options.map((o) => (
+                    <button
+                      key={o}
+                      type="button"
+                      className="chip"
+                      onClick={() => {
+                        mark("tap", `agent answer: ${o}`);
+                        agentAnswer.current?.(o);
+                        agentAnswer.current = null;
+                      }}
+                    >
+                      {o}
+                    </button>
+                  ))}
+                </div>
+              </section>
+            )}
+            {agent.doing && <p className="instruction agent-doing">{agent.doing}…</p>}
+          </HypothesisBoard>
+        )}
+        {screen === "working" && agent && agent.hyps.length > 0 && (
+          <HypothesisBoard hyps={agent.hyps} rounds={agent.rounds} thinking={false} compact />
+        )}
+
         {screen === "question" && (
           <section className="question-card" aria-live="polite">
             {answered.length > 0 && (
@@ -1335,7 +1606,18 @@ export default function RepairWalkthrough({
               {verdict.verdict === "pro" && verdict.headline && verdict.headline !== verdict.title && (
                 <p className="verdict-line">{verdict.headline}</p>
               )}
+              {agent?.stop?.reason === "blocked" && (
+                <p className="callout callout-caution agent-blocked">
+                  Next test blocked by rule: {agent.stop.title}
+                </p>
+              )}
             </section>
+            {agent && agent.rounds.length > 0 && (
+              <details className="workings agent-workings">
+                <summary>How I got here ({agent.rounds.length} test{agent.rounds.length === 1 ? "" : "s"})</summary>
+                <HypothesisBoard hyps={agent.hyps} rounds={agent.rounds} thinking={false} compact />
+              </details>
+            )}
             {heard && (
               <p className="evidence-note heard-line">
                 Heard: {heard.features.beeps} beep{heard.features.beeps === 1 ? "" : "s"}

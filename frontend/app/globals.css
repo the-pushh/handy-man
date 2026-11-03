@@ -1607,3 +1607,38 @@ section.history-card { cursor: default; }
 
 /* Two-line hints grow the bar (40 -> 64) instead of spilling out. */
 .cutout-bar { height: auto; min-height: 40px; }
+
+/* Agent loop: the live board of possible causes. */
+.hyp-board {
+  border: 1px solid var(--line-faint, rgba(234,226,198,.25)); padding: 15px;
+  display: flex; flex-direction: column; gap: 16px; background: var(--paper);
+}
+.hyp-board.compact { gap: 8px; padding: 0; border: 0; background: transparent; }
+.hyp-head { display: flex; justify-content: space-between; align-items: center; }
+.hyp-head .sheet-label { margin: 0; }
+.hyp-round { margin: 0; font-size: 13px; line-height: 16px; color: var(--line-muted); display: flex; gap: 8px; align-items: center; }
+.hyp-pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--primary); animation: hyp-pulse 1s ease-in-out infinite; }
+@keyframes hyp-pulse { 50% { opacity: .25; } }
+.hyp-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.hyp-label { display: flex; justify-content: space-between; gap: 8px; font-size: 15px; line-height: 24px; color: var(--line-muted); }
+.hyp-row.lead .hyp-label { color: var(--line); font-weight: 600; }
+.hyp-pct { font-variant-numeric: tabular-nums; }
+.hyp-track { position: relative; height: 8px; background: rgba(234,226,198,.1); }
+.hyp-bar {
+  height: 100%; background: var(--line-muted);
+  transition: width .7s cubic-bezier(.2,.8,.2,1), background-color .4s;
+}
+.hyp-row.lead .hyp-bar { background: var(--primary); }
+.hyp-mark { position: absolute; top: -4px; bottom: -4px; width: 1px; background: var(--line); opacity: .6; }
+.hyp-log { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid rgba(234,226,198,.15); padding-top: 8px; }
+.hyp-move, .hyp-why, .hyp-result { margin: 0; font-size: 14px; line-height: 24px; }
+.hyp-move strong { color: var(--primary); font-weight: 600; }
+.hyp-why { color: var(--line-muted); font-size: 13px; line-height: 16px; }
+.hyp-result { color: var(--line); }
+.hyp-result::before { content: "→ "; color: var(--line-muted); }
+.agent-doing { margin: 0; }
+.agent-blocked { margin: 8px 0 0; }
+.agent-workings summary { cursor: pointer; }
+@media (prefers-reduced-motion: reduce) { .hyp-bar { transition: none; } .hyp-pulse { animation: none; } }
+.agent-ask { margin: 0; padding: 15px; border: 1px solid var(--primary); }
+
