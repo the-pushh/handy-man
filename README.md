@@ -70,6 +70,64 @@ While the models work, the screen says what is happening and for how
 long ("Looking for the air conditioner… 4s · Finding it and outlining
 it"), in one voice: the app, not the model names.
 
+## Diagnostic agent loop (experimental, off by default)
+
+On the `feat/agent-loop` branch, behind a flag. With it off the app runs
+exactly as above, and if the loop fails mid-run it falls back to that
+flow.
+
+- **Turn it on:** build the frontend with `NEXT_PUBLIC_AGENT_LOOP=1`, or
+  open the app with `?agent=1` (remembered in that browser; `?agent=0`
+  turns it off).
+- **What it does:** after the quick checks, Muse Spark keeps 3 to 4
+  possible causes with probabilities and runs one test per round, the
+  one that best separates the leading causes, and says why in one line:
+  - **ask_user:** one question with answer chips
+  - **look_closer:** the camera finds and frames one named part, like
+    the first scan
+  - **listen:** 4 s of sound through the existing beep measurement
+  - **segment:** SAM 3.1 outlines a part on the photo
+- **The board:** a live list of causes with animated confidence bars,
+  the 75% line, and every test with its reason and result. Each round
+  is also in the trace drawer ("Handyman agent · round N").
+- **When it stops** (`backend/agent.py`):
+  - **Confident:** the leading cause passes 75%. The regular diagnosis
+    then turns the findings into steps.
+  - **Five tests run:** it stops and does the same.
+  - **Next test blocked:** the best next test is blocked by a safety rule
+    (opening a scooter's panel, touching battery terminals). It escalates
+    to a handyman with "Next test blocked by rule: ...".
+- **Two guards on the stop rules:**
+  - Owner answers are softer evidence than a photo or a measurement. On
+    answers alone, the leading cause is held at 75% until three tests
+    agree.
+  - While the case still rests on answers, a blocked test is first
+    swapped for the best safe one.
+- **Speed:** one model call per round at `minimal` effort, with three
+  identical requests racing and the first answer winning. Rounds take
+  4 to 8 s.
+- **Test:** `SPARK_MODEL=prod python -m eval.agent` runs the AC,
+  inverter and scooter cases. A stand-in owner answers each test from
+  the case's facts. Latest runs: all three pass twice in a row.
+  - **AC:** 1 to 2 tests, filters at 82 to 85%.
+  - **Inverter:** listen, then the panel lights. Battery at 80%, or it
+    escalates.
+  - **Scooter:** 3 to 4 tests, weak battery. The panel rule escalates it.
+  - **Every round:** 4.1 to 7.8 s.
+  The scooter photo is a muse-image render. Like the other photos, it
+  is not committed.
+- **Handyman list:** the top three are ranked by open now, distance and
+  rating, with the reasons shown (`frontend/app/lib/rankPros.ts`), and
+  the rest sit under "More nearby". Each listing with an international
+  number gets a WhatsApp button: a wa.me link with the diagnosis card
+  filled in. The owner presses send.
+- **A separate backend for the branch:**
+  `HANDYMAN_APP=handyman-agent DIAGNOSE_EFFORT=high modal deploy backend/modal_app.py`
+  deploys beside production under its own URL.
+  - `DIAGNOSE_EFFORT=high` makes the final diagnosis more careful, at
+    about 6 to 8 s extra. Leave it out to keep `medium`.
+  - `AGENT_EFFORT` sets the effort for each round (default `minimal`).
+
 ## Which model runs where
 
 All calls are live; there are no canned answers.
@@ -140,6 +198,7 @@ python backend/test_risk.py        # safety rules
 python backend/test_audiofeat.py   # beep measurement
 python backend/test_limits.py      # rate limits
 python backend/test_guard.py       # proxy secret, limits, voice choice
+python backend/test_agent.py       # agent loop rules (no model calls)
 SPARK_MODEL=prod python -m eval.run      # demo cases, live models
 SPARK_MODEL=prod python -m eval.breadth  # 21 everyday cases beyond the demo
 ```
