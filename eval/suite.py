@@ -405,8 +405,15 @@ def main() -> int:
         out.write_text(doc(res))
         print(f"wrote {out.relative_to(ROOT)}")
         return 0
-    ids = set(sys.argv[1:])
-    todo = [c for c in CASES if not ids or c["id"] in ids]
+    args = [a for a in sys.argv[1:] if a != "--feedback"]
+    cases = list(CASES)
+    if "--feedback" in sys.argv[1:]:
+        # Past misses from real use (eval/from_feedback.py).
+        extra = ROOT / "eval" / "out" / "feedback_cases.json"
+        if extra.exists():
+            cases += json.loads(extra.read_text())
+    ids = set(args)
+    todo = [c for c in cases if not ids or c["id"] in ids]
     with ThreadPoolExecutor(max_workers=6) as pool:
         results = list(pool.map(run, todo))
     bad = 0
