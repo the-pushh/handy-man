@@ -19,6 +19,7 @@ everything at startup (backend/config.py) and refuses to start, naming
 each missing key.
 """
 
+import os
 from pathlib import Path
 
 import modal
@@ -26,14 +27,22 @@ import modal
 # ---- Sizing: change it here, then `modal deploy backend/modal_app.py` ----
 CPU = 2.0               # cores reserved per container (can burst above); 2 halves speech time vs 1
 MEMORY_MB = 3072        # a full turn peaks around 1.1 GB
-MIN_CONTAINERS = 1      # 1 = always warm (billed while idle); 0 after judging
+MIN_CONTAINERS = int(os.environ.get("HANDYMAN_MIN_CONTAINERS", "1"))  # 1 = always warm (billed while idle); 0 after judging
 MAX_CONTAINERS = 3      # hard ceiling on parallel containers (the bill)
 CONCURRENT_REQUESTS = 20  # requests one container serves at once
 TIMEOUT_S = 300         # per request; slowest call seen is ~22s, client gives up at 60s
 SCALEDOWN_S = 300       # idle seconds before an extra container stops
 # --------------------------------------------------------------------------
 
-APP_NAME = "handyman-backend"
+# A second backend for a test branch deploys under its own name (and URL)
+# and never touches production:
+#   HANDYMAN_APP=handyman-agent AGENT_EFFORT=minimal DIAGNOSE_EFFORT=high \
+#     modal deploy backend/modal_app.py
+# The name and the effort settings are baked into the image, so the
+# container sees the same values when it imports this file.
+APP_NAME = os.environ.get("HANDYMAN_APP", "handyman-backend")
+TUNING = {k: os.environ[k] for k in ("AGENT_EFFORT", "DIAGNOSE_EFFORT")
+          if os.environ.get(k)}
 BACKEND = Path(__file__).parent
 VOICES = ("facebook/mms-tts-eng", "facebook/mms-tts-hin")
 
@@ -72,7 +81,7 @@ image = (
     .run_function(_bake_voices)
     # Production settings that must never come from the secret.
     .env({"HANDYMAN_ENV": "production", "SPARK_MODEL": "prod",
-          "HF_HUB_OFFLINE": "1"})
+          "HF_HUB_OFFLINE": "1", "HANDYMAN_APP": APP_NAME, **TUNING})
     # The backend package. Never the local .env, tests or caches.
     .add_local_dir(BACKEND, "/root/backend", ignore=[
         ".env", ".env.*", "**/.env", "__pycache__", "**/__pycache__",

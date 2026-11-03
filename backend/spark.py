@@ -480,7 +480,10 @@ def diagnose(appliance: str, device: str | None, labels: list,
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 8000,
         # The answers pass is the verdict: it gets more reasoning.
-        "reasoning_effort": effort or ("medium" if answers.strip() else "low"),
+        # DIAGNOSE_EFFORT (e.g. "high" on a test backend) trades seconds
+        # for a more careful diagnosis; unset keeps the tuned defaults.
+        "reasoning_effort": effort or os.environ.get("DIAGNOSE_EFFORT")
+        or ("medium" if answers.strip() else "low"),
         "response_format": {"type": "json_object"},
     }
     parsed = _complete(url, key, payload, ["causes", "steps"],
