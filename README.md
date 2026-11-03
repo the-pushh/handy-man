@@ -224,7 +224,12 @@ python backend/test_guard.py       # proxy secret, limits, voice choice
 python backend/test_agent.py       # agent loop rules (no model calls)
 SPARK_MODEL=prod python -m eval.run      # demo cases, live models
 SPARK_MODEL=prod python -m eval.breadth  # 21 everyday cases beyond the demo
+SPARK_MODEL=prod python -m eval.suite    # 31 test cases for judges and users
 ```
+
+[docs/TEST_CASES.md](docs/TEST_CASES.md) lists 31 things to try (demo machines, clear
+fixes, unclear cases, safety, language, edge cases) with what you should see and
+the latest dry run of each through the app's own code (`eval/suite.py`).
 
 `eval/breadth.py` checks the app holds beyond the three demo machines:
 washing machine, fridge, fan, TV, router, printer, phone charger, mixer,
