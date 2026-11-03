@@ -55,7 +55,8 @@ export default function Intro({ onClose }: { onClose: () => void }) {
 
         <p className="intro-note">
           Risky jobs get a warning first, and you can still go ahead at your own risk. Your history is
-          saved for this browser, no login, and you can delete it any time.
+          saved for this browser, no login, and how fixes turn out (words only) helps Handyman learn.
+          Turn that off or delete it all in History.
         </p>
 
         <button ref={okRef} type="button" className="btn-primary" onClick={close}>

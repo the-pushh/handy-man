@@ -1,7 +1,7 @@
-/* The diagnostic agent loop is experimental. Modes:
-     off     the regular flow only (the default)
-     auto    the router decides per case (NEXT_PUBLIC_AGENT_LOOP=1, or
-             ?agent=1): the first diagnosis pass, which already runs in
+/* The diagnostic agent loop. Modes:
+     off     the regular flow only (?agent=0, or NEXT_PUBLIC_AGENT_LOOP=0)
+     auto    the default: the router decides per case: the first
+             diagnosis pass, which already runs in
              the background during the quick checks, says whether one
              common cause stands out ("direct": a flat battery, a dirty
              filter) or several are about equally likely ("investigate").
@@ -31,7 +31,7 @@ export function agentMode(): AgentMode {
   } catch {
     /* storage blocked: fall through to the build flag */
   }
-  return parse(process.env.NEXT_PUBLIC_AGENT_LOOP) || "off";
+  return parse(process.env.NEXT_PUBLIC_AGENT_LOOP) || "auto";
 }
 
 /* The router: should this case use the agent's tests? `first` is the

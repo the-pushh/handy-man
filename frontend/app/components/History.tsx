@@ -9,6 +9,7 @@ import CallAPro, { BriefCard, ProList } from "./CallAPro";
 import { resolveApiBase, IS_PROD } from "../lib/apiBase";
 import CautionPin from "./CautionPin";
 import { clearHistory, getMedia, listAllJobs, listJobs, updateJob } from "../lib/history";
+import { setSharing, sharing } from "../lib/feedback";
 import type { Job, MediaKind } from "../lib/history";
 
 function when(iso: string): string {
@@ -299,6 +300,7 @@ export default function History({ onClose }: { onClose: () => void }) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [open, setOpen] = useState<Job | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const [learn, setLearn] = useState<boolean>(() => sharing());
 
   useEffect(() => {
     // This phone's runs at once, then the server's older ones merged in.
@@ -393,6 +395,18 @@ export default function History({ onClose }: { onClose: () => void }) {
           </button>
         </div>
       )}
+      {/* Always reachable, even with no runs yet: the learning switch. */}
+      <label className="risk-check share-check learn-toggle">
+        <input
+          type="checkbox"
+          checked={learn}
+          onChange={(e) => {
+            setLearn(e.target.checked);
+            setSharing(e.target.checked);
+          }}
+        />
+        <span>Learn from how my fixes turn out (words only, no photos)</span>
+      </label>
     </section>
   );
 }

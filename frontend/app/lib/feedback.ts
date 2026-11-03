@@ -1,41 +1,29 @@
-/* Outcome feedback (experimental, backend/feedback.py). Shown only when
-   the build has NEXT_PUBLIC_FEEDBACK=1 or the URL says ?feedback=1
-   (?feedback=0 hides it). Nothing is sent unless the owner ticks "Help
-   improve Handyman"; the choice is remembered in this browser and can
-   be unticked any time. Text only: never photos, sound or location. */
+/* Outcome feedback (backend/feedback.py), on by default for every run in
+   both flows: how it ended (fixed, at which step or quick check, still
+   broken, handyman), the owner's "Was it ...?", the route, tests and
+   answers. Words only: never photos, sound or location. The welcome
+   card says so; History has an off switch, and "Delete my history"
+   removes these rows. The server stores nothing without a database. */
 
 import { fetchJSON } from "./net";
 import { userId } from "./userId";
 
-const FLAG = "handyman-feedback";
-const CONSENT = "handyman-share";
+const OPT_OUT = "handyman-share";
 
-export function feedbackOn(): boolean {
-  if (typeof window === "undefined") return false;
-  try {
-    const q = new URLSearchParams(window.location.search).get("feedback");
-    if (q === "1" || q === "0") window.localStorage.setItem(FLAG, q);
-    const saved = window.localStorage.getItem(FLAG);
-    if (saved === "1" || saved === "0") return saved === "1";
-  } catch {
-    /* fall through */
-  }
-  return process.env.NEXT_PUBLIC_FEEDBACK === "1";
-}
-
+/* True unless the owner turned learning off in History. */
 export function sharing(): boolean {
   try {
-    return window.localStorage.getItem(CONSENT) === "1";
+    return window.localStorage.getItem(OPT_OUT) !== "0";
   } catch {
-    return false;
+    return true;
   }
 }
 
 export function setSharing(on: boolean): void {
   try {
-    window.localStorage.setItem(CONSENT, on ? "1" : "0");
+    window.localStorage.setItem(OPT_OUT, on ? "1" : "0");
   } catch {
-    /* not remembered; this run still follows the tick */
+    /* not remembered */
   }
 }
 
@@ -60,7 +48,7 @@ export interface RunFeedback {
 /* Send (or update) one run's outcome. Fire and forget: feedback never
    slows or breaks a fix. */
 export function sendFeedback(base: string, run: RunFeedback): void {
-  if (!feedbackOn() || !sharing() || !run.id) return;
+  if (!sharing() || !run.id) return;
   void fetchJSON(
     `${base}/api/feedback`,
     {

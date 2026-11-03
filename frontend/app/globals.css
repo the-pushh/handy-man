@@ -1670,3 +1670,4 @@ section.history-card { cursor: default; }
 .share-check { font-size: 13px; line-height: 16px; color: var(--line-muted); }
 .chip.on { border-color: var(--primary); color: var(--primary); }
 .which-check { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; }
+.learn-toggle { flex: none; padding-top: 16px; }

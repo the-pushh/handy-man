@@ -18,7 +18,7 @@ import { getSpeechRecognition } from "../lib/speech";
 import { newJobId, putMedia, saveJob, updateJob } from "../lib/history";
 import { getSpeech, prefetchSpeech } from "../lib/tts";
 import { fetchJSON } from "../lib/net";
-import { feedbackOn, sendFeedback, setSharing, sharing, type RunFeedback } from "../lib/feedback";
+import { sendFeedback, type RunFeedback } from "../lib/feedback";
 import { agentMode, wantsAgent } from "../lib/agentFlag";
 import HypothesisBoard, { toolLabel, type AgentRound, type Hyp } from "./HypothesisBoard";
 
@@ -241,7 +241,7 @@ export default function RepairWalkthrough({
   } | null>(null);
   const agentAnswer = useRef<((a: string) => void) | null>(null);
   // Feedback loop (lib/feedback.ts): how this run ended, sent only when
-  // the owner ticked "Help improve Handyman".
+  // the owner has not turned learning off in History.
   const outcomeRef = useRef<Pick<RunFeedback, "outcome" | "fixed_by" | "confirmed" | "recheck">>({
     outcome: "",
     fixed_by: "",
@@ -249,7 +249,6 @@ export default function RepairWalkthrough({
     recheck: "",
   });
   const routeRef = useRef<string>("regular");
-  const [share, setShare] = useState<boolean>(() => sharing());
   const [wasIt, setWasIt] = useState<boolean | null>(null);
   const [whichCheck, setWhichCheck] = useState<string>("");
   const [answered, setAnswered] = useState<{ ask: string; reply: string }[]>([]);
@@ -1938,50 +1937,34 @@ export default function RepairWalkthrough({
           </>
         )}
 
-        {feedbackOn() &&
-          ((screen === "done" && done && done.state !== "checking") ||
-            screen === "pros" ||
-            (screen === "quick" && quick.state === "fixed")) && (
-            <section className="share-result">
-              {screen === "done" && fixed && verdict?.headline && (
-                <div className="was-it">
-                  <p className="was-it-q">Was it {verdict.headline.replace(/^Looks like /i, "").replace(/\.$/, "").toLowerCase()}?</p>
-                  <div className="chips">
-                    {[
-                      { label: "Yes", v: true },
-                      { label: "Not quite", v: false },
-                    ].map((o) => (
-                      <button
-                        key={o.label}
-                        type="button"
-                        className={`chip${wasIt === o.v ? " on" : ""}`}
-                        onClick={() => {
-                          setWasIt(o.v);
-                          mark("tap", `was it the finding: ${o.label}`);
-                          report({ confirmed: o.v });
-                        }}
-                      >
-                        {o.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-              <label className="risk-check share-check">
-                <input
-                  type="checkbox"
-                  checked={share}
-                  onChange={(e) => {
-                    setShare(e.target.checked);
-                    setSharing(e.target.checked);
-                    mark("tap", `share results ${e.target.checked ? "on" : "off"}`);
-                    if (e.target.checked) report();
-                  }}
-                />
-                <span>Help improve Handyman: share this result (words only, no photos or location)</span>
-              </label>
-            </section>
-          )}
+        {screen === "done" && done && done.state !== "checking" && fixed && verdict?.headline && (
+          // The owner confirms the finding: the strongest signal the
+          // learning loop gets (lib/feedback.ts).
+          <section className="share-result">
+            <div className="was-it">
+              <p className="was-it-q">Was it {verdict.headline.replace(/^Looks like /i, "").replace(/\.$/, "").toLowerCase()}?</p>
+              <div className="chips">
+                {[
+                  { label: "Yes", v: true },
+                  { label: "Not quite", v: false },
+                ].map((o) => (
+                  <button
+                    key={o.label}
+                    type="button"
+                    className={`chip${wasIt === o.v ? " on" : ""}`}
+                    onClick={() => {
+                      setWasIt(o.v);
+                      mark("tap", `was it the finding: ${o.label}`);
+                      report({ confirmed: o.v });
+                    }}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </section>
+        )}
 
         {screen === "pros" && (
           <>
