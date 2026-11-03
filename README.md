@@ -40,9 +40,16 @@ the problem, Type or Photo as the alternatives, and the safety note
 5. **The fix (phase 1).** The picture opens large; the app asks at most one or two
    look-only questions, gives its verdict, then speaks each step while
    highlighting the part it is talking about. The model decides how many
-   steps.
-6. **"Is it fixed now?"** After the last step it takes an after photo,
-   compares it with the before photo, and asks.
+   steps. After each step but the last it asks "Is it working now?",
+   since one step is sometimes the whole fix; "Only ask me after the last
+   step" turns that off. Every step's speech is fetched while the verdict
+   is on screen, so a step starts talking the moment it opens.
+6. **"Is it working now?"** After the last step the camera comes back
+   and scans the machine again the same way as the first time (it says
+   what to do, outlines it, asks you to move if needed, takes the
+   picture). The after photo fills a camera-style screen with the before
+   photo in the corner and the comparison along the bottom; the bar
+   below has "It's working" and "Still broken".
 7. **Still broken? (phase 2)** It asks what's still wrong and runs once
    more with that, without repeating a fix already tried. After that
    second try, or as soon as the model or the rules say a technician is
@@ -59,9 +66,9 @@ the problem, Type or Photo as the alternatives, and the safety note
 10. **History.** Every run is kept on the phone, grouped by machine, with
    each attempt listed under it (photos, steps, verdict, outcome).
 
-While a model works, the screen says what is happening, who is doing it
-and for how long ("Looking for the air conditioner… 4s · Muse Spark looks,
-SAM 3.1 outlines").
+While the models work, the screen says what is happening and for how
+long ("Looking for the air conditioner… 4s · Finding it and outlining
+it"), in one voice: the app, not the model names.
 
 ## Which model runs where
 
