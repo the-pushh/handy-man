@@ -127,6 +127,17 @@ flow.
   - `DIAGNOSE_EFFORT=high` makes the final diagnosis more careful, at
     about 6 to 8 s extra. Leave it out to keep `medium`.
   - `AGENT_EFFORT` sets the effort for each round (default `minimal`).
+- **Model speed:** muse-spark-1.3 writes about 90 tokens a second, and at
+  `low` effort it spends 1,100 to 1,900 tokens thinking. Perceive and
+  diagnosis therefore run at `minimal` by default (`low` for the
+  inverter's answer pass).
+  - **Measured on 2026-11-03:** perceive dropped from 11 s to 6 s, and
+    each diagnosis from 12 to 15 s to 6 to 8 s, with the same findings
+    and steps on the demo cases.
+  - **Evals at this effort:** the breadth eval passes 21 of 21 and the
+    demo eval 7 of 7.
+  - **Raising it per backend:** set `PERCEIVE_EFFORT` and
+    `DIAGNOSE_EFFORT`.
 
 ## Which model runs where
 
