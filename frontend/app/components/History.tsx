@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
 import CallAPro, { BriefCard, ProList } from "./CallAPro";
 import { resolveApiBase, IS_PROD } from "../lib/apiBase";
 import CautionPin from "./CautionPin";
-import { clearHistory, getMedia, listJobs, updateJob } from "../lib/history";
+import { clearHistory, getMedia, listAllJobs, listJobs, updateJob } from "../lib/history";
 import type { Job, MediaKind } from "../lib/history";
 
 function when(iso: string): string {
@@ -301,7 +301,9 @@ export default function History({ onClose }: { onClose: () => void }) {
   const [confirming, setConfirming] = useState(false);
 
   useEffect(() => {
+    // This phone's runs at once, then the server's older ones merged in.
     setJobs(listJobs());
+    void listAllJobs().then(setJobs);
   }, []);
 
   if (open) {
@@ -311,6 +313,7 @@ export default function History({ onClose }: { onClose: () => void }) {
         next={jobs.find((j) => j.parentId === open.id)}
         onBack={() => {
           setJobs(listJobs());
+          void listAllJobs().then(setJobs);
           setOpen(null);
         }}
       />
@@ -322,7 +325,7 @@ export default function History({ onClose }: { onClose: () => void }) {
       <header className="walk-bar">
         <div className="walk-title">
           <p className="history-title">History</p>
-          <p className="sheet-label">On this phone only</p>
+          <p className="sheet-label">Saved for this browser</p>
         </div>
         <button type="button" className="walk-icon" onClick={onClose} aria-label="Close">
           ✕
@@ -386,7 +389,7 @@ export default function History({ onClose }: { onClose: () => void }) {
               setConfirming(false);
             }}
           >
-            {confirming ? "Tap again to clear all history" : "Clear history"}
+            {confirming ? "Tap again to delete it all, here and on our server" : "Delete my history"}
           </button>
         </div>
       )}

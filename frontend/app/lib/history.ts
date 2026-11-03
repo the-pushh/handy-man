@@ -1,10 +1,20 @@
-/* Request history, on this device only (no database, no login).
+/* Request history: on this device, and on the server for this browser.
 
    Job metadata lives in localStorage (one JSON list, newest first, the
    last MAX_JOBS jobs). Photos and the sound clip live in IndexedDB:
    before/after images are downscaled thumbnails, never the full still.
    Every read and write is wrapped: with storage unavailable (private
-   browsing, quota, blocked) the app works normally, just without history. */
+   browsing, quota, blocked) the app works normally, just without history.
+
+   Server copy (backend/history_store.py, when the backend has a
+   database): every job and its small images are also saved under this
+   browser's random ID (lib/userId.ts; one browser is one user, no
+   login). The server keeps more than MAX_JOBS, and an image missing
+   here is fetched from it. Without a database the server answers "off"
+   and this stays local-only. */
+
+import { IS_PROD, resolveApiBase } from "./apiBase";
+import { userId } from "./userId";
 
 export const MAX_JOBS = 20;
 const KEY = "handyman-history";
@@ -102,7 +112,9 @@ export function saveJob(job: Job): void {
   const list = [job, ...read().filter((j) => j.id !== job.id)];
   const dropped = list.slice(MAX_JOBS);
   write(list.slice(0, MAX_JOBS));
+  // Only the local copy is trimmed: the server keeps the older runs.
   for (const j of dropped) void deleteMedia(j.id);
+  pushSoon(job.id);
 }
 
 export function updateJob(id: string, patch: Partial<Job>): void {
@@ -111,9 +123,12 @@ export function updateJob(id: string, patch: Partial<Job>): void {
   if (i < 0) return;
   list[i] = { ...list[i], ...patch, media: { ...list[i].media, ...(patch.media || {}) } };
   write(list);
+  pushSoon(id);
 }
 
 export async function clearHistory(): Promise<void> {
+  // Server first ("Delete my history": runs, images and feedback rows).
+  await remote("/api/history", { method: "DELETE" });
   const ids = read().map((j) => j.id);
   try {
     window.localStorage.removeItem(KEY);
@@ -185,11 +200,92 @@ export async function putMedia(id: string, kind: MediaKind, blob: Blob | null | 
   if (!data) return;
   const ok = await tx("readwrite", (s) => s.put(data, `${id}:${kind}`));
   if (ok !== null) updateJob(id, { media: { [kind]: true } });
+  // The same small file to the server.
+  const fd = new FormData();
+  fd.append("file", data, kind === "clip" ? "clip.wav" : `${kind}.jpg`);
+  void remote(`/api/history/media/${encodeURIComponent(id)}/${kind}`, { method: "PUT", body: fd });
 }
 
 export async function getMedia(id: string, kind: MediaKind): Promise<Blob | null> {
   const out = await tx<Blob>("readonly", (s) => s.get(`${id}:${kind}`));
-  return out instanceof Blob ? out : null;
+  if (out instanceof Blob) return out;
+  // Not on this phone (an older run, or cleared storage): the server copy.
+  const r = await remote(`/api/history/media/${encodeURIComponent(id)}/${kind}`, { method: "GET" }, true);
+  if (!(r instanceof Response) || !r.ok) return null;
+  const blob = await r.blob();
+  void tx("readwrite", (s) => s.put(blob, `${id}:${kind}`));
+  return blob;
+}
+
+/* ---- Server copy ------------------------------------------------------ */
+
+let remoteOff = false;
+
+function base(): string {
+  if (IS_PROD) return "";
+  let stored: string | null = null;
+  try {
+    stored = window.localStorage.getItem("handyman-api-base");
+  } catch (_) {
+    // Storage unavailable.
+  }
+  return resolveApiBase(process.env.NEXT_PUBLIC_API_BASE, stored, window.location.hostname);
+}
+
+/* A request to the history API with this browser's ID. JSON replies are
+   parsed (and "off" switches the server copy off for this session);
+   `raw` returns the Response (images). Never throws. */
+async function remote(path: string, init: RequestInit, raw = false): Promise<unknown> {
+  if (remoteOff || typeof window === "undefined") return null;
+  const user = userId();
+  if (!user) return null;
+  try {
+    const r = await fetch(`${base()}${path}`, {
+      ...init,
+      headers: { ...(init.headers || {}), "x-handyman-user": user },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (raw) return r;
+    const d = (await r.json()) as { status?: string };
+    if (d?.status === "off") remoteOff = true;
+    return d;
+  } catch (_) {
+    return null;
+  }
+}
+
+const pushTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/* Send a job to the server a moment after its last change (a run updates
+   several times as it ends; one request carries them all). */
+function pushSoon(id: string): void {
+  if (remoteOff || typeof window === "undefined") return;
+  const t = pushTimers.get(id);
+  if (t) clearTimeout(t);
+  pushTimers.set(
+    id,
+    setTimeout(() => {
+      pushTimers.delete(id);
+      const job = getJob(id);
+      if (!job) return;
+      void remote(`/api/history/runs/${encodeURIComponent(id)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(job),
+      });
+    }, 800)
+  );
+}
+
+/* Every run for this browser: this phone's, plus older ones only the
+   server still has. The phone's copy wins when both have a run. */
+export async function listAllJobs(): Promise<Job[]> {
+  const local = read();
+  const d = (await remote("/api/history/runs", { method: "GET" })) as { status?: string; runs?: Job[] } | null;
+  if (!d || d.status !== "ok" || !Array.isArray(d.runs)) return local;
+  const seen = new Set(local.map((j) => j.id));
+  const extra = d.runs.filter((j) => j && typeof j.id === "string" && !seen.has(j.id));
+  return [...local, ...extra].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
 }
 
 async function deleteMedia(id: string): Promise<void> {
