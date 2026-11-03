@@ -27,7 +27,7 @@ import time
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -48,8 +48,9 @@ app = FastAPI(title="HandyMan backend")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=config.ALLOWED_ORIGINS or ([] if config.PRODUCTION else ["*"]),
-    allow_methods=["POST", "GET", "OPTIONS"],
-    allow_headers=["Content-Type", "x-session"],
+    allow_methods=["POST", "GET", "PUT", "DELETE", "OPTIONS"],
+    # x-handyman-user: this browser's random ID (History per browser).
+    allow_headers=["Content-Type", "x-session", "x-handyman-user"],
 )
 
 from .limits import Window, wait_text  # noqa: E402
@@ -420,6 +421,9 @@ def _repair_analyze(images, text, components, model, prior=None,
                     notes.replace("The appliance is ", "").rstrip("."),
                     device or None, wanted, text, model=model,
                     sound=sound, answers=answers, ahead=ahead,
+                    # Feedback loop: causes owners confirmed in past
+                    # cases like this one, as base rates (backend/feedback.py).
+                    priors=_priors(f"{device} {analysis.get('appliance') or ''}", text),
                     # One notch more where the call is subtle (inverter
                     # floats vs terminals); minimal elsewhere (same
                     # findings and steps, ~2x faster; see spark._effort).
@@ -938,3 +942,160 @@ async def agent_step(machine: str = Form(""), issue: str = Form(...),
         out["findings"] = agent.findings(
             out["seen"], out["hypotheses"], st.get("history") or [])
     return {"status": "ok", **out, "trace": trace.export()}
+
+
+_feedback_ip = Window(60, 3600)
+
+
+def _priors(machine: str, said: str) -> str:
+    """Learned base rates for this machine and symptom, or "". Shown in
+    the trace so a judge can see when past outcomes were used."""
+    from . import feedback
+    if not feedback.enabled():
+        return ""
+    with trace.call("feedback store", "confirmed causes", kind="hop") as rec:
+        try:
+            text = feedback.priors_text(machine, said)
+        except Exception as exc:
+            rec["error"] = str(exc)[:200]
+            text = ""
+        rec["parsed"] = {"priors": text or "none yet"}
+    return text
+
+
+class FeedbackRequest(BaseModel):
+    id: str
+    parent_id: str | None = None
+    machine: str = ""
+    said: str = ""
+    route: str = ""
+    finding: str = ""
+    verdict: str = ""
+    rule: str | None = None
+    outcome: str = ""
+    fixed_by: str = ""
+    confirmed: bool | None = None
+    recheck: str = ""
+    tests: list | str = ""
+    answers: str = ""
+    app: str = ""
+
+
+@app.post("/api/feedback")
+def feedback_post(req: FeedbackRequest, request: Request):
+    """One run's outcome, sent only when the owner opted in on the phone.
+    Text only (no photos, sound, location or IP). Off without
+    DATABASE_URL: the app then works exactly as before."""
+    from . import feedback
+    if not feedback.enabled():
+        return {"status": "off"}
+    wait = _feedback_ip.take(request.state.ip)
+    if wait:
+        return _slow_down(wait, "sent a lot of feedback")
+    try:
+        run = req.model_dump()
+        user = request.headers.get("x-handyman-user", "").strip().lower()
+        if _USER_RX.match(user):
+            run["user_id"] = user
+        out = feedback.record(run)
+    except Exception as exc:
+        return {"status": "feedback-error", "detail": str(exc)[:200]}
+    trace.log_outcome("feedback", id=req.id[:12], outcome=req.outcome,
+                      machine=feedback.machine_key(req.machine, req.said),
+                      cause=feedback.cause_key(req.finding), status=out["status"])
+    return out
+
+
+# --- History per browser (backend/history_store.py) -----------------------
+_USER_RX = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+_history_ip = Window(1500, 3600)
+
+
+def _history_guard(request: Request):
+    """(user id, None) or (None, the response to return)."""
+    from . import history_store
+    if not history_store.enabled():
+        return None, {"status": "off"}
+    wait = _history_ip.take(request.state.ip)
+    if wait:
+        return None, _slow_down(wait, "saved a lot of history")
+    user = request.headers.get("x-handyman-user", "").strip().lower()
+    if not _USER_RX.match(user):
+        return None, JSONResponse({"status": "bad-user"}, status_code=400)
+    return user, None
+
+
+@app.put("/api/history/runs/{run_id}")
+async def history_put_run(run_id: str, request: Request):
+    from . import history_store
+    user, stop = _history_guard(request)
+    if stop is not None:
+        return stop
+    try:
+        job = await request.json()
+        await run_in_threadpool(history_store.put_run, user, run_id, job)
+    except history_store.Refused as exc:
+        return JSONResponse({"status": "refused", "detail": str(exc)}, status_code=400)
+    except Exception as exc:
+        return {"status": "history-error", "detail": str(exc)[:200]}
+    return {"status": "ok"}
+
+
+@app.get("/api/history/runs")
+async def history_list(request: Request):
+    from . import history_store
+    user, stop = _history_guard(request)
+    if stop is not None:
+        return stop
+    try:
+        runs = await run_in_threadpool(history_store.list_runs, user)
+    except Exception as exc:
+        return {"status": "history-error", "detail": str(exc)[:200], "runs": []}
+    return {"status": "ok", "runs": runs}
+
+
+@app.put("/api/history/media/{run_id}/{kind}")
+async def history_put_media(run_id: str, kind: str, request: Request,
+                            file: UploadFile = File(...)):
+    from . import history_store
+    user, stop = _history_guard(request)
+    if stop is not None:
+        return stop
+    try:
+        data = await file.read()
+        await run_in_threadpool(history_store.put_media, user, run_id, kind,
+                                file.content_type or "", data)
+    except history_store.Refused as exc:
+        return JSONResponse({"status": "refused", "detail": str(exc)}, status_code=400)
+    except Exception as exc:
+        return {"status": "history-error", "detail": str(exc)[:200]}
+    return {"status": "ok"}
+
+
+@app.get("/api/history/media/{run_id}/{kind}")
+async def history_get_media(run_id: str, kind: str, request: Request):
+    from . import history_store
+    user, stop = _history_guard(request)
+    if stop is not None:
+        return stop
+    try:
+        got = await run_in_threadpool(history_store.get_media, user, run_id, kind)
+    except history_store.Refused as exc:
+        return JSONResponse({"status": "refused", "detail": str(exc)}, status_code=400)
+    if not got:
+        return JSONResponse({"status": "not-found"}, status_code=404)
+    mime, data = got
+    return Response(content=data, media_type=mime,
+                    headers={"Cache-Control": "private, max-age=86400"})
+
+
+@app.delete("/api/history")
+async def history_delete(request: Request):
+    """Delete my history: this browser's runs, images and feedback rows."""
+    from . import history_store
+    user, stop = _history_guard(request)
+    if stop is not None:
+        return stop
+    await run_in_threadpool(history_store.delete_all, user)
+    trace.log_outcome("history deleted", user=user[:8])
+    return {"status": "ok"}
