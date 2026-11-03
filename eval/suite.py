@@ -338,7 +338,7 @@ def expected_text(c: dict) -> str:
     if e.get("route") == "direct":
         parts.append("Then straight to the fix (one cause stands out).")
     elif e.get("route") == "investigate":
-        parts.append("With the agent on, a few tests first (several causes fit).")
+        parts.append("A few tests first (several causes fit).")
     if e.get("verdict") == "diy":
         parts.append("A fix you can do, step by step"
                      + (f", about {'/'.join(e['headline'][:2])}" if e.get("headline") else "") + ".")
@@ -358,9 +358,9 @@ def doc(results: dict) -> str:
         "",
         "Thirty-one things to try in Handyman, the way a judge or a first-time",
         "user might. Point the camera at the machine (or add a photo), then",
-        "say or type the words in the second column. Open the app with",
-        "`?agent=1` to let it run tests on unclear cases (`?agent=0` turns",
-        "that off).",
+        "say or type the words in the second column. Unclear cases get a",
+        "few tests first; clear ones go straight to the fix (`?agent=0`",
+        "keeps every case on the regular flow).",
         "",
         "The last column is the latest dry run of each case through the",
         "app's own code with live models (`SPARK_MODEL=prod python -m",
@@ -431,7 +431,16 @@ def main() -> int:
     out = ROOT / "eval" / "out" / "suite-report.md"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(report(results))
-    (ROOT / "eval" / "out" / "suite-results.json").write_text(json.dumps(results, indent=1))
+    # A partial run (some case ids) updates those cases in the saved
+    # results instead of replacing the full set the case list is built from.
+    saved = ROOT / "eval" / "out" / "suite-results.json"
+    merged = {}
+    if ids and saved.exists():
+        merged = {r["id"]: r for r in json.loads(saved.read_text())}
+    merged.update({r["id"]: r for r in results})
+    order = [c["id"] for c in cases]
+    saved.write_text(json.dumps(sorted(merged.values(), key=lambda r: order.index(r["id"])
+                                       if r["id"] in order else 999), indent=1))
     print(f"\n{len(results) - bad} of {len(results)} as expected; report: {out.relative_to(ROOT)}")
     return 1 if bad else 0
 

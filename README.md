@@ -70,15 +70,17 @@ While the models work, the screen says what is happening and for how
 long ("Looking for the air conditioner… 4s · Finding it and outlining
 it"), in one voice: the app, not the model names.
 
-## Diagnostic agent loop (experimental, off by default)
+## Diagnostic agent loop (on by default on `feat/agent-loop`)
 
-On the `feat/agent-loop` branch, behind a flag. With it off the app runs
-exactly as above, and if the loop fails mid-run it falls back to that
-flow.
+On the `feat/agent-loop` branch the router is on by default: clear cases
+take the regular flow above, unclear ones the agent's tests. If the
+loop fails mid-run, the regular flow takes over.
 
-- **Turn it on:** build the frontend with `NEXT_PUBLIC_AGENT_LOOP=1`, or
-  open the app with `?agent=1` (remembered in that browser; `?agent=0`
-  turns it off, `?agent=always` sends every case to the agent).
+- **Switches:**
+  - `?agent=0` (or `NEXT_PUBLIC_AGENT_LOOP=0`) keeps every case on the
+    regular flow.
+  - `?agent=always` sends every case to the agent.
+  - A URL choice is remembered in that browser.
 - **When it is used:** only for unclear cases, so a simple fix is not
   tested into doubt. The first diagnosis pass already runs during the
   quick checks, and it also says `route`.
@@ -142,7 +144,8 @@ flow.
     ID kept in the browser. The server keeps up to 500 runs per browser
     (the phone keeps 20). A run or image missing on the phone is fetched
     from the server.
-  - **Outcomes** (opt-in, words only): the route, the tests and answers,
+  - **Outcomes** (every run, both flows, words only): the route, the
+    tests and answers,
     the finding, how it ended (fixed at which step, fixed by which quick
     check, still broken, handyman), the owner's "Was it …?" and the
     after-photo check.
@@ -164,8 +167,12 @@ flow.
   - **Turn it on:**
     1. Create the Neon database in Vercel (Storage).
     2. Put its connection string in the Modal secret as `DATABASE_URL`.
-    3. Build the frontend with `NEXT_PUBLIC_FEEDBACK=1` to show the
-       opt-in, or open the app with `?feedback=1`.
+
+    Nothing else is needed. Recording is on by default for every run:
+    - the welcome card says so;
+    - History has a "Learn from how my fixes turn out" switch to turn
+      it off;
+    - "Delete my history" removes these rows.
 - **A separate backend for the branch:**
   `HANDYMAN_APP=handyman-agent DIAGNOSE_EFFORT=high modal deploy backend/modal_app.py`
   deploys beside production under its own URL.
@@ -331,9 +338,9 @@ Backend on [Modal](https://modal.com), frontend on Vercel. No database.
     the handymen found and contacted, and the small before, after and
     step pictures and highlights. "Delete my history" in History removes
     them from the phone and the server.
-  - **Learning data:** separate from History, and only when the owner
-    ticks "Help improve Handyman". It is words only: no photos, sound,
-    location or IP.
+  - **Learning data:** separate from History. It is recorded for every
+    run unless the owner turns it off in History. It is words only: no
+    photos, sound, location or IP. The welcome card says so.
   - **Location:** it goes in a request body, never in a URL, and only
     when the handyman list opens.
 - **Unused:** `infra/setup.sh` (an earlier Google Cloud Run setup) is kept

@@ -2,9 +2,9 @@
 
 Thirty-one things to try in Handyman, the way a judge or a first-time
 user might. Point the camera at the machine (or add a photo), then
-say or type the words in the second column. Open the app with
-`?agent=1` to let it run tests on unclear cases (`?agent=0` turns
-that off).
+say or type the words in the second column. Unclear cases get a
+few tests first; clear ones go straight to the fix (`?agent=0`
+keeps every case on the regular flow).
 
 The last column is the latest dry run of each case through the
 app's own code with live models (`SPARK_MODEL=prod python -m
@@ -37,13 +37,13 @@ run on words alone. Result: 28 of 31 as expected (2026-11-03, muse-spark-1.3).
 
 | # | Say or type | You should see | Last dry run |
 |---|---|---|---|
-| C1 | "the laptop is not starting" | Quick checks first. With the agent on, a few tests first (several causes fit). | handyman (laptop repair): Looks like internal hardware failure. [investigate, 5 test(s)] |
-| C2 | "the fridge is not cooling" | Quick checks first. With the agent on, a few tests first (several causes fit). | handyman (appliance repair technician): Looks like start relay failure. [investigate, 4 test(s)] |
-| C3 | "the washing machine makes a loud banging noise while spinning" | Quick checks first. With the agent on, a few tests first (several causes fit). A fix you can do, step by step. | handyman (appliance repair tech): Looks like a loose counterweight. [investigate, 5 test(s)] **Miss:** verdict pro (want diy) |
-| C4 | "my car won't start in the morning" | Quick checks first. With the agent on, a few tests first (several causes fit). | handyman (car mechanic): Looks like weak battery. [investigate, 5 test(s)] |
-| C5 | "the wifi keeps disconnecting every few minutes" | Quick checks first. With the agent on, a few tests first (several causes fit). | handyman (ISP technician): Looks like loose WAN connection. [investigate, 5 test(s)] |
-| C6 | "the ceiling fan hums and runs very slowly" | Quick checks first. With the agent on, a few tests first (several causes fit). | handyman (electrician): Looks like failed run capacitor. [investigate, 2 test(s)] |
-| C7 | "the water purifier is leaking from the bottom" | Quick checks first. With the agent on, a few tests first (several causes fit). | fix it yourself: Looks like loose filter housing. [investigate, 5 test(s)] |
+| C1 | "the laptop is not starting" | Quick checks first. A few tests first (several causes fit). | handyman (laptop repair): Looks like internal hardware failure. [investigate, 5 test(s)] |
+| C2 | "the fridge is not cooling" | Quick checks first. A few tests first (several causes fit). | handyman (appliance repair technician): Looks like start relay failure. [investigate, 4 test(s)] |
+| C3 | "the washing machine makes a loud banging noise while spinning" | Quick checks first. A few tests first (several causes fit). A fix you can do, step by step. | handyman (appliance repair tech): Looks like a loose counterweight. [investigate, 5 test(s)] **Miss:** verdict pro (want diy) |
+| C4 | "my car won't start in the morning" | Quick checks first. A few tests first (several causes fit). | handyman (car mechanic): Looks like weak battery. [investigate, 5 test(s)] |
+| C5 | "the wifi keeps disconnecting every few minutes" | Quick checks first. A few tests first (several causes fit). | handyman (ISP technician): Looks like loose WAN connection. [investigate, 5 test(s)] |
+| C6 | "the ceiling fan hums and runs very slowly" | Quick checks first. A few tests first (several causes fit). | handyman (electrician): Looks like failed run capacitor. [investigate, 2 test(s)] |
+| C7 | "the water purifier is leaking from the bottom" | Quick checks first. A few tests first (several causes fit). | fix it yourself: Looks like loose filter housing. [investigate, 5 test(s)] |
 
 ## Safety
 

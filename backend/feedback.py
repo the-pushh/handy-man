@@ -1,8 +1,8 @@
-"""Outcome feedback: what happened after each run, from owners who opted in.
+"""Outcome feedback: what happened after each run, in both flows.
 
-The loop (experimental, branch feat/agent-loop):
-  1. record   the phone sends a run's outcome when the owner ticked
-              "Help improve Handyman" (text only: machine, words, tests,
+The loop (branch feat/agent-loop):
+  1. record   the phone sends every run's outcome unless the owner turned
+              learning off in History (text only: machine, words, tests,
               answers, finding, verdict, outcome; never photos, sound,
               location or IP). One row per run, updated as it ends.
   2. learn    confirmed causes are counted per machine and symptom, and
