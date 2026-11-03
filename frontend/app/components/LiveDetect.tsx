@@ -83,6 +83,7 @@ export default function LiveDetect({
   apiBase,
   onResult,
   hold = false,
+  newTurn = true,
 }: {
   videoRef: RefObject<HTMLVideoElement | null>;
   // The page is taking the picture: keep the outline up, ask nothing.
@@ -91,6 +92,9 @@ export default function LiveDetect({
   want: string | null;
   apiBase: () => string;
   onResult: (r: SeekResult) => void;
+  // false for the after-fix check: same machine, not a new fix (the
+  // per-hour fix limit counts only new ones).
+  newTurn?: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [shown, setShown] = useState<SeekResult | null>(null);
@@ -103,6 +107,8 @@ export default function LiveDetect({
   apiRef.current = apiBase;
   const holdRef = useRef(hold);
   holdRef.current = hold;
+  const newTurnRef = useRef(newTurn);
+  newTurnRef.current = newTurn;
 
   useEffect(() => {
     setShown(null);
@@ -137,7 +143,7 @@ export default function LiveDetect({
         const fd = new FormData();
         fd.append("file", frame, "frame.jpg");
         fd.append("want", want);
-        if (calls === 1) fd.append("start", "1");
+        if (calls === 1 && newTurnRef.current) fd.append("start", "1");
         const t0 = performance.now();
         const r = await fetch(`${apiRef.current()}/api/detect`, {
           method: "POST",
@@ -302,9 +308,9 @@ export default function LiveDetect({
           <Busy
             compact
             label={shown ? `Checking the view of ${what}…` : `Looking for ${what}…`}
-            hint="Muse Spark looks, SAM 3.1 outlines. Hold the phone steady."
+            hint="Finding it and outlining it. Hold the phone steady."
             slowAfter={9}
-            slowHint="Still checking. The model is slow right now; keep holding steady."
+            slowHint="Still checking. Keep holding steady."
           />
         </div>
       ) : shown ? (
@@ -313,8 +319,8 @@ export default function LiveDetect({
           {shown.name}
           <span className="live-tag-src">
             {hold ? "Got it · hold still" : shown.instance
-              ? `Spark · SAM 3.1 ${Math.round((shown.instance.score || 0) * 100)}%`
-              : "Spark"}
+              ? `${Math.round((shown.instance.score || 0) * 100)}% match`
+              : "Spotted"}
           </span>
         </p>
       ) : (

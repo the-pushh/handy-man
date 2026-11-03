@@ -1566,3 +1566,44 @@ section.history-card { cursor: default; }
   .intro-title { font-size: 20px; line-height: 24px; }
   .intro-lead, .intro-list { font-size: 14px; line-height: 24px; }
 }
+
+/* The bottom bar holding actions (after-fix check): two equal buttons. */
+.controlbar.acting { grid-template-columns: 1fr 1fr; align-items: end; }
+.controlbar.acting > button { min-height: 48px; }
+
+/* The fix check, shaped like the camera screen: the after photo fills
+   the frame, before in the corner, the result along the bottom. */
+.walk-body.confirm-body { display: flex; flex-direction: column; overflow: visible; padding: 8px; }
+.confirm-frame { flex: 1; min-height: 160px; margin: 0; }
+.confirm-frame .confirm-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+.confirm-frame .cutout-bar { height: auto; min-height: 40px; z-index: 5; }
+.confirm-before {
+  position: absolute; top: 16px; left: 16px; width: 96px; margin: 0; z-index: 5;
+  background: var(--paper-deep); box-shadow: 0 0 0 1px var(--line);
+}
+.confirm-before img { display: block; width: 96px; height: 72px; object-fit: cover; }
+.confirm-before figcaption { font-size: 11px; line-height: 16px; text-align: center; color: var(--line); }
+.confirm-frame.ok .cutout-bar { box-shadow: inset 0 2px 0 var(--success); }
+.confirm-frame.bad .cutout-bar { box-shadow: inset 0 2px 0 var(--error); }
+.walk-cta.confirm-bar { padding-bottom: calc(8px + env(safe-area-inset-bottom)); }
+.walk-cta.confirm-bar button { min-height: 48px; }
+
+/* Between steps: "Is it working now?" over a dimmed step. */
+.mid-backdrop {
+  position: absolute; inset: 0; z-index: 30;
+  display: flex; align-items: flex-end; justify-content: center;
+  padding: 16px; background: rgba(0, 0, 0, 0.6);
+  animation: tip-in 0.2s ease-out;
+}
+.mid-card {
+  width: 100%; max-width: 400px; display: flex; flex-direction: column; gap: 16px;
+  background: var(--paper); color: var(--line); border: 1px solid var(--line); padding: 23px;
+}
+.mid-card .sheet-label, .mid-card .instruction { margin: 0; }
+.mid-why { margin: 0; font-size: 15px; line-height: 24px; color: var(--line-muted); }
+.mid-actions { display: flex; gap: 8px; }
+.mid-actions > * { flex: 1; min-height: 48px; }
+@media (prefers-reduced-motion: reduce) { .mid-backdrop { animation: none; } }
+
+/* Two-line hints grow the bar (40 -> 64) instead of spilling out. */
+.cutout-bar { height: auto; min-height: 40px; }

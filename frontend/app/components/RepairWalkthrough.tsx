@@ -16,6 +16,7 @@ import type { ScanWarning } from "./LiveDetect";
 import { paintMasks } from "../lib/masks";
 import { getSpeechRecognition } from "../lib/speech";
 import { newJobId, putMedia, saveJob, updateJob } from "../lib/history";
+import { getSpeech, prefetchSpeech } from "../lib/tts";
 
 /* The rules layer's decision (backend/risk.py): the model proposes
    steps, the rules decide which an owner may do. */
@@ -68,15 +69,20 @@ interface Question {
 const ORANGE = "#e86a17";
 
 const cap = (t: string) => (t ? t[0].toUpperCase() + t.slice(1) : t);
+// A model fragment as a sentence: capitalised, ending in a full stop.
+const sentence = (t: string) => {
+  const c = cap((t || "").trim());
+  return c && !/[.!?]$/.test(c) ? `${c}.` : c;
+};
 
-// Who is working during each wait, and how long it usually takes.
+// What is happening during each wait, and how long it usually takes.
 const BUSY: Record<string, { hint: string; slowAfter: number }> = {
   "Working it out…": {
-    hint: "Muse Spark is reading the photo and what you said; then the safety rules check its plan. Usually 15–30 s.",
+    hint: "Reading the photo and what you said, then making sure the plan is safe. Usually 15 to 30 s.",
     slowAfter: 35,
   },
-  "Deciding…": { hint: "Muse Spark is deciding with your answers. Usually 10–20 s.", slowAfter: 25 },
-  "Outlining parts…": { hint: "SAM 3.1 is outlining the parts on your photo. A few seconds.", slowAfter: 10 },
+  "Deciding…": { hint: "Working through your answers. Usually 10 to 20 s.", slowAfter: 25 },
+  "Outlining parts…": { hint: "Marking the parts on your photo. A few seconds.", slowAfter: 10 },
 };
 
 // Phases on one machine: 0 = quick checks, then up to MAX_RUNS rounds of
@@ -166,8 +172,17 @@ export default function RepairWalkthrough({
   const quickTried = useRef<string>("");
   // One screen at a time: the verdict (main), then the steps on tap.
   const [view, setView] = useState<"main" | "steps">("main");
+  const viewRef = useRef<"main" | "steps">("main");
+  viewRef.current = view;
   const [stepLoading, setStepLoading] = useState<boolean>(false);
   const [fixed, setFixed] = useState<boolean>(false);
+  // Fixed part-way through: the step that did it (1-based), else null.
+  const [fixedAt, setFixedAt] = useState<number | null>(null);
+  // "Is it working now?" between steps: the step just done, or null.
+  // The owner can tick "only ask after the last step" to stop it.
+  const [midAsk, setMidAsk] = useState<number | null>(null);
+  const [onlyAtEnd, setOnlyAtEnd] = useState<boolean>(false);
+  const [onlyAtEndTick, setOnlyAtEndTick] = useState<boolean>(false);
   const [booking, setBooking] = useState<boolean>(false);
   // Done screen: before/after stills, Spark's re-check, time taken.
   const [done, setDone] = useState<{
@@ -335,7 +350,9 @@ export default function RepairWalkthrough({
   function say(line: string, maxSeconds?: number): Promise<void> {
     setSaid((prev) => [...prev, line]);
     const gen = speechGen.current;
-    const audio = synthQueue.current.then(() => fetchSpeech(line, maxSeconds));
+    // A line hushed before its turn is never fetched, so it cannot hold
+    // up the next step's speech.
+    const audio = synthQueue.current.then(() => (gen === speechGen.current ? fetchSpeech(line, maxSeconds) : null));
     synthQueue.current = audio.catch(() => null);
     speechQueue.current = speechQueue.current
       .then(() => audio)
@@ -369,21 +386,8 @@ export default function RepairWalkthrough({
 
   /* MMS-TTS audio for a line as an object URL, or null (browser voice). */
   async function fetchSpeech(line: string, maxSeconds?: number): Promise<string | null> {
-    mark("tts request", JSON.stringify(line.slice(0, 40)));
-    try {
-      const r = await fetch(`${API}/api/tts`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: line, lang: "en", max_seconds: maxSeconds ?? null }),
-      });
-      const data = await r.json();
-      mark("tts audio received", data.audio_b64 ? "" : "fallback");
-      if (!data.audio_b64) return null;
-      const bytes = Uint8Array.from(atob(data.audio_b64), (c) => c.charCodeAt(0));
-      return URL.createObjectURL(new Blob([bytes], { type: data.mime || "audio/wav" }));
-    } catch (_) {
-      return null;
-    }
+    const blob = await getSpeech(API, line, "en", maxSeconds ?? null);
+    return blob ? URL.createObjectURL(blob) : null;
   }
 
   async function playSpeech(url: string | null, line: string): Promise<void> {
@@ -694,7 +698,21 @@ export default function RepairWalkthrough({
       // Steps start when the owner taps "Show me the steps" (one screen
       // at a time), so the verdict screen only says what to tap.
       if (v && foundSteps.length) {
-        void say(v.verdict === "pro" ? "You can call a handyman from here." : "Tap show me the steps when you're ready.");
+        // Every step's lines, fetched now while the owner reads the
+        // verdict, so each step starts speaking the moment it opens.
+        const total = foundSteps.length;
+        prefetchSpeech(API, [
+          ...foundSteps.flatMap((st: { check: string; how: string; caution?: string | null }, i: number) =>
+            stepLines(st, i, total, null)),
+          ...["A", "B", "C", "D"].slice(0, Math.min(4, total + 1)).map((t) => `Look for ${t} on the photo.`),
+          "Is it working now?",
+          "Great. It's fixed.",
+          "What's still not right?",
+        ]);
+        // Skipped when the owner already tapped through to the steps.
+        if (viewRef.current !== "steps") {
+          void say(v.verdict === "pro" ? "You can call a handyman from here." : "Tap show me the steps when you're ready.");
+        }
       }
     } catch (e) {
       const err = e as Error;
@@ -719,22 +737,29 @@ export default function RepairWalkthrough({
     );
   }
 
+  /* What a step says, in short pieces: the first is a small clip that
+     starts at once, the rest follow. Prefetched when the verdict lands. */
+  function stepLines(
+    st: { check: string; how: string; caution?: string | null },
+    i: number,
+    total: number,
+    tag: string | null
+  ): string[] {
+    return [
+      `Step ${i + 1} of ${total}. ${st.check}.`,
+      st.how,
+      tag ? `Look for ${tag} on the photo.` : "",
+      st.caution ? `Careful. ${st.caution}` : "",
+    ].filter(Boolean);
+  }
+
   async function speakStep(
     st: { check: string; how: string; part: string | null; caution?: string | null },
     i: number,
     total: number,
     leg: { label: string; tag?: string }[] = legend
   ): Promise<void> {
-    const tag = tagFor(st.part, leg);
-    // Short pieces, each synthesised as soon as it is queued: the first
-    // is a small clip that starts within a second or two, the rest
-    // stream in behind it instead of one large WAV over the tunnel.
-    const parts = [
-      `Step ${i + 1} of ${total}: ${st.check}.`,
-      st.how,
-      tag ? `Look for ${tag} on the photo.` : "",
-      st.caution ? `Careful: ${st.caution}` : "",
-    ].filter(Boolean) as string[];
+    const parts = stepLines(st, i, total, tagFor(st.part, leg));
     let last: Promise<void> = Promise.resolve();
     for (const p of parts) last = say(p);
     await last;
@@ -877,6 +902,41 @@ export default function RepairWalkthrough({
     }
   }
 
+  /* Next on a step that is not the last: ask whether that already fixed
+     it, unless the owner asked to be asked only at the end. */
+  function nextStep(): void {
+    const i = stepIdx;
+    if (verdict?.verdict === "diy" && !onlyAtEnd) {
+      hush();
+      setOnlyAtEndTick(false);
+      setMidAsk(i);
+      mark("asked mid-fix", `after step ${i + 1}`);
+      void say("Is it working now?");
+      return;
+    }
+    void goStep(i + 1);
+  }
+
+  function midAnswer(working: boolean): void {
+    const i = midAsk ?? stepIdx;
+    if (onlyAtEndTick) setOnlyAtEnd(true);
+    setMidAsk(null);
+    mark("tap", `${working ? "working" : "not yet"} after step ${i + 1}${onlyAtEndTick ? " (ask at end only)" : ""}`);
+    if (!working) {
+      void goStep(i + 1);
+      return;
+    }
+    // Fixed early: close the run here, no camera check needed.
+    hush();
+    askedFixed.current = true;
+    const seconds = Math.round(turnElapsed());
+    setFixedAt(i + 1);
+    setFixed(true);
+    setDone({ afterURL: "", state: "ok", looksFixed: null, seen: "", next: null, seconds });
+    if (jobId.current) updateJob(jobId.current, { outcome: "fixed", seconds });
+    void say("Great. It's fixed.");
+  }
+
   /* "Find a pro" from a pro verdict: that is this job's outcome. */
   function openPro(): void {
     setBooking(true);
@@ -887,7 +947,7 @@ export default function RepairWalkthrough({
   useEffect(() => {
     if (!done || done.state === "checking" || askedFixed.current) return;
     askedFixed.current = true;
-    void say("Is it fixed now?");
+    void say("Is it working now?");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [done?.state]);
 
@@ -1036,6 +1096,7 @@ export default function RepairWalkthrough({
 
   function showSteps(): void {
     mark("tap", "show me the steps");
+    viewRef.current = "steps";
     setView("steps");
     void goStep(0);
   }
@@ -1144,10 +1205,10 @@ export default function RepairWalkthrough({
             <canvas ref={canvasRef} className="mask-layer" hidden={!!overlayURL} />
           </div>
           {overlayURL ? (
-            <figcaption>Illustrative highlight (Muse Image), not a measured outline</figcaption>
+            <figcaption>An illustration of where to look, not traced from your photo</figcaption>
           ) : instances.length > 0 && screen !== "steps" ? (
             <figcaption>
-              Outlined by SAM 3.1:{" "}
+              Parts found{" "}
               {[...new Set(instances.map((inst) => inst.label))].map((label) => {
                 const mine = instances.flatMap((inst, i) => (inst.label === label ? [i] : []));
                 const on = mine.some((i) => !hidden.has(i));
@@ -1174,11 +1235,11 @@ export default function RepairWalkthrough({
         </figure>
       )}
 
-      <div className="walk-body">
+      <div className={`walk-body${screen === "done" ? " confirm-body" : ""}`}>
         {screen === "quick" && quick.state === "loading" && (
           <Busy
             label="Finding the usual quick checks…"
-            hint="Muse Spark lists what most people try first for this. A few seconds."
+            hint="Listing what most people try first. A few seconds."
             slowAfter={12}
           />
         )}
@@ -1279,7 +1340,7 @@ export default function RepairWalkthrough({
               <p className="evidence-note heard-line">
                 Heard: {heard.features.beeps} beep{heard.features.beeps === 1 ? "" : "s"}
                 {heard.features.beep_interval_ms ? ` every ${(heard.features.beep_interval_ms / 1000).toFixed(1)} s` : ""}
-                {heard.wonder ? ` · Muse Wonder: ${heard.wonder.beeps ?? "?"} beeps` : ""}
+                {heard.wonder ? ` · second listen ${heard.wonder.beeps ?? "?"} beeps` : ""}
                 {!heard.agree ? " (they disagree)" : ""}
               </p>
             )}
@@ -1372,33 +1433,43 @@ export default function RepairWalkthrough({
         )}
 
         {screen === "done" && done && (
-          <section className={`done-card ${done.looksFixed === true ? "ok" : done.looksFixed === false ? "bad" : ""}`}>
-            <div className="before-after">
-              <figure>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={stillURLs[0] || imgURL} alt="before the fix" />
-                <figcaption>Before</figcaption>
-              </figure>
-              <figure>
-                {done.afterURL ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={done.afterURL} alt="after the fix" />
-                ) : (
-                  <div className="after-missing">No camera frame</div>
-                )}
-                <figcaption>After</figcaption>
-              </figure>
-            </div>
-            <div className="done-result" role="status">
-              {done.state === "checking" && (
-                <Busy label="Checking the after photo…" hint="Muse Spark compares before and after. Usually 5–10 s." slowAfter={15} />
+          <>
+            {/* Looks like the camera screen: the after photo fills the
+                frame, the before photo sits in the corner, the result
+                reads along the bottom, and the bar below answers. */}
+            <div className={`cutout confirm-frame ${done.looksFixed === true || fixed ? "ok" : done.looksFixed === false ? "bad" : ""}`}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img className="confirm-img" src={done.afterURL || stillURLs[0] || imgURL} alt={done.afterURL ? "after the fix" : "your photo"} />
+              {done.afterURL && (
+                <figure className="confirm-before">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={stillURLs[0] || imgURL} alt="before the fix" />
+                  <figcaption>Before</figcaption>
+                </figure>
               )}
-              {done.state === "error" && "Couldn't run the check. Just tell me below."}
-              {done.state === "ok" && done.looksFixed === true && <>✓ {cap(done.seen)}</>}
-              {done.state === "ok" && done.looksFixed === false && <>✗ {cap(done.next || done.seen)}</>}
-              {done.state === "ok" && done.looksFixed === null && <>Couldn&apos;t see it clearly. {cap(done.next || "")}</>}
+              <span className="crop tl" />
+              <span className="crop tr" />
+              <span className="crop bl" />
+              <span className="crop br" />
+              {done.state === "checking" && (
+                <div className="live-busy">
+                  <Busy compact label="Checking the fix…" hint="Comparing before and after. Usually 5 to 10 s." slowAfter={15} />
+                </div>
+              )}
+              <div className="cutout-bar" role="status">
+                {fixed
+                  ? `Fixed${fixedAt ? ` after step ${fixedAt}` : ""}. ${done.seconds < 60 ? `${done.seconds} s` : `${Math.floor(done.seconds / 60)} min ${done.seconds % 60} s`}, ₹0.`
+                  : done.state === "checking"
+                    ? "Checking the fix…"
+                    : done.state === "error"
+                      ? "Couldn't check the photo. Is it working now?"
+                      : done.looksFixed === true
+                        ? `Looks fixed. ${sentence(done.seen)} Is it working now?`
+                        : done.looksFixed === false
+                          ? `${sentence(done.next || done.seen)} Is it working now?`
+                          : "Couldn't see it clearly. Is it working now?"}
+              </div>
             </div>
-            {fixed && <p className="done-result">Fixed. {done.seconds < 60 ? `${done.seconds} s` : `${Math.floor(done.seconds / 60)} min ${done.seconds % 60} s`}, ₹0, {steps.length} steps.</p>}
             {stillWrong !== null && !fixed && (
               <form
                 className="still-wrong"
@@ -1413,12 +1484,12 @@ export default function RepairWalkthrough({
                   className="text-input"
                   value={stillWrong}
                   onChange={(e) => setStillWrong(e.target.value)}
-                  placeholder="e.g. still blowing warm air"
+                  placeholder="Like “still blowing warm air”"
                   autoComplete="off"
                 />
               </form>
             )}
-          </section>
+          </>
         )}
 
         {screen === "pros" && (
@@ -1461,7 +1532,7 @@ export default function RepairWalkthrough({
       </div>
 
       {/* One clear next action per screen, always in reach. */}
-      <div className="walk-cta">
+      <div className={`walk-cta${screen === "done" ? " confirm-bar" : ""}`}>
         {screen === "quick" && quick.state === "ready" && (
           <>
             <button type="button" className="btn-success" onClick={() => quickResult(true)}>
@@ -1519,7 +1590,7 @@ export default function RepairWalkthrough({
               className="btn-primary"
               onClick={() => {
                 mark("tap", stepIdx < steps.length - 1 ? `next step ${stepIdx + 2}` : "finish steps");
-                if (stepIdx < steps.length - 1) void goStep(stepIdx + 1);
+                if (stepIdx < steps.length - 1) nextStep();
                 else if (verdict?.verdict === "pro") openPro();
                 else void finishFix();
               }}
@@ -1538,7 +1609,7 @@ export default function RepairWalkthrough({
         {screen === "done" && done && done.state !== "checking" && !fixed && stillWrong === null && (
           <>
             <button type="button" className="btn-success" onClick={() => void confirmFixed(true)}>
-              It works now
+              It&apos;s working
             </button>
             <button type="button" className="btn-outline" onClick={() => void confirmFixed(false)}>
               Still broken
@@ -1561,6 +1632,31 @@ export default function RepairWalkthrough({
           </button>
         )}
       </div>
+      {midAsk !== null && (
+        <div className="mid-backdrop">
+          <div className="mid-card" role="dialog" aria-modal="true" aria-labelledby="mid-q">
+            <p className="sheet-label">After step {midAsk + 1} of {steps.length}</p>
+            <p id="mid-q" className="instruction">Is it working now?</p>
+            <p className="mid-why">Sometimes one step is all it takes.</p>
+            <label className="risk-check">
+              <input
+                type="checkbox"
+                checked={onlyAtEndTick}
+                onChange={(e) => setOnlyAtEndTick(e.target.checked)}
+              />
+              <span>Only ask me after the last step</span>
+            </label>
+            <div className="mid-actions">
+              <button type="button" className="btn-success" onClick={() => midAnswer(true)}>
+                It&apos;s working
+              </button>
+              <button type="button" className="btn-primary" onClick={() => midAnswer(false)}>
+                Next step
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

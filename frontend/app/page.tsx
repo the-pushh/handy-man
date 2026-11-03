@@ -26,12 +26,13 @@ import type { ScanWarning, SeekResult } from "./components/LiveDetect";
 import CallAPro from "./components/CallAPro";
 import Busy from "./components/Busy";
 import { isVague } from "./lib/vague";
+import { getSpeech, prefetchSpeech } from "./lib/tts";
 import Intro, { introSeen } from "./components/Intro";
 
-// Who is working during the camera-screen waits.
+// What is happening during the camera-screen waits.
 const PAGE_BUSY: Record<string, string> = {
-  "Looking at your photo…": "Muse Spark is finding the machine you named.",
-  "Checking the sound…": "Measuring the beeps and asking Muse Wonder. A few seconds.",
+  "Looking at your photo…": "Finding what you described.",
+  "Checking the sound…": "Counting the beeps. A few seconds.",
 };
 
 interface Overlay {
@@ -162,6 +163,16 @@ export default function Home() {
   // Final camera re-check: the walkthrough stays mounted (its state
   // survives) but is hidden so the camera shows while the owner aims.
   const [peek, setPeek] = useState<string>("");
+  // The after-fix check: what the camera looks for, and who gets the
+  // picture back (the walkthrough).
+  const [checkWant, setCheckWant] = useState<string | null>(null);
+  const checkRef = useRef<{
+    resolve: (f: File | null) => void;
+    tries: number;
+    lastHint: string;
+    lastHintAt: number;
+    taking: boolean;
+  } | null>(null);
   // What the camera is looking for (the owner's words); null = idle.
   const [seekWant, setSeekWant] = useState<string | null>(null);
   const [stuck, setStuck] = useState<boolean>(false);
@@ -203,6 +214,8 @@ export default function Home() {
   // App timeline -> backend logs (see lib/timeline.ts).
   useEffect(() => {
     setLogBase(apiBase());
+    // Lines every fix says, ready before the first one is needed.
+    prefetchSpeech(apiBase(), ["Got it.", "Working out what's wrong.", "Before we dig in, try these quick checks."]);
   }, []);
 
   // Nothing happening on the home screen: after 8 s a hint over Type
@@ -341,22 +354,10 @@ export default function Home() {
   }, []);
 
   async function say(line: string): Promise<void> {
-    mark("tts request", JSON.stringify(line.slice(0, 40)));
     try {
-      const r = await fetch(`${apiBase()}/api/tts`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: line, lang: langRef.current.tts }),
-      });
-      const data = await r.json();
-      mark("tts audio received", data.audio_b64 ? kb(data.audio_b64.length * 0.75) : "fallback");
-      if (data.audio_b64) {
-        const bytes = Uint8Array.from(atob(data.audio_b64), (c) =>
-          c.charCodeAt(0)
-        );
-        const url = URL.createObjectURL(
-          new Blob([bytes], { type: data.mime || "audio/wav" })
-        );
+      const blob = await getSpeech(apiBase(), line, langRef.current.tts);
+      if (blob) {
+        const url = URL.createObjectURL(blob);
         await new Promise<void>((res) => {
           const finish = () => {
             aiAnalyserRef.current = null;
@@ -549,6 +550,10 @@ export default function Home() {
   // Each answer from the live search: warn, take the picture, or ask the
   // owner to move.
   function onSeek(res: SeekResult): void {
+    if (checkRef.current) {
+      onCheckSeek(res);
+      return;
+    }
     const s = seekRef.current;
     s.last = res;
     if (res.item) s.item = res.item;
@@ -769,18 +774,77 @@ export default function Home() {
     });
   }
 
-  // The walkthrough's final re-check: show the camera, let the owner aim
-  // at the fixed part, grab one "after" still, then come back.
+  // The walkthrough's after-fix check, run like the first scan: say what
+  // to do, find the machine on the live view, ask to move if needed,
+  // hold the outline, flash the shutter, then hand the picture back.
   async function recheckStill(part: string | null): Promise<File | null> {
-    const aim = part ? `Point at the ${part}` : "Point at what you fixed";
-    setPeek(aim);
-    setStatusMsg(aim);
-    await new Promise((r) => setTimeout(r, 3000));
-    const still = await captureStillAsync();
-    mark("recheck still", still ? kb(still.size) : "none");
+    const what = overlay?.machine || seekRef.current.item || "";
+    const line = what
+      ? `Now point the camera at the ${what} again so I can check the fix.`
+      : "Now point the camera at what you fixed so I can check it.";
+    setPeek(line);
+    setStatusMsg(line);
+    setStuck(false);
+    mark("recheck seek", what || part || "");
+    void say(line);
+    return new Promise((resolve) => {
+      checkRef.current = { resolve, tries: 0, lastHint: "", lastHintAt: 0, taking: false };
+      setCheckWant(what || part || "the machine you fixed");
+    });
+  }
+
+  function endCheck(frame: File | null): void {
+    const c = checkRef.current;
+    checkRef.current = null;
+    snapToken.current++;
+    setCheckWant(null);
+    setHold(false);
+    setSnap("");
+    setStuck(false);
     setStatusMsg("");
     setPeek("");
-    return still;
+    mark("recheck still", frame ? kb(frame.size) : "none");
+    c?.resolve(frame);
+  }
+
+  // One live result during the after-fix check (no warnings here: the
+  // owner already chose to fix it).
+  function onCheckSeek(res: SeekResult): void {
+    const c = checkRef.current;
+    if (!c || c.taking) return;
+    if (res.ready) {
+      c.taking = true;
+      const token = ++snapToken.current;
+      setHold(true);
+      setStatusMsg(`Got the ${res.name || res.item || "picture"}. Hold still…`);
+      mark("recheck framed", res.name || res.item);
+      window.setTimeout(() => {
+        if (token !== snapToken.current) return;
+        const url = URL.createObjectURL(res.frame);
+        setSnap(url);
+        window.setTimeout(() => {
+          if (token !== snapToken.current) return;
+          URL.revokeObjectURL(url);
+          endCheck(res.frame);
+        }, 750);
+      }, 1100);
+      return;
+    }
+    c.tries += 1;
+    if (res.hint) setStatusMsg(res.hint);
+    const now = Date.now();
+    if (res.hint && (res.hint !== c.lastHint || now - c.lastHintAt > 12000)) {
+      c.lastHint = res.hint;
+      c.lastHintAt = now;
+      void say(res.hint);
+    }
+    if (c.tries >= STUCK_AFTER) setStuck(true);
+  }
+
+  async function checkThisView(): Promise<void> {
+    const frame = await captureStillAsync();
+    mark("owner chose this view", "recheck");
+    endCheck(frame);
   }
 
   const turnCb = useRef(startTurn);
@@ -839,8 +903,9 @@ export default function Home() {
     }
   }
 
-  const cutoutLine =
-    statusMsg ||
+  const cutoutLine = listening
+    ? "Listening. Tell me what's wrong and what it does or doesn't do."
+    : statusMsg ||
     (seekWant
       ? "Looking for it…"
       : "Tap the button and tell me what needs fixing.");
@@ -870,7 +935,8 @@ export default function Home() {
         <video ref={videoRef} className="live" autoPlay playsInline muted />
         <LiveDetect
           videoRef={videoRef}
-          want={overlay || showHistory || peek ? null : seekWant}
+          want={showHistory ? null : checkWant ?? (overlay || peek ? null : seekWant)}
+          newTurn={!checkWant}
           apiBase={apiBase}
           onResult={(r) => seekCb.current(r)}
           hold={hold}
@@ -993,7 +1059,7 @@ export default function Home() {
       )}
 
       <nav
-        className={`controlbar gridbars${typeOpen ? " typing" : ""}`}
+        className={`controlbar gridbars${checkWant ? " acting" : typeOpen ? " typing" : ""}`}
         aria-label="Input options"
       >
         <input
@@ -1006,7 +1072,18 @@ export default function Home() {
             e.target.value = "";
           }}
         />
-        {typeOpen ? (
+        {checkWant ? (
+          // The after-fix check: the camera is busy finding the machine, so
+          // the bar offers only what fits now.
+          <>
+            <button type="button" className="btn-outline" onClick={() => endCheck(null)}>
+              Skip the photo
+            </button>
+            <button type="button" className="btn-primary" onClick={() => void checkThisView()}>
+              Use this view
+            </button>
+          </>
+        ) : typeOpen ? (
           <>
             <div
               className="cb-left"
