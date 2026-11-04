@@ -1099,3 +1099,35 @@ async def history_delete(request: Request):
     await run_in_threadpool(history_store.delete_all, user)
     trace.log_outcome("history deleted", user=user[:8])
     return {"status": "ok"}
+
+
+@app.post("/api/step/check")
+async def step_check(file: UploadFile = File(...), machine: str = Form(""),
+                     issue: str = Form(""), step: str = Form(...),
+                     next_step: str = Form("")):
+    """Scan to check one step: a fresh photo, judged against the step.
+
+    The spoken advice goes through the safety rules like any step: if it
+    would have the owner do something an owner should not, it is replaced
+    with the rule's own words."""
+    from . import spark
+    from .risk import judge
+
+    trace.begin()
+    try:
+        st = json.loads(step)
+        nx = json.loads(next_step) if next_step.strip() else None
+    except json.JSONDecodeError:
+        return JSONResponse({"status": "bad-step"}, status_code=400)
+    image = images_normalized([await file.read()])[0]
+    try:
+        out = await run_in_threadpool(spark.step_check, image, machine, issue, st, nx)
+    except Exception as exc:
+        return {"status": "step-check-error", "detail": str(exc)[:200], "trace": trace.export()}
+    v = judge(machine, issue, [{"check": out["say"], "how": out["say"]}])
+    if v["blocked_steps"]:
+        out["say"] = f"Stop here. {v['title']}"
+        out["blocked"] = v["rule"]
+    trace.log_outcome("step check", step=str(st.get("check", ""))[:60], done=out["done"],
+                      blocked=out.get("blocked"))
+    return {"status": "ok", **out, "trace": trace.export()}

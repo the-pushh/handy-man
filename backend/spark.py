@@ -406,7 +406,10 @@ def diagnose(appliance: str, device: str | None, labels: list,
         'whole part. null if none", '
         '"part_look": "2-4 plain words for how that spot looks in the '
         'photo, e.g. key with a small light, round green light", '
-        '"caution": "what not to touch on this step or null"}], '
+        '"caution": "what not to touch on this step or null", '
+        '"rescan": "true when doing this step changes what the camera '
+        'sees (a panel lifted, a cover off, a part pulled out), so the '
+        'next step needs a new photo; else false"}], '
         '"safety": ["unplug and remove the battery before opening"], '
         '"questions": [{"ask": "Which light is on?", '
         '"part": "part label or null", '
@@ -527,6 +530,9 @@ def diagnose(appliance: str, device: str | None, labels: list,
                     "part_look": str(s.get("part_look", "") or "").strip()
                     or None,
                     "caution": str(s.get("caution", "") or "").strip() or None,
+                    "rescan": bool(s.get("rescan") is True
+                                   or str(s.get("rescan")).lower() == "true"
+                                   or VIEW_CHANGE.search(f"{check} {s.get('how', '')}")),
                 })
         elif str(s).strip():
             steps.append({"check": str(s).strip(), "how": "",
@@ -570,6 +576,59 @@ def diagnose(appliance: str, device: str | None, labels: list,
             if str(parsed.get("route") or "").strip().lower()
             in ("direct", "investigate") else None,
             "resolution": str(parsed.get("resolution", "")).strip()}
+
+
+# A step that changes what the camera sees: the next step needs a new
+# photo (the model's "rescan" flag, or these words when it leaves it out).
+VIEW_CHANGE = re.compile(
+    r"\b(?:lift|flip|swing|pop|raise)(?:s|ing)?\b[^.]{0,30}?\b(?:up|open)\b"
+    r"|\b(?:lift|raise)(?:s|ing)? the (?:front |top |side )?(?:panel|cover|lid|flap|grille|grill)\b"
+    r"|\bopen(?:s|ing)? the (?:front |top |side )?"
+    r"(?:panel|cover|lid|flap|door|grille|grill)\b|\b(?:remove|take off|pull out|slide out|"
+    r"unclip|detach)(?:s|ing)?\b", re.I)
+
+
+def step_check(image: bytes, machine: str, issue: str, step: dict,
+               next_step: dict | None = None, model: str | None = None) -> dict:
+    """One step, checked from a fresh photo: was it done, what does the
+    photo show, and the one thing to tell the owner now.
+
+    Returns {"done": bool | None, "seen": str, "say": str}; None when the
+    photo cannot show it. The phone uses the same photo for the next
+    steps' highlights when the view has changed.
+    """
+    url, key, default_model = _config()
+    b64 = base64.b64encode(image).decode()
+    nxt = (f"The next step is: {next_step.get('check', '')}. {next_step.get('how', '')} "
+           if next_step else "This was the last step. ")
+    prompt = (
+        f"You check one home-repair step from a photo the owner just took. "
+        f"Machine: {machine or 'unknown'}. Problem: {issue.strip()[:200]}. "
+        f"The step: {step.get('check', '')}. {step.get('how', '')} "
+        + (f"Its part: {step.get('part')}. " if step.get("part") else "")
+        + nxt +
+        "Judge only what the photo shows. If it shows a hazard (bare wires, "
+        "burn marks, a leak near power, a swollen battery), done is false "
+        "and say tells the owner to stop and switch off. Reply with only "
+        'JSON: {"done": true, "seen": "what the photo shows about this '
+        'step, max 14 words", "say": "one short sentence to the owner: '
+        'what to do now (start the next step, or what is still missing), '
+        'max 18 words"}. done is null when the photo does not show the '
+        "part clearly enough; never guess.")
+    payload = {
+        "model": model or default_model,
+        "messages": [{"role": "user", "content": [
+            {"type": "text", "text": prompt},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}]}],
+        "max_tokens": 1500,
+        "reasoning_effort": _effort("STEP_CHECK_EFFORT", "minimal"),
+        "response_format": {"type": "json_object"},
+    }
+    parsed = _complete(url, key, payload, ["done", "say"], purpose="step check", image=image)
+    done = parsed.get("done")
+    return {"done": done if isinstance(done, bool) else None,
+            "seen": str(parsed.get("seen") or "").strip(),
+            "say": str(parsed.get("say") or "").strip()}
 
 
 def recheck(before: bytes, after: bytes, fix: str, part: str | None = None,
