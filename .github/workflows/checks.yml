@@ -1,6 +1,6 @@
 # Checks: ruff, the backend unit tests, and the frontend typecheck.
 # Started by hand (Actions tab > checks > Run workflow), not on every
-# push. The same steps run locally: see "Tests and eval" in the README.
+# push. The same steps run locally: see "Tests and eval" in docs/HOW_IT_WORKS.md.
 # No deploy job: the backend is deployed by hand to Modal
 # (`modal deploy backend/modal_app.py`) and the frontend by Vercel's own
 # Git integration.
