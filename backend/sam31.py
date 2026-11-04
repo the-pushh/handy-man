@@ -263,6 +263,23 @@ def _query(image_bytes: bytes, phrase: str, label: str) -> list:
     return instances
 
 
+_PART_WORDS = re.compile(
+    r"\b(?:blade|button|cover|panel|filter|cap|door|flap|switch|cable|cord|plug|light|"
+    r"knob|vent|grille|grill|hose|pipe|tray|drum|motor|belt|wheel|screen|key|port|"
+    r"battery|fuse|terminal|float|cartridge|seal|valve|tank|coil|stand|chain)s?\b", re.I)
+
+
+def whole_machine(label: str) -> str:
+    """The plain common name of a whole machine named with a brand or a
+    short form ("Panasonic wall AC" -> "air conditioner"), or "" for a
+    part ("fan blade", "front cover") or when it adds nothing."""
+    from .feedback import machine_key
+    if _PART_WORDS.search(label or ""):
+        return ""
+    key = machine_key(label)
+    return "" if key in ("unknown", concept(label)) else key
+
+
 def segment_one(image_bytes: bytes, label: str,
                 look: str | list | None = None) -> list:
     """One part -> its instances (possibly none).
@@ -276,8 +293,11 @@ def segment_one(image_bytes: bytes, label: str,
     matched the wall. `look` may be a list of phrases to try in order.
     """
     looks = look if isinstance(look, list) else [look or ""]
+    # A whole machine named with a brand or short form ("Panasonic wall
+    # AC") also gets its plain common name ("air conditioner") as a last
+    # try; part names ("front cover") have none and are unchanged.
     phrases = [p for p in dict.fromkeys(
-        [concept(x) for x in looks] + [concept(label)]) if p]
+        [concept(x) for x in looks] + [concept(label), whole_machine(label)]) if p]
     for phrase in phrases:
         instances = _query(image_bytes, phrase, label)
         if instances:
@@ -336,8 +356,11 @@ def find_object(image_bytes: bytes, name: str, look: str = "") -> dict | None:
     SAM round trip; any phrase may match where the others miss.
     """
     words = concept(name).split()
+    # Plus the machine's plain common name ("Panasonic wall AC" -> "air
+    # conditioner"): SAM often misses brand names and short forms like
+    # "AC" that the common name finds at once.
     phrases = [p for p in dict.fromkeys(
-        [concept(look), concept(name), " ".join(words[-2:])]) if p]
+        [concept(look), concept(name), " ".join(words[-2:]), whole_machine(name)]) if p]
     if not phrases:
         return None
     from concurrent.futures import as_completed
