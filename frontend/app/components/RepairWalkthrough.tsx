@@ -167,7 +167,7 @@ export default function RepairWalkthrough({
   const [overlayURL, setOverlayURL] = useState<string>("");
   const [causes, setCauses] = useState<string[]>([]);
   const [steps, setSteps] = useState<
-    { check: string; how: string; part: string | null; caution?: string | null; rescan?: boolean }[]
+    { check: string; how: string; part: string | null; part_look?: string | null; caution?: string | null; rescan?: boolean }[]
   >([]);
   // Scan to check a step (and the rescan after a step that changes the
   // view): where it is, and what the photo showed.
@@ -882,6 +882,7 @@ export default function RepairWalkthrough({
               part: (s as { part?: string }).part || null,
               caution: (s as { caution?: string }).caution || null,
               rescan: (s as { rescan?: boolean }).rescan === true,
+              part_look: (s as { part_look?: string }).part_look || null,
             }
       );
       setCauses(foundCauses);
@@ -1324,12 +1325,15 @@ export default function RepairWalkthrough({
     setOverlayURL("");
     setInstances([]);
     highlightRef.current = new Map();
-    const parts = steps
+    // Each remaining part with its plain-words look ("memory module",
+    // "round grey cap"): SAM finds parts by those far more often.
+    const seen = new Set<string>();
+    const labels = steps
       .slice(fromStep + 1)
-      .map((s) => s.part)
-      .filter((p): p is string => !!p);
-    const labels = [...new Set(parts)].slice(0, 4);
-    mark("view adopted", `step ${fromStep + 1}; outlining ${labels.join(", ") || "nothing"}`);
+      .filter((s) => s.part && !seen.has(s.part.toLowerCase()) && seen.add(s.part.toLowerCase()))
+      .map((s) => ({ label: s.part as string, look: s.part_look || "" }))
+      .slice(0, 4);
+    mark("view adopted", `step ${fromStep + 1}; outlining ${labels.map((l) => l.label).join(", ") || "nothing"}`);
     samRef.current = labels.length
       ? (async () => {
           const sfd = new FormData();

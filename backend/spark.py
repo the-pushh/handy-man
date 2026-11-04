@@ -582,10 +582,9 @@ def diagnose(appliance: str, device: str | None, labels: list,
 # photo (the model's "rescan" flag, or these words when it leaves it out).
 VIEW_CHANGE = re.compile(
     r"\b(?:lift|flip|swing|pop|raise)(?:s|ing)?\b[^.]{0,30}?\b(?:up|open)\b"
-    r"|\b(?:lift|raise)(?:s|ing)? the (?:front |top |side )?(?:panel|cover|lid|flap|grille|grill)\b"
-    r"|\bopen(?:s|ing)? the (?:front |top |side )?"
-    r"(?:panel|cover|lid|flap|door|grille|grill)\b|\b(?:remove|take off|pull out|slide out|"
-    r"unclip|detach)(?:s|ing)?\b", re.I)
+    r"|\b(?:open|lift|raise)(?:s|ing)? (?:the |its |both )?(?:[a-z-]+ ){0,3}"
+    r"(?:panel|cover|lid|flap|door|grille|grill|hatch|tray|compartment|case)\b"
+    r"|\b(?:remove|take off|pull out|slide out|unclip|detach|unscrew)(?:s|ing)?\b", re.I)
 
 
 def step_check(image: bytes, machine: str, issue: str, step: dict,
@@ -607,7 +606,11 @@ def step_check(image: bytes, machine: str, issue: str, step: dict,
         f"The step: {step.get('check', '')}. {step.get('how', '')} "
         + (f"Its part: {step.get('part')}. " if step.get("part") else "")
         + nxt +
-        "Judge only what the photo shows. If it shows a hazard (bare wires, "
+        "Judge only what the photo shows, and judge the step's main action "
+        "(the panel is open, the filter is out, the cap is off), not side "
+        "details a photo cannot show (a towel laid down, the power switched "
+        "off): those go in say as a reminder, not into done. If it shows a "
+        "hazard (bare wires, "
         "burn marks, a leak near power, a swollen battery), done is false "
         "and say tells the owner to stop and switch off. Reply with only "
         'JSON: {"done": true, "seen": "what the photo shows about this '
