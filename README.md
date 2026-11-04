@@ -11,6 +11,18 @@ walks you through a safe fix step by step, and checks your work with the
 camera. If it's a job for a professional, it finds a handyman near you
 and writes the message for you.
 
+## Models used
+
+Every diagnosis and highlight comes from a live Meta model call — no canned answers.
+
+- **Muse Spark 1.3** (`muse-spark-1.3-contributor` for local dev, `muse-spark-1.3` in prod) — looks at your photos, names the appliance and its parts, figures out what's wrong, and writes the fix steps.
+- **SAM 3.1** (`sam-3.1`) — cuts out the exact shape of each part so highlights sit on the real component, not a guess.
+- **Muse Image** (`muse-image-1.0`) — draws the outline and letter tags (A, B, C…) on the photo.
+- **Muse Wonder** (`muse-wonder-1.0`) — listens to 3–5 second clips of the machine (beeps, clicks, hums) and says what it hears. Its hearing is cross-checked against measured audio features, and the numbers win if they disagree.
+- **MMS-TTS** (local) — speaks every reply out loud, in the same language you used, including Hinglish.
+- **Voice input** — your words go through the browser's built-in speech recognition. The Muse Voice Transcribe hook exists in the backend but isn't configured yet.
+- **Glimmer** — has no public local weights, so quick on-device judgments are a local heuristic fallback, not the real model.
+
 ## How to use it
 
 1. **Open the link and allow the camera and microphone.** It works best
