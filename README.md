@@ -272,7 +272,24 @@ python backend/test_prompts.py     # every prompt builds, with each optional par
 SPARK_MODEL=prod python -m eval.run      # demo cases, live models
 SPARK_MODEL=prod python -m eval.breadth  # 21 everyday cases beyond the demo
 SPARK_MODEL=prod python -m eval.suite    # 31 test cases for judges and users
+SPARK_MODEL=prod python -m eval.stepcheck  # scan-to-check and rescans on before/after photo pairs
 ```
+
+`eval/stepcheck.py` checks step scans and rescans on six before/after photo
+pairs (`--make` creates them with muse-image; the AC "before" is the real demo
+photo and each "after" is an edit of its own "before"):
+- the AC with its panel lifted;
+- a washer with its drain flap open;
+- an inverter battery with its vent caps off;
+- a printer with its cartridge door open;
+- a laptop with its base cover off;
+- a hazard photo (burnt wiring and water behind a washer).
+
+Each step reads "not done" on the before photo and "done" on the after
+photo, every view-changing step is flagged for a rescan, and the hazard
+photo gets "stop, switch off". Latest run: 6 of 6. SAM found the next part
+on the new photo for the AC and the washer; for the ink cartridges, floats
+and RAM the app falls back to the illustrated highlight (about 20 s).
 
 [docs/TEST_CASES.md](docs/TEST_CASES.md) lists 31 things to try (demo machines, clear
 fixes, unclear cases, safety, language, edge cases) with what you should see and
