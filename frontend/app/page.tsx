@@ -28,6 +28,8 @@ import Busy from "./components/Busy";
 import { isVague } from "./lib/vague";
 import { getSpeech, prefetchSpeech } from "./lib/tts";
 import Intro, { introSeen } from "./components/Intro";
+import SnapDots from "./components/SnapDots";
+import type { SamInstance } from "./lib/masks";
 
 // What is happening during the camera-screen waits.
 const PAGE_BUSY: Record<string, string> = {
@@ -59,6 +61,9 @@ interface Overlay {
 const LISTEN_SECONDS = 4;
 // Failed framings before "Use this view" is offered.
 const STUCK_AFTER = 4;
+// How long the snapshot stays: the dot wave over the machine, then the
+// frame shrinks away (globals.css .snap-wrap).
+const SNAP_MS = 1500;
 
 interface Seek {
   tries: number;
@@ -186,7 +191,9 @@ export default function Home() {
   // Taking the picture: outline held on the live view, then a shutter
   // flash with the frozen frame shrinking away.
   const [hold, setHold] = useState<boolean>(false);
-  const [snap, setSnap] = useState<string>("");
+  // The snapshot moment: the frozen frame and SAM's mask of the machine
+  // (drawn as a net of dots, components/SnapDots.tsx).
+  const [snap, setSnap] = useState<{ url: string; inst: SamInstance | null } | null>(null);
   const snapToken = useRef<number>(0);
   // Scan-time warning, before any diagnosis.
   const [warn, setWarn] = useState<{ w: ScanWarning; res: SeekResult; url: string } | null>(null);
@@ -586,7 +593,7 @@ export default function Home() {
     }
     if (res.ready) {
       setStuck(false);
-      takePicture(res.frame, res.item || s.item, s.acceptRisk, res.name);
+      takePicture(res.frame, res.item || s.item, s.acceptRisk, res.name, res.instance);
       return;
     }
     s.tries += 1;
@@ -605,25 +612,52 @@ export default function Home() {
 
   // Framed: keep the outline on the live view a moment ("Got it, hold
   // still"), flash the shutter, then open the walkthrough.
-  function takePicture(frame: File, item: string, acceptRisk: ScanWarning | null, name = "") {
+  function takePicture(
+    frame: File,
+    item: string,
+    acceptRisk: ScanWarning | null,
+    name = "",
+    inst: SamInstance | null = null
+  ) {
     const token = ++snapToken.current;
     setHold(true);
     setStatusMsg(`Got the ${name || item || "picture"}. Hold still…`);
     mark("framed", name || item);
-    window.setTimeout(() => {
+    window.setTimeout(async () => {
+      if (token !== snapToken.current) return;
+      // Always highlight the machine: SAM's mask from the live view, or
+      // a quick SAM pass on this frame when the view had none.
+      const mask = inst || (await outlineFor(frame, name || item));
       if (token !== snapToken.current) return;
       const url = URL.createObjectURL(frame);
-      setSnap(url);
-      mark("picture taken", `${name || item}`);
+      setSnap({ url, inst: mask });
+      mark("picture taken", `${name || item}${mask ? ` (SAM ${Math.round((mask.score || 0) * 100)}%)` : " (no outline)"}`);
       window.setTimeout(() => {
         if (token !== snapToken.current) return;
-        setSnap("");
+        setSnap(null);
         URL.revokeObjectURL(url);
         setHold(false);
         setSeekWant(null);
         void capture(frame, item, acceptRisk);
-      }, 750);
+      }, SNAP_MS);
     }, 1100);
+  }
+
+  /* SAM on one frame for the machine, when the live view had no mask
+     (the owner chose "Use this view"). At most 5 s; null if nothing. */
+  async function outlineFor(frame: File, what: string): Promise<SamInstance | null> {
+    if (!what) return null;
+    const fd = new FormData();
+    fd.append("file", frame);
+    fd.append("labels", JSON.stringify([what]));
+    try {
+      const r = await fetch(`${apiBase()}/api/segment`, { method: "POST", body: fd, signal: AbortSignal.timeout(5000) });
+      const d = (await r.json()) as { instances?: SamInstance[] };
+      const list = d.instances || [];
+      return list.length ? list.reduce((a, b) => ((b.score ?? 0) > (a.score ?? 0) ? b : a)) : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   // The owner gave up on framing: take the picture as the view is now.
@@ -644,7 +678,7 @@ export default function Home() {
   function cancelSeek(): void {
     snapToken.current++;
     setHold(false);
-    setSnap("");
+    setSnap(null);
     setSeekWant(null);
     setStuck(false);
     setWarn(null);
@@ -668,7 +702,7 @@ export default function Home() {
     }
     if (cur.res.ready) {
       setSeekWant(issueRef.current);
-      takePicture(cur.res.frame, cur.res.item, cur.w, cur.res.name);
+      takePicture(cur.res.frame, cur.res.item, cur.w, cur.res.name, cur.res.instance);
       return;
     }
     setOrb("thinking");
@@ -888,7 +922,7 @@ export default function Home() {
     snapToken.current++;
     setCheckWant(null);
     setHold(false);
-    setSnap("");
+    setSnap(null);
     setStuck(false);
     setStatusMsg("");
     setPeek("");
@@ -910,12 +944,12 @@ export default function Home() {
       window.setTimeout(() => {
         if (token !== snapToken.current) return;
         const url = URL.createObjectURL(res.frame);
-        setSnap(url);
+        setSnap({ url, inst: res.instance });
         window.setTimeout(() => {
           if (token !== snapToken.current) return;
           URL.revokeObjectURL(url);
           endCheck(res.frame);
-        }, 750);
+        }, SNAP_MS);
       }, 1100);
       return;
     }
@@ -1031,12 +1065,7 @@ export default function Home() {
           onResult={(r) => seekCb.current(r)}
           hold={hold}
         />
-        {snap && (
-          <div className="shutter" aria-hidden="true">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={snap} alt="" className="snap-img" />
-          </div>
-        )}
+        {snap && <SnapDots url={snap.url} inst={snap.inst} />}
 
         <span className="crop tl" />
         <span className="crop tr" />

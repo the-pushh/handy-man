@@ -1691,3 +1691,14 @@ section.history-card { cursor: default; }
 .step-scan-head { margin: 0; font-size: 15px; line-height: 24px; color: var(--line); font-weight: 600; }
 .step-scan-say { margin: 0; font-size: 15px; line-height: 24px; color: var(--line); }
 .step-scan-btn { display: inline-block; margin-top: 8px; }
+
+/* Snapshot with the machine's dots: the frame and its dot net shrink
+   away together once the wave has crossed (SNAP_MS = 1.5 s). */
+.snap-wrap { position: absolute; inset: 0; animation: snap-away 1.5s ease-in forwards; }
+.snap-wrap .snap-img { animation: none; border: 3px solid var(--primary); }
+.snap-dots { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+@keyframes snap-away {
+  0%, 72% { transform: scale(1); opacity: 1; }
+  100% { transform: translate(28%, 34%) scale(0.32); opacity: 0.9; }
+}
+@media (prefers-reduced-motion: reduce) { .snap-wrap { animation: none; } }
