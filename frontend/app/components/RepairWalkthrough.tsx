@@ -155,7 +155,7 @@ export default function RepairWalkthrough({
   // Final camera re-check: aim at the part, returns the "after" still.
   onRecheck?: (part: string | null) => Promise<File | null>;
   // Agent loop tools: a close photo of one part, and 4 s of sound.
-  onLook?: (part: string, how: string) => Promise<File | null>;
+  onLook?: (part: string, how: string, line?: string) => Promise<File | null>;
   onHear?: () => Promise<Heard | null>;
   onClose: () => void;
 }) {
@@ -167,8 +167,21 @@ export default function RepairWalkthrough({
   const [overlayURL, setOverlayURL] = useState<string>("");
   const [causes, setCauses] = useState<string[]>([]);
   const [steps, setSteps] = useState<
-    { check: string; how: string; part: string | null; caution?: string | null }[]
+    { check: string; how: string; part: string | null; caution?: string | null; rescan?: boolean }[]
   >([]);
+  // Scan to check a step (and the rescan after a step that changes the
+  // view): where it is, and what the photo showed.
+  const [stepScan, setStepScan] = useState<{
+    i: number;
+    state: "scanning" | "checking" | "result" | "skipped";
+    done?: boolean | null;
+    seen?: string;
+    say?: string;
+  } | null>(null);
+  // A step that changed the view (panel lifted): ask for a new photo
+  // before the next step. The index, or null.
+  const [viewAsk, setViewAsk] = useState<number | null>(null);
+  const rescanned = useRef<Set<number>>(new Set());
   const [legend, setLegend] = useState<{ label: string; color: string; tag?: string }[]>([]);
   const [resolution, setResolution] = useState<string>("");
   const [device, setDevice] = useState<string>("");
@@ -868,6 +881,7 @@ export default function RepairWalkthrough({
               how: (s as { how?: string }).how || "",
               part: (s as { part?: string }).part || null,
               caution: (s as { caution?: string }).caution || null,
+              rescan: (s as { rescan?: boolean }).rescan === true,
             }
       );
       setCauses(foundCauses);
@@ -1258,8 +1272,111 @@ export default function RepairWalkthrough({
 
   /* Next on a step that is not the last: ask whether that already fixed
      it, unless the owner asked to be asked only at the end. */
-  function nextStep(): void {
+  /* Scan one step: the camera frames the part (or the whole machine after
+     a view change), the server checks the step against the new photo and
+     says what to do now. After a step that changed the view the new photo
+     becomes the working photo and the next steps are outlined on it. */
+  async function scanStep(i: number, reason: "check" | "view"): Promise<boolean | null | undefined> {
+    const st = steps[i];
+    if (!st || !onLook) return;
+    hush();
+    const whole = machine || appliance || device || "machine";
+    const target = reason === "view" ? whole : st.part || whole;
+    const line =
+      reason === "view"
+        ? `Now show me the ${whole} again, as it looks now, so I can guide the next step.`
+        : `Show me the ${target} so I can check this step.`;
+    setStepScan({ i, state: "scanning" });
+    mark("step scan", `${reason} step ${i + 1}: ${target}`);
+    const still = await onLook(target, "", line);
+    if (!still) {
+      setStepScan({ i, state: "skipped" });
+      return undefined;
+    }
+    setStepScan({ i, state: "checking" });
+    const fd = new FormData();
+    fd.append("file", still, "step.jpg");
+    fd.append("machine", whole);
+    fd.append("issue", issue);
+    fd.append("step", JSON.stringify(st));
+    if (steps[i + 1]) fd.append("next_step", JSON.stringify(steps[i + 1]));
+    let r: { status?: string; done?: boolean | null; seen?: string; say?: string } = {};
+    try {
+      r = await fetchJSON(`${API}/api/step/check`, { method: "POST", body: fd }, { label: "step check", timeoutMs: 30000 });
+    } catch (_) {
+      r = {};
+    }
+    mark("step check", `step ${i + 1}: done=${r.done} "${(r.say || "").slice(0, 60)}"`);
+    setStepScan({ i, state: "result", done: r.done ?? null, seen: r.seen || "", say: r.say || "" });
+    if (r.say) void say(r.say);
+    // Only a view that really changed replaces the working photo: a
+    // "not done yet" (panel still closed) keeps the old one.
+    if ((reason === "view" || st.rescan) && r.done !== false) adoptView(still, i);
+    return r.done ?? null;
+  }
+
+  /* The machine looks different now: the new photo is the working photo
+     for the remaining steps, and SAM outlines their parts on it. */
+  function adoptView(still: File, fromStep: number): void {
+    rescanned.current.add(fromStep);
+    fileRef.current = still;
+    setImgURL(URL.createObjectURL(still));
+    setOverlayURL("");
+    setInstances([]);
+    highlightRef.current = new Map();
+    const parts = steps
+      .slice(fromStep + 1)
+      .map((s) => s.part)
+      .filter((p): p is string => !!p);
+    const labels = [...new Set(parts)].slice(0, 4);
+    mark("view adopted", `step ${fromStep + 1}; outlining ${labels.join(", ") || "nothing"}`);
+    samRef.current = labels.length
+      ? (async () => {
+          const sfd = new FormData();
+          sfd.append("file", still);
+          sfd.append("labels", JSON.stringify(labels));
+          try {
+            const sd = await fetchJSON<{ instances?: Instance[] }>(`${API}/api/segment`, { method: "POST", body: sfd }, { label: "segment (new view)", timeoutMs: 20000 });
+            return sd.instances || [];
+          } catch (_) {
+            return [] as Instance[];
+          }
+        })()
+      : Promise.resolve([]);
+    void samRef.current.then((sam) => setInstances(sam));
+  }
+
+  async function viewScanThenNext(scan: boolean): Promise<void> {
+    const i = viewAsk ?? stepIdx;
+    setViewAsk(null);
+    mark("tap", scan ? `rescan after step ${i + 1}` : `skipped rescan after step ${i + 1}`);
+    if (!scan) {
+      rescanned.current.add(i);
+      nextStep(true);
+      return;
+    }
+    const done = await scanStep(i, "view");
+    // The photo shows the step is not done yet (panel still closed): stay
+    // on it. The spoken line says what to do; Next asks for a new photo
+    // again, and Skip in that prompt moves on regardless.
+    if (done === false) {
+      mark("stayed on step", `${i + 1}: not done yet`);
+      return;
+    }
+    nextStep(true);
+  }
+
+  function nextStep(skipViewAsk = false): void {
     const i = stepIdx;
+    // This step changed what the camera sees (a panel lifted, filters
+    // out): a new photo first, so the next step points at the right spot.
+    if (!skipViewAsk && steps[i]?.rescan && i < steps.length - 1 && !rescanned.current.has(i)) {
+      hush();
+      setViewAsk(i);
+      mark("asked rescan", `after step ${i + 1} changed the view`);
+      void say("The view has changed. Take a new picture so I can show you the next part.");
+      return;
+    }
     if (verdict?.verdict === "diy" && !onlyAtEnd) {
       hush();
       setOnlyAtEndTick(false);
@@ -1865,6 +1982,23 @@ export default function RepairWalkthrough({
             </div>
             <p className="instruction">{step.check}</p>
             {step.how && <p className="step-how">{step.how}</p>}
+            {stepScan && stepScan.i === stepIdx && stepScan.state === "checking" && (
+              <Busy compact label="Checking this step…" hint="Looking at your new photo. A few seconds." slowAfter={10} />
+            )}
+            {stepScan && stepScan.i === stepIdx && stepScan.state === "result" && (
+              <div className={`step-scan ${stepScan.done === true ? "ok" : stepScan.done === false ? "bad" : ""}`} role="status">
+                <p className="step-scan-head">
+                  {stepScan.done === true ? "✓ Looks done" : stepScan.done === false ? "✗ Not done yet" : "Couldn't tell from the photo"}
+                  {stepScan.seen ? `. ${stepScan.seen.replace(/\.$/, "")}.` : ""}
+                </p>
+                {stepScan.say && <p className="step-scan-say">{stepScan.say}</p>}
+              </div>
+            )}
+            {onLook && (!stepScan || stepScan.i !== stepIdx || stepScan.state !== "checking") && (
+              <button type="button" className="link-btn step-scan-btn" onClick={() => void scanStep(stepIdx, "check")}>
+                Scan to check this step
+              </button>
+            )}
             {step.caution && <CautionPin text={step.caution} />}
             {stepLoading && (
               <Busy
@@ -2106,6 +2240,26 @@ export default function RepairWalkthrough({
           </button>
         )}
       </div>
+      {viewAsk !== null && (
+        <div className="mid-backdrop">
+          <div className="mid-card" role="dialog" aria-modal="true" aria-labelledby="view-q">
+            <p className="sheet-label">After step {viewAsk + 1} of {steps.length}</p>
+            <p id="view-q" className="instruction">The view has changed</p>
+            <p className="mid-why">
+              Take a new picture of the {machine || appliance || device || "machine"} as it looks now, so I can check
+              this step and point at the next part.
+            </p>
+            <div className="mid-actions">
+              <button type="button" className="btn-outline" onClick={() => void viewScanThenNext(false)}>
+                Skip
+              </button>
+              <button type="button" className="btn-primary" onClick={() => void viewScanThenNext(true)}>
+                Scan now
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {midAsk !== null && (
         <div className="mid-backdrop">
           <div className="mid-card" role="dialog" aria-modal="true" aria-labelledby="mid-q">

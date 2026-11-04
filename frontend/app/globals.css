@@ -1683,3 +1683,11 @@ section.history-card { cursor: default; }
 .torch-btn.nudge { animation: torch-pulse 1.1s ease-in-out infinite; border-color: var(--primary); color: var(--primary); }
 @keyframes torch-pulse { 50% { box-shadow: 0 0 0 8px rgba(255, 106, 26, 0.25); } }
 @media (prefers-reduced-motion: reduce) { .torch-btn.nudge { animation: none; } }
+
+/* Scan to check a step: the result inside the step card. */
+.step-scan { margin: 8px 0 0; padding: 8px 15px; border-left: 2px solid var(--line-muted); }
+.step-scan.ok { border-left-color: var(--success); }
+.step-scan.bad { border-left-color: var(--error); }
+.step-scan-head { margin: 0; font-size: 15px; line-height: 24px; color: var(--line); font-weight: 600; }
+.step-scan-say { margin: 0; font-size: 15px; line-height: 24px; color: var(--line); }
+.step-scan-btn { display: inline-block; margin-top: 8px; }

@@ -864,12 +864,13 @@ export default function Home() {
   }
 
   // Agent loop tools: a close photo of one part, and 4 s of sound.
-  function lookCloser(part: string, how: string): Promise<File | null> {
+  function lookCloser(part: string, how: string, line?: string): Promise<File | null> {
     const doIt = how && !/^(nothing|none|no action|it is (already )?(in )?view)/i.test(how.trim())
       ? ` ${how.trim().replace(/^./, (c) => c.toUpperCase()).replace(/\.?$/, ".")}`
       : "";
-    mark("agent look", part);
-    return seekStill(part, `Show me the ${part} up close.${doIt}`);
+    mark("camera look", part);
+    // `line`: the step scans ("Show me the filters so I can check this step").
+    return seekStill(part, line || `Show me the ${part} up close.${doIt}`);
   }
 
   async function hearForAgent(): Promise<Heard | null> {
